@@ -5,18 +5,25 @@ import type { VisualMarkdownInsert } from '../../components/VisualMarkdownEditor
 import type { PromptState } from './useDialogs';
 import { desktopPlatformHost } from '../host/desktopPlatformHost';
 import type { DesktopPlatformHost } from '../host/platformHost';
+import type { DocumentId } from '../documentIdentity';
+import type { DocumentEffectCoordinator, EffectToken } from '../effects/documentEffectCoordinator';
+import { documentEditorGateway } from '../documentEditorGateway';
 
 interface ImageInsertionParams {
+  documentId?: DocumentId;
+  effects?: DocumentEffectCoordinator;
   mode: EditorMode;
   sourceInsertHandler: SourceMarkdownInsert | undefined;
   visualInsertHandler: VisualMarkdownInsert | undefined;
-  ensureDocumentPathForAssets: () => Promise<string | null>;
+  ensureDocumentPathForAssets: (documentId?: DocumentId) => Promise<string | null>;
   promptText: (state: PromptState) => Promise<string | null>;
   pushToast: (text: string, tone?: 'info' | 'success' | 'warning' | 'error') => void;
   platformHost?: DesktopPlatformHost;
 }
 
 export function useImageInsertion({
+  documentId,
+  effects,
   mode,
   sourceInsertHandler,
   visualInsertHandler,
@@ -30,27 +37,40 @@ export function useImageInsertion({
     || (mode === 'visual' && Boolean(visualInsertHandler))
   ), [mode, sourceInsertHandler, visualInsertHandler]);
 
-  const insertMarkdown = useCallback((snippet: string, options?: { visualDocumentPath?: string | null }) => {
-    if (mode === 'source' && sourceInsertHandler) {
-      sourceInsertHandler(snippet);
+  const insertMarkdown = useCallback((snippet: string, options?: { visualDocumentPath?: string | null; token?: EffectToken }) => {
+    if (options?.token && effects && !effects.isCurrent(options.token)) return false;
+    const targetedSourceInsert = documentId
+      ? documentEditorGateway.getRuntime<SourceMarkdownInsert>(documentId, 'sourceInsert')
+      : sourceInsertHandler;
+    const targetedVisualInsert = documentId
+      ? documentEditorGateway.getRuntime<VisualMarkdownInsert>(documentId, 'visualInsert')
+      : visualInsertHandler;
+    if (mode === 'source' && targetedSourceInsert) {
+      if (options?.token && effects) return effects.commit(options.token, () => targetedSourceInsert(snippet)).accepted;
+      targetedSourceInsert(snippet);
       return true;
     }
-    if (mode === 'visual' && visualInsertHandler) {
-      visualInsertHandler(snippet, { filePath: options?.visualDocumentPath });
+    if (mode === 'visual' && targetedVisualInsert) {
+      if (options?.token && effects) {
+        return effects.commit(options.token, () => targetedVisualInsert(snippet, { filePath: options.visualDocumentPath })).accepted;
+      }
+      targetedVisualInsert(snippet, { filePath: options?.visualDocumentPath });
       return true;
     }
     pushToast('The editor is still getting ready. Try the insert again in a moment so it lands at the cursor.', 'warning');
     return false;
-  }, [mode, pushToast, sourceInsertHandler, visualInsertHandler]);
+  }, [documentId, effects, mode, pushToast, sourceInsertHandler, visualInsertHandler]);
 
-  const insertCopiedImage = useCallback((image: { altText: string; markdownPath: string }, documentPath: string) => {
-    return insertMarkdown(`${platformHost.assets.markdownImageSyntax(image.altText, image.markdownPath)}\n`, { visualDocumentPath: documentPath });
+  const insertCopiedImage = useCallback((image: { altText: string; markdownPath: string }, documentPath: string, token?: EffectToken) => {
+    return insertMarkdown(`${platformHost.assets.markdownImageSyntax(image.altText, image.markdownPath)}\n`, { visualDocumentPath: documentPath, token });
   }, [insertMarkdown, platformHost]);
 
   const insertImageFromPath = useCallback(async (imagePath: string, promptForAlt = false) => {
+    const token = documentId && effects ? effects.begin(documentId, 'asset-insertion') : null;
     try {
-      const documentPath = await ensureDocumentPathForAssets();
+      const documentPath = await ensureDocumentPathForAssets(documentId);
       if (!documentPath) return;
+      if (token && effects && !effects.isCurrent(token)) return;
       if (!editorCanInsertMarkdown()) {
         pushToast('The editor is still getting ready. Try the image insert again in a moment.', 'warning');
         return;
@@ -62,16 +82,19 @@ export function useImageInsertion({
       if (requestedAlt === null) return;
       const grantedImagePath = await platformHost.assets.grantExternalImagePath(imagePath);
       const image = await platformHost.assets.copyImageToAssets(documentPath, grantedImagePath, requestedAlt.trim() || defaultAlt);
-      if (insertCopiedImage(image, documentPath)) pushToast('Image inserted', 'success');
+      if (insertCopiedImage(image, documentPath, token ?? undefined)) pushToast('Image inserted', 'success');
     } catch (error) {
+      if (token && effects && !effects.isCurrent(token)) return;
       pushToast(error instanceof Error ? error.message : 'Image insertion failed.', 'error');
     }
-  }, [editorCanInsertMarkdown, ensureDocumentPathForAssets, insertCopiedImage, platformHost, promptText, pushToast]);
+  }, [documentId, editorCanInsertMarkdown, effects, ensureDocumentPathForAssets, insertCopiedImage, platformHost, promptText, pushToast]);
 
   const insertImageBlob = useCallback(async (blob: Blob, preferredName?: string) => {
+    const token = documentId && effects ? effects.begin(documentId, 'asset-insertion') : null;
     try {
-      const documentPath = await ensureDocumentPathForAssets();
+      const documentPath = await ensureDocumentPathForAssets(documentId);
       if (!documentPath) return;
+      if (token && effects && !effects.isCurrent(token)) return;
       if (!editorCanInsertMarkdown()) {
         pushToast('The editor is still getting ready. Try the paste again in a moment.', 'warning');
         return;
@@ -80,11 +103,12 @@ export function useImageInsertion({
       const defaultAlt = platformHost.assets.defaultImageAlt(fileName);
       const bytes = await platformHost.assets.blobToByteArray(blob);
       const image = await platformHost.assets.saveImageBytesToAssets(documentPath, fileName, bytes, defaultAlt);
-      if (insertCopiedImage(image, documentPath)) pushToast('Image pasted', 'success');
+      if (insertCopiedImage(image, documentPath, token ?? undefined)) pushToast('Image pasted', 'success');
     } catch (error) {
+      if (token && effects && !effects.isCurrent(token)) return;
       pushToast(error instanceof Error ? error.message : 'Pasted image could not be saved.', 'error');
     }
-  }, [editorCanInsertMarkdown, ensureDocumentPathForAssets, insertCopiedImage, platformHost, pushToast]);
+  }, [documentId, editorCanInsertMarkdown, effects, ensureDocumentPathForAssets, insertCopiedImage, platformHost, pushToast]);
 
   const handleInsertImage = useCallback(async () => {
     try {

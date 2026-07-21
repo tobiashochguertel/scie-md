@@ -33,6 +33,19 @@ afterEach(() => {
 });
 
 describe('fileWatchService', () => {
+  it('registers Windows path aliases only once across watcher scopes', async () => {
+    runtimeWindow.__TAURI_INTERNALS__ = {};
+    const { updateWatchedFiles } = await loadService();
+    invokeMock.mockResolvedValue(undefined);
+
+    await updateWatchedFiles('document:a', ['C:\\Lab\\Paper.md']);
+    await updateWatchedFiles('document:b', ['\\\\?\\c:\\lab\\paper.md']);
+
+    expect(invokeMock).toHaveBeenLastCalledWith('watch_files_for_changes', {
+      paths: ['C:\\Lab\\Paper.md'],
+    });
+  });
+
   it('coalesces rapid watcher updates to the latest desired path union', async () => {
     runtimeWindow.__TAURI_INTERNALS__ = {};
     const { updateWatchedFiles } = await loadService();

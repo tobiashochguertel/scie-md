@@ -17,6 +17,7 @@ interface StatusBarProps {
   formatCapabilities?: FormatUiCapabilities;
   autosaveStatus: AutosaveStatus;
   statusText: string;
+  workspaceStatus?: string | null;
   headingPath: MarkdownHeading[];
   wordCount: number;
   manuscriptScore: number;
@@ -40,6 +41,7 @@ export function StatusBar({
   formatCapabilities = MARKDOWN_UI_CAPABILITIES,
   autosaveStatus,
   statusText,
+  workspaceStatus = null,
   headingPath,
   wordCount,
   manuscriptScore,
@@ -83,6 +85,7 @@ export function StatusBar({
       <div className="status-left">
         <span className={`status-dot ${autosaveStatus}`} />
         <span className="status-save-text">{statusText}</span>
+        {workspaceStatus && <span className="status-workspace-summary" role="status">Workspace: {workspaceStatus}</span>}
         {!filePath && (
           <button type="button" className="status-inline-action warning" onClick={onSaveNow}>
             Save now

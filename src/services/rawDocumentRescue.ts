@@ -1,61 +1,101 @@
-import { readNativeRecoverySnapshot, writeNativeRecoverySnapshot } from './nativeRecoveryService';
+import { requiredFormatContributionFor, type DocumentFormat } from '@sciemd/core';
+import {
+  createUntitledLocator,
+  fallbackFileLocator,
+  sourceRevision,
+  type DocumentId,
+  type DocumentLocator,
+  type SourceRevision,
+} from '../app/documentIdentity';
+import {
+  checkpointRecoveryEntry,
+  checkpointRecoveryEntrySync,
+  flushRecoveryCatalogForTests,
+  loadRecoveryCatalog,
+} from './recoveryCatalog';
 
-interface RawDocumentRescueSnapshot {
+export interface RawDocumentRescueSnapshot {
+  documentId: DocumentId;
+  sourceText: string;
+  /** @deprecated Use sourceText. */
   markdown: string;
   filePath: string | null;
+  format: DocumentFormat;
+  sourceRevision: SourceRevision;
   updatedAt: number;
 }
 
-const RESCUE_SNAPSHOT_KEY = 'scie-md:raw-document-rescue';
-const NATIVE_SNAPSHOT_WRITE_INTERVAL_MS = 2_000;
+const SESSION_CATALOG_KEY = 'scie-md:raw-document-rescue-catalog:v1';
+const LEGACY_SESSION_SNAPSHOT_KEY = 'scie-md:raw-document-rescue';
 export const RAW_RESCUE_SESSION_STORAGE_MAX_BYTES = 512 * 1024;
 export const RAW_RESCUE_NATIVE_MAX_BYTES = 64 * 1024 * 1024;
 const RAW_RESCUE_TRUNCATED_SECTION_CHARS = 1024 * 1024;
 
-let currentSnapshot: RawDocumentRescueSnapshot | null = null;
-let pendingNativeSnapshot: RawDocumentRescueSnapshot | null = null;
-let nativeSnapshotTimer: number | undefined;
-let nativeSnapshotWriteInFlight = false;
-let lastNativeSnapshotWriteAt = 0;
-
-export function updateRawDocumentRescue(markdown: string, filePath: string | null): void {
-  currentSnapshot = { markdown, filePath, updatedAt: Date.now() };
-  const policy = rawDocumentRescuePolicy(markdown);
-  try {
-    window.sessionStorage.setItem(RESCUE_SNAPSHOT_KEY, JSON.stringify(sessionStorageSnapshot(currentSnapshot, policy)));
-  } catch {
-    // The in-memory snapshot still covers same-session error recovery.
-  }
-  scheduleNativeSnapshotWrite(currentSnapshot, policy.sessionStorage === 'skipped');
+export function updateRawDocumentRescue(
+  sourceText: string,
+  filePath: string | null,
+  options: {
+    documentId?: DocumentId;
+    locator?: DocumentLocator;
+    format?: DocumentFormat;
+    sourceRevision?: SourceRevision;
+  } = {},
+): void {
+  const documentId = options.documentId ?? compatibilityDocumentId(filePath);
+  const locator = options.locator ?? (filePath ? fallbackFileLocator(filePath) : compatibilityUntitledLocator());
+  const format = options.format ?? 'markdown';
+  const revision = options.sourceRevision ?? sourceRevision(0);
+  const updatedAt = Date.now();
+  const policy = rawDocumentRescuePolicy(sourceText);
+  const snapshot: RawDocumentRescueSnapshot = {
+    documentId,
+    sourceText,
+    markdown: sourceText,
+    filePath,
+    format,
+    sourceRevision: revision,
+    updatedAt,
+  };
+  writeSessionCatalogSnapshot(snapshot, policy);
+  checkpointRecoveryEntrySync({ documentId, sourceRevision: revision, locator, sourceText, format, savedAt: updatedAt });
+  void checkpointRecoveryEntry({
+    documentId,
+    sourceRevision: revision,
+    locator,
+    sourceText,
+    format,
+    savedAt: updatedAt,
+    nativeSourceText: nativeRescueMarkdown(sourceText),
+  });
 }
 
-export function getRawDocumentRescueSnapshot(): RawDocumentRescueSnapshot | null {
-  if (currentSnapshot) return currentSnapshot;
-  try {
-    const raw = window.sessionStorage.getItem(RESCUE_SNAPSHOT_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<RawDocumentRescueSnapshot> & { nativeFallbackOnly?: boolean };
-    if (typeof parsed.markdown !== 'string' || parsed.nativeFallbackOnly) return null;
-    currentSnapshot = {
-      markdown: parsed.markdown,
-      filePath: typeof parsed.filePath === 'string' ? parsed.filePath : null,
-      updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0,
-    };
-    return currentSnapshot;
-  } catch {
-    return null;
-  }
+export function getRawDocumentRescueSnapshot(documentId?: DocumentId): RawDocumentRescueSnapshot | null {
+  const snapshots = readSessionCatalogSnapshots();
+  if (documentId) return snapshots.find((snapshot) => snapshot.documentId === documentId) ?? null;
+  return snapshots.sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null;
+}
+
+export function listRawDocumentRescueSnapshots(): RawDocumentRescueSnapshot[] {
+  return readSessionCatalogSnapshots().sort((left, right) => right.updatedAt - left.updatedAt);
 }
 
 export function hasRawDocumentRescueMarkdown(): boolean {
-  return Boolean(getRawDocumentRescueSnapshot()?.markdown.length);
+  return listRawDocumentRescueSnapshots().some((snapshot) => snapshot.sourceText.length > 0);
 }
 
-export async function exportRawDocumentRescueMarkdown(): Promise<boolean> {
-  const snapshot = getRawDocumentRescueSnapshot() ?? await getNativeRawDocumentRescueSnapshot();
-  if (!snapshot) return false;
+/** Compatibility name retained for AppErrorBoundary; exports the requested/latest generic source entry. */
+export async function exportRawDocumentRescueMarkdown(documentId?: DocumentId): Promise<boolean> {
+  const entries = await loadRecoveryCatalog();
+  const entry = documentId
+    ? entries.find((candidate) => candidate.documentId === documentId)
+    : entries[0];
+  const sessionFallback = getRawDocumentRescueSnapshot(documentId);
+  const sourceText = entry?.sourceText ?? sessionFallback?.sourceText;
+  const format = entry?.format ?? sessionFallback?.format;
+  const filePath = entry?.locator.kind === 'file' ? entry.locator.displayPath : sessionFallback?.filePath ?? null;
+  if (sourceText === undefined || !format) return false;
   try {
-    downloadMarkdown(snapshot.markdown, rescueFileName(snapshot.filePath));
+    downloadSource(sourceText, rescueFileName(filePath, format), mediaTypeForFormat(format));
     return true;
   } catch {
     return false;
@@ -63,122 +103,107 @@ export async function exportRawDocumentRescueMarkdown(): Promise<boolean> {
 }
 
 export async function flushRawDocumentRescueSnapshotForTests(): Promise<void> {
-  if (nativeSnapshotTimer !== undefined) {
-    window.clearTimeout(nativeSnapshotTimer);
-    nativeSnapshotTimer = undefined;
-  }
-  await drainNativeSnapshotWrite();
+  await flushRecoveryCatalogForTests();
 }
 
-export function rawDocumentRescuePolicy(markdown: string, nativeMaxBytes = RAW_RESCUE_NATIVE_MAX_BYTES): {
+export function rawDocumentRescuePolicy(sourceText: string, nativeMaxBytes = RAW_RESCUE_NATIVE_MAX_BYTES): {
   markdownBytes: number;
+  sourceTextBytes: number;
   sessionStorage: 'full' | 'skipped';
   nativeStorage: 'full' | 'truncated';
 } {
-  const markdownBytes = byteLength(markdown);
+  const sourceTextBytes = byteLength(sourceText);
   return {
-    markdownBytes,
-    sessionStorage: markdownBytes <= RAW_RESCUE_SESSION_STORAGE_MAX_BYTES ? 'full' : 'skipped',
-    nativeStorage: markdownBytes <= nativeMaxBytes ? 'full' : 'truncated',
+    markdownBytes: sourceTextBytes,
+    sourceTextBytes,
+    sessionStorage: sourceTextBytes <= RAW_RESCUE_SESSION_STORAGE_MAX_BYTES ? 'full' : 'skipped',
+    nativeStorage: sourceTextBytes <= nativeMaxBytes ? 'full' : 'truncated',
   };
 }
 
-export function nativeRescueMarkdown(markdown: string, nativeMaxBytes = RAW_RESCUE_NATIVE_MAX_BYTES): string {
-  const policy = rawDocumentRescuePolicy(markdown, nativeMaxBytes);
-  if (policy.nativeStorage === 'full') return markdown;
-  const head = markdown.slice(0, RAW_RESCUE_TRUNCATED_SECTION_CHARS);
-  const tail = markdown.slice(Math.max(head.length, markdown.length - RAW_RESCUE_TRUNCATED_SECTION_CHARS));
+/** Compatibility name retained; truncation is format-neutral source text. */
+export function nativeRescueMarkdown(sourceText: string, nativeMaxBytes = RAW_RESCUE_NATIVE_MAX_BYTES): string {
+  const policy = rawDocumentRescuePolicy(sourceText, nativeMaxBytes);
+  if (policy.nativeStorage === 'full') return sourceText;
+  const head = sourceText.slice(0, RAW_RESCUE_TRUNCATED_SECTION_CHARS);
+  const tail = sourceText.slice(Math.max(head.length, sourceText.length - RAW_RESCUE_TRUNCATED_SECTION_CHARS));
   return [
-    '<!-- ScieMD rescue snapshot truncated.',
-    `Original markdown bytes: ${policy.markdownBytes}.`,
+    'ScieMD rescue snapshot truncated.',
+    `Original markdown bytes: ${policy.sourceTextBytes}.`,
     `Native rescue cap bytes: ${nativeMaxBytes}.`,
-    'The beginning and end of the document are preserved below; the middle was omitted to keep diagnostics storage bounded.',
-    '-->',
+    'The beginning and end are preserved; the middle was omitted from the bounded native fallback.',
     '',
     head,
     '',
-    '<!-- ScieMD rescue snapshot middle omitted. -->',
+    '[ScieMD rescue snapshot middle omitted]',
     '',
     tail,
-    '',
-    '<!-- End truncated ScieMD rescue snapshot. -->',
   ].join('\n');
 }
 
-function sessionStorageSnapshot(
-  snapshot: RawDocumentRescueSnapshot,
-  policy: ReturnType<typeof rawDocumentRescuePolicy>,
-): RawDocumentRescueSnapshot | {
-  markdown: '';
-  filePath: string | null;
-  updatedAt: number;
-  markdownBytes: number;
-  nativeFallbackOnly: true;
-  reason: string;
-} {
-  if (policy.sessionStorage === 'full') return snapshot;
-  return {
-    markdown: '',
-    filePath: snapshot.filePath,
-    updatedAt: snapshot.updatedAt,
-    markdownBytes: policy.markdownBytes,
-    nativeFallbackOnly: true,
-    reason: `Raw Markdown exceeded the ${RAW_RESCUE_SESSION_STORAGE_MAX_BYTES} byte sessionStorage cap and was written to native recovery storage instead.`,
-  };
-}
-
-function scheduleNativeSnapshotWrite(snapshot: RawDocumentRescueSnapshot, immediate = false): void {
-  pendingNativeSnapshot = snapshot;
-  if (immediate) {
-    if (nativeSnapshotTimer !== undefined) {
-      window.clearTimeout(nativeSnapshotTimer);
-      nativeSnapshotTimer = undefined;
-    }
-    void drainNativeSnapshotWrite();
-    return;
-  }
-  if (nativeSnapshotTimer !== undefined) return;
-  const elapsed = Date.now() - lastNativeSnapshotWriteAt;
-  const delay = Math.max(0, NATIVE_SNAPSHOT_WRITE_INTERVAL_MS - elapsed);
-  nativeSnapshotTimer = window.setTimeout(() => {
-    nativeSnapshotTimer = undefined;
-    void drainNativeSnapshotWrite();
-  }, delay);
-}
-
-async function drainNativeSnapshotWrite(): Promise<void> {
-  if (nativeSnapshotWriteInFlight) return;
-  const snapshot = pendingNativeSnapshot;
-  if (!snapshot) return;
-  pendingNativeSnapshot = null;
-  nativeSnapshotWriteInFlight = true;
-  lastNativeSnapshotWriteAt = Date.now();
+function writeSessionCatalogSnapshot(snapshot: RawDocumentRescueSnapshot, policy: ReturnType<typeof rawDocumentRescuePolicy>): void {
+  if (typeof window === 'undefined') return;
+  const existing = readSessionCatalogSnapshots().filter((entry) => entry.documentId !== snapshot.documentId);
+  const stored = policy.sessionStorage === 'full'
+    ? snapshot
+    : { ...snapshot, sourceText: '', markdown: '' };
   try {
-    await writeNativeRecoverySnapshot({
-      markdown: nativeRescueMarkdown(snapshot.markdown),
-      filePath: snapshot.filePath,
-      updatedAtMs: snapshot.updatedAt,
-    });
-  } finally {
-    nativeSnapshotWriteInFlight = false;
-    if (pendingNativeSnapshot && nativeSnapshotTimer === undefined) {
-      scheduleNativeSnapshotWrite(pendingNativeSnapshot);
-    }
+    window.sessionStorage.setItem(SESSION_CATALOG_KEY, JSON.stringify({ schemaVersion: 1, entries: [...existing, stored] }));
+    window.sessionStorage.setItem(LEGACY_SESSION_SNAPSHOT_KEY, JSON.stringify(
+      policy.sessionStorage === 'full'
+        ? snapshot
+        : { ...snapshot, sourceText: '', markdown: '', nativeFallbackOnly: true },
+    ));
+  } catch {
+    // The versioned browser/native recovery catalog remains authoritative.
   }
 }
 
-async function getNativeRawDocumentRescueSnapshot(): Promise<RawDocumentRescueSnapshot | null> {
-  const snapshot = await readNativeRecoverySnapshot();
-  if (!snapshot?.markdown) return null;
-  return {
-    markdown: snapshot.markdown,
-    filePath: snapshot.filePath,
-    updatedAt: snapshot.updatedAtMs,
-  };
+function readSessionCatalogSnapshots(): RawDocumentRescueSnapshot[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.sessionStorage.getItem(SESSION_CATALOG_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as { schemaVersion?: unknown; entries?: unknown };
+    if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.entries)) return [];
+    return parsed.entries.flatMap((value) => normalizeSessionSnapshot(value));
+  } catch {
+    return [];
+  }
 }
 
-function downloadMarkdown(markdown: string, fileName: string): void {
-  const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+function normalizeSessionSnapshot(value: unknown): RawDocumentRescueSnapshot[] {
+  if (!value || typeof value !== 'object') return [];
+  const record = value as Partial<RawDocumentRescueSnapshot>;
+  const sourceText = typeof record.sourceText === 'string' ? record.sourceText : record.markdown;
+  if (
+    typeof record.documentId !== 'string'
+    || typeof sourceText !== 'string'
+    || typeof record.updatedAt !== 'number'
+    || typeof record.sourceRevision !== 'number'
+    || !isDocumentFormat(record.format)
+  ) return [];
+  return [{
+    documentId: record.documentId as DocumentId,
+    sourceText,
+    markdown: sourceText,
+    filePath: typeof record.filePath === 'string' ? record.filePath : null,
+    format: record.format,
+    sourceRevision: record.sourceRevision as SourceRevision,
+    updatedAt: record.updatedAt,
+  }];
+}
+
+function compatibilityDocumentId(filePath: string | null): DocumentId {
+  return `legacy-raw-rescue:${filePath ?? 'untitled'}` as DocumentId;
+}
+
+function compatibilityUntitledLocator(): DocumentLocator {
+  return { kind: 'untitled', untitledId: 'legacy-raw-rescue' as never };
+}
+
+function downloadSource(sourceText: string, fileName: string, mediaType: string): void {
+  const blob = new Blob([sourceText], { type: `${mediaType};charset=utf-8` });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -189,14 +214,23 @@ function downloadMarkdown(markdown: string, fileName: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-function rescueFileName(filePath: string | null): string {
-  if (!filePath) return 'scie-md-rescue.md';
-  const baseName = filePath.split(/[\\/]/).filter(Boolean).at(-1) ?? 'document.md';
-  const withoutExtension = baseName.replace(/\.(md|markdown|mdown|mkdn)$/i, '');
-  return `${withoutExtension || 'document'}.rescue.md`;
+function rescueFileName(filePath: string | null, format: DocumentFormat): string {
+  const extension = requiredFormatContributionFor(format).extensions[0];
+  if (!filePath) return `scie-md-rescue.${extension}`;
+  const baseName = filePath.split(/[\\/]/).filter(Boolean).at(-1) ?? `document.${extension}`;
+  const stem = baseName.replace(/\.[^.]+$/, '') || 'document';
+  return `${stem}.rescue.${extension}`;
+}
+
+function mediaTypeForFormat(format: DocumentFormat): string {
+  return requiredFormatContributionFor(format).mediaTypes[0];
+}
+
+function isDocumentFormat(value: unknown): value is DocumentFormat {
+  return value === 'markdown' || value === 'json' || value === 'jsonl' || value === 'yaml'
+    || value === 'toml' || value === 'xml' || value === 'csv' || value === 'tsv' || value === 'plainText';
 }
 
 function byteLength(value: string): number {
-  if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(value).byteLength;
-  return unescape(encodeURIComponent(value)).length;
+  return new TextEncoder().encode(value).byteLength;
 }

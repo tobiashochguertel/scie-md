@@ -4,6 +4,8 @@ import { createRoot, Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ModalShell } from './ModalShell';
 import { ToastViewport } from './ToastViewport';
+import { WorkspaceTabStrip } from '../app/WorkspaceTabStrip';
+import { createDocumentId } from '../app/documentIdentity';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -26,6 +28,7 @@ describe('accessibility axe smoke', () => {
   });
 
   it('keeps dialog and toast primitives free of axe violations', async () => {
+    const documentId = createDocumentId();
     act(() => {
       root.render(
         <>
@@ -44,6 +47,22 @@ describe('accessibility axe smoke', () => {
             onPause={() => undefined}
             onResume={() => undefined}
           />
+          <WorkspaceTabStrip
+            model={{
+              activeDocumentId: documentId,
+              mruDocumentId: null,
+              recentlyClosedCount: 0,
+              tabs: [{ documentId, label: 'paper.md', accessibleName: 'paper.md, MARKDOWN, active, Unsaved, tab 1 of 1', formatLabel: 'MARKDOWN', statuses: ['Unsaved'], active: true, index: 0, count: 1, canMoveLeft: false, canMoveRight: false }],
+            }}
+            onActivate={() => undefined}
+            onClose={() => undefined}
+            onCloseOthers={() => undefined}
+            onCloseRight={() => undefined}
+            onReorder={() => undefined}
+            onReopenClosed={() => undefined}
+            onSaveAll={() => undefined}
+          />
+          <div role="tabpanel" id={`workspace-panel-${encodeURIComponent(documentId)}`} aria-labelledby={`workspace-tab-${encodeURIComponent(documentId)}`}>Editor</div>
         </>,
       );
     });

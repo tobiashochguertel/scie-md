@@ -26,6 +26,22 @@
   line-height: var(--editor-line-height);
 }
 
+.source-editor .cm-selectionBackground,
+.source-editor .cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground {
+  background: var(--source-selection-bg);
+}
+
+.source-editor .cm-searchMatch {
+  border: 1px solid var(--source-search-border);
+  background: var(--source-search-bg);
+}
+
+.source-editor .cm-searchMatch.cm-searchMatch-selected,
+.source-editor .cm-lintRange-error {
+  text-decoration-color: var(--source-diagnostic-underline);
+  text-decoration-thickness: 2px;
+}
+
 .source-editor-status-strip {
   position: absolute;
   top: calc(8px + var(--editor-floating-top-safe));

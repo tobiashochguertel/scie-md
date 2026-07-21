@@ -851,6 +851,30 @@
 
 @media (forced-colors: active) {
   :root {
+    --source-syntax-heading: CanvasText;
+    --source-syntax-strong: CanvasText;
+    --source-syntax-emphasis: CanvasText;
+    --source-syntax-link: LinkText;
+    --source-syntax-code: CanvasText;
+    --source-syntax-list: CanvasText;
+    --source-syntax-quote: CanvasText;
+    --source-syntax-meta: CanvasText;
+    --source-syntax-comment: GrayText;
+    --source-syntax-punctuation: CanvasText;
+    --source-syntax-property: CanvasText;
+    --source-syntax-tag: CanvasText;
+    --source-syntax-attribute: CanvasText;
+    --source-syntax-string: CanvasText;
+    --source-syntax-number: CanvasText;
+    --source-syntax-bool: CanvasText;
+    --source-syntax-keyword: CanvasText;
+    --source-syntax-invalid: Mark;
+    --source-selection-bg: Highlight;
+    --source-search-bg: Highlight;
+    --source-search-border: HighlightText;
+    --source-diagnostic-underline: Mark;
+  }
+  :root {
     --bg: Canvas;
     --surface: Canvas;
     --surface-soft: Canvas;

@@ -2,6 +2,7 @@ import { normalizeVisualStyleId } from './visualStyleService';
 import type { VisualStyleId } from './visualStyleService';
 import { DEFAULT_EXPORT_OPTIONS, normalizeExportOptions } from '../export/exportTypes';
 import type { ExportRequestOptions } from '../export/exportTypes';
+import { canonicalComparisonKey } from '../app/documentIdentity';
 
 export interface PersistedSettings {
   recentFiles: string[];
@@ -59,7 +60,7 @@ export function loadSettings(): PersistedSettings {
     const visualStyle = shouldMigrateLegacyDefault ? 'science' : parsedVisualStyle ?? DEFAULT_SETTINGS.visualStyle;
 
     const settings = {
-      recentFiles: Array.isArray(parsed.recentFiles) ? parsed.recentFiles.filter((item) => typeof item === 'string').slice(0, RECENT_LIMIT) : [],
+      recentFiles: Array.isArray(parsed.recentFiles) ? uniqueRecentFiles(parsed.recentFiles) : [],
       themeMode: isThemeMode(parsed.themeMode) ? parsed.themeMode : DEFAULT_SETTINGS.themeMode,
       fontScale: normalizeFontScale(parsed.fontScale),
       visualStyle,
@@ -116,10 +117,25 @@ export function updateSettings(patch: Partial<PersistedSettings>): PersistedSett
 
 export function rememberRecentFile(filePath: string): PersistedSettings {
   const settings = loadSettings();
-  const recentFiles = [filePath, ...settings.recentFiles.filter((item) => item !== filePath)].slice(0, RECENT_LIMIT);
+  const pathKey = canonicalComparisonKey(filePath);
+  const recentFiles = [filePath, ...settings.recentFiles.filter((item) => canonicalComparisonKey(item) !== pathKey)].slice(0, RECENT_LIMIT);
   const next = { ...settings, recentFiles };
   saveSettings(next);
   return next;
+}
+
+function uniqueRecentFiles(values: unknown[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const key = canonicalComparisonKey(value);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(value);
+    if (result.length >= RECENT_LIMIT) break;
+  }
+  return result;
 }
 
 function isThemeMode(value: unknown): value is ThemeMode {
@@ -152,9 +168,10 @@ function shouldMigrateLegacyScienfyDefault(rawVisualStyle: unknown, visualStyle:
 
 export function forgetRecentFile(filePath: string): PersistedSettings {
   const settings = loadSettings();
+  const pathKey = canonicalComparisonKey(filePath);
   const next = {
     ...settings,
-    recentFiles: settings.recentFiles.filter((item) => item !== filePath),
+    recentFiles: settings.recentFiles.filter((item) => canonicalComparisonKey(item) !== pathKey),
   };
   saveSettings(next);
   return next;

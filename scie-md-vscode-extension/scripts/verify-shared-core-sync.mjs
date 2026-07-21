@@ -12,6 +12,12 @@ const writeReport = process.argv.includes('--write-report');
 
 const mirroredGroups = [
   {
+    label: 'source semantic presentation factory',
+    sourceRoot: path.join(repoRoot, 'src', 'components'),
+    copyRoot: path.join(extensionRoot, 'src', 'scie-md', 'components'),
+    files: ['sourceSemanticHighlighting.ts'],
+  },
+  {
     label: 'webview markdown copy',
     sourceRoot: path.join(repoRoot, 'src', 'markdown'),
     copyRoot: path.join(extensionRoot, 'src', 'scie-md', 'markdown'),
@@ -65,8 +71,6 @@ const mirroredGroups = [
       'citations/crossref.test.ts',
       'citations/crossref.ts',
       'document/documentParser.worker.ts',
-      'document/documentParserWorker.test.ts',
-      'document/documentParserWorker.ts',
       'document/documentPerformance.test.ts',
       'document/templates.ts',
     ],
@@ -88,6 +92,34 @@ const mirroredGroups = [
 ];
 
 const divergentMirrorClassifications = new Map([
+  [
+    'app/keyboardShortcuts.ts',
+    {
+      category: 'hostAdapter',
+      reason: 'desktop owns multi-document tab lifecycle shortcuts; VS Code owns its editor tabs and the extension must not implement a second workspace kernel.',
+    },
+  ],
+  [
+    'domain/document/documentParserWorker.ts',
+    {
+      category: 'hostAdapter',
+      reason: 'desktop parsing carries document/revision effect tokens; the VS Code host owns one webview document and intentionally has no desktop workspace effect coordinator.',
+    },
+  ],
+  [
+    'domain/document/documentParserWorker.test.ts',
+    {
+      category: 'hostAdapter',
+      reason: 'desktop tests targeted multi-document parser cancellation; extension tests retain the single-webview parser lifecycle contract.',
+    },
+  ],
+  [
+    'app/documentState.ts',
+    {
+      category: 'hostAdapter',
+      reason: 'desktop source-fidelity envelopes are owned by the native file host; the extension receives canonical document text from VS Code.',
+    },
+  ],
   [
     'components/AboutDialog.tsx',
     {
@@ -159,6 +191,20 @@ const divergentMirrorClassifications = new Map([
     },
   ],
   [
+    'components/UnsavedDialog.tsx',
+    {
+      category: 'hostAdapter',
+      reason: 'desktop close transactions can aggregate several workspace documents; VS Code owns tab closure and prompts the extension for one custom-editor document.',
+    },
+  ],
+  [
+    'components/accessibilityAxe.test.tsx',
+    {
+      category: 'hostAdapter',
+      reason: 'desktop axe coverage includes the production workspace tab strip; VS Code owns extension tab semantics and the webview tests only shared dialog/toast primitives.',
+    },
+  ],
+  [
     'components/TemplateDialog.tsx',
     {
       category: 'hostAdapter',
@@ -215,10 +261,24 @@ const divergentMirrorClassifications = new Map([
     },
   ],
   [
+    'components/visualEditorStateSync.test.ts',
+    {
+      category: 'hostAdapter',
+      reason: 'desktop tests document-keyed adapter reads; extension tests its intentionally single-document compatibility slot.',
+    },
+  ],
+  [
     'services/fileService.ts',
     {
       category: 'hostAdapter',
       reason: 'desktop file operations call Tauri commands; the extension bundles only webview-safe code and guards VSIX output.',
+    },
+  ],
+  [
+    'services/settingsService.ts',
+    {
+      category: 'hostAdapter',
+      reason: 'desktop recent-file identity migration depends on the desktop document identity authority; the single-document VS Code webview does not own a workspace recent-file registry.',
     },
   ],
   [

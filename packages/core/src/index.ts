@@ -22,3 +22,4 @@ export * from './markdown/targetedInstructions.js';
 export * from './markdown/textOffsets.js';
 export * from './markdown/variants.js';
 export * from './security/htmlSanitizerPolicy.js';
+export * from './sourcePresentation.js';

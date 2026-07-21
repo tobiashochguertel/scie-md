@@ -4,13 +4,10 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isTauriRuntime } from '../runtime';
 
 interface WindowChromeParams {
-  dirty: boolean;
-  onDirtyCloseRequested?: () => void;
-  setCloseDialogOpen: (open: boolean) => void;
-  closeWindow: () => Promise<void>;
+  closeWindow: () => Promise<unknown>;
 }
 
-export function useWindowChrome({ dirty, onDirtyCloseRequested, setCloseDialogOpen, closeWindow }: WindowChromeParams) {
+export function useWindowChrome({ closeWindow }: WindowChromeParams) {
   const handleWindowMinimize = useCallback(() => {
     if (!isTauriRuntime()) return;
     void getCurrentWindow().minimize().catch((error) => {
@@ -26,15 +23,10 @@ export function useWindowChrome({ dirty, onDirtyCloseRequested, setCloseDialogOp
   }, []);
 
   const handleWindowClose = useCallback(() => {
-    if (dirty) {
-      onDirtyCloseRequested?.();
-      setCloseDialogOpen(true);
-      return;
-    }
     void closeWindow().catch((error) => {
       console.warn('Window close failed.', error);
     });
-  }, [closeWindow, dirty, onDirtyCloseRequested, setCloseDialogOpen]);
+  }, [closeWindow]);
 
   const handleTitlebarMouseDown = useCallback((event: ReactMouseEvent<HTMLElement>) => {
     if (event.button !== 0 || !isTauriRuntime() || isInteractiveTitlebarTarget(event.target)) return;

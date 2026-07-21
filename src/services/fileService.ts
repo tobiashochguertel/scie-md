@@ -1,8 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { DocumentFormat } from '@sciemd/core';
 import type { FileMetadata, ReadTextFileResponse } from '../app/documentState';
-import { DEFAULT_METADATA } from '../app/documentState';
+import { createSourceEnvelope, DEFAULT_METADATA, normalizeFileMetadata } from '../app/documentState';
 import type { PandocExportFormat } from '../export/exportTypes';
+import type { NativeDocumentLocator } from '../app/documentIdentity';
 
 export type FileExplorerEntryKind =
   | 'directory'
@@ -31,12 +32,20 @@ export interface GeneratedSiblingArtifactResponse {
   metadata: FileMetadata;
 }
 
+export async function resolveDocumentLocator(path: string, allowMissing = false): Promise<NativeDocumentLocator> {
+  return invoke<NativeDocumentLocator>('resolve_document_locator', { path, allowMissing });
+}
+
 export async function pickMarkdownFile(): Promise<string | null> {
   return invoke<string | null>('pick_markdown_file');
 }
 
 export async function pickDocumentFile(): Promise<string | null> {
   return invoke<string | null>('pick_document_file');
+}
+
+export async function pickDocumentFiles(): Promise<string[]> {
+  return invoke<string[]>('pick_document_files');
 }
 
 export async function pickJsonSchemaFile(): Promise<string | null> {
@@ -115,11 +124,11 @@ export async function clearPendingDocumentOpen(path: string): Promise<void> {
 }
 
 export async function readTextFile(path: string): Promise<ReadTextFileResponse> {
-  return invoke<ReadTextFileResponse>('read_text_file', { path });
+  return normalizeReadResponse(await invoke<NativeReadTextFileResponse>('read_text_file', { path }));
 }
 
 export async function readTextFileForEdit(path: string): Promise<ReadTextFileResponse> {
-  return invoke<ReadTextFileResponse>('read_text_file_for_edit', { path });
+  return normalizeReadResponse(await invoke<NativeReadTextFileResponse>('read_text_file_for_edit', { path }));
 }
 
 export async function readTextFilePreview(path: string, maxBytes = 8192): Promise<{ content: string; modifiedMs: number }> {
@@ -135,10 +144,10 @@ export async function listReadableFiles(path: string): Promise<FileExplorerEntry
 }
 
 export async function statFile(path: string, options: { contentHash?: boolean } = {}): Promise<FileMetadata> {
-  return invoke<FileMetadata>('stat_file', {
+  return normalizeFileMetadata(await invoke<FileMetadata>('stat_file', {
     path,
     includeContentHash: options.contentHash ?? false,
-  });
+  }));
 }
 
 export async function writeTextFileAtomic(
@@ -148,16 +157,16 @@ export async function writeTextFileAtomic(
   expectedMetadata: FileMetadata | null = null,
 ): Promise<FileMetadata> {
   const writeMetadata = metadata ?? DEFAULT_METADATA;
-  return invoke<FileMetadata>('write_text_file_atomic', {
+  return normalizeFileMetadata(await invoke<FileMetadata>('write_text_file_atomic', {
     path,
-    markdown: sourceText,
+    sourceText,
     lineEnding: writeMetadata.lineEnding,
     encoding: writeMetadata.encoding,
     hasBom: writeMetadata.hasBom,
     expectedMtimeMs: expectedMetadata?.lastKnownMtimeMs ?? null,
     expectedSizeBytes: expectedMetadata?.lastKnownSizeBytes ?? null,
     expectedContentHash: expectedMetadata?.contentHash ?? null,
-  });
+  }));
 }
 
 export async function writeTextFileCreateNew(
@@ -166,13 +175,13 @@ export async function writeTextFileCreateNew(
   metadata: FileMetadata | null = null,
 ): Promise<FileMetadata> {
   const writeMetadata = metadata ?? DEFAULT_METADATA;
-  return invoke<FileMetadata>('write_text_file_create_new', {
+  return normalizeFileMetadata(await invoke<FileMetadata>('write_text_file_create_new', {
     path,
-    markdown: sourceText,
+    sourceText,
     lineEnding: writeMetadata.lineEnding,
     encoding: writeMetadata.encoding,
     hasBom: writeMetadata.hasBom,
-  });
+  }));
 }
 
 export async function createGeneratedSiblingArtifact(
@@ -182,7 +191,7 @@ export async function createGeneratedSiblingArtifact(
   metadata: FileMetadata | null = null,
 ): Promise<GeneratedSiblingArtifactResponse> {
   const writeMetadata = metadata ?? DEFAULT_METADATA;
-  return invoke<GeneratedSiblingArtifactResponse>('create_generated_sibling_artifact', {
+  const response = await invoke<GeneratedSiblingArtifactResponse>('create_generated_sibling_artifact', {
     documentPath,
     artifactKind,
     markdown: sourceText,
@@ -190,6 +199,24 @@ export async function createGeneratedSiblingArtifact(
     encoding: writeMetadata.encoding,
     hasBom: writeMetadata.hasBom,
   });
+  return { ...response, metadata: normalizeFileMetadata(response.metadata) };
+}
+
+interface NativeReadTextFileResponse {
+  sourceText?: string;
+  content: string;
+  metadata: Partial<FileMetadata>;
+}
+
+function normalizeReadResponse(response: NativeReadTextFileResponse): ReadTextFileResponse {
+  const sourceText = response.sourceText ?? response.content;
+  const metadata = normalizeFileMetadata(response.metadata);
+  return {
+    sourceText,
+    content: response.content ?? sourceText,
+    metadata,
+    sourceEnvelope: createSourceEnvelope(sourceText, sourceText, metadata),
+  };
 }
 
 export async function createBackupSnapshot(path: string, label: string): Promise<string | null> {

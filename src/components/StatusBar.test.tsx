@@ -136,6 +136,37 @@ describe('StatusBar', () => {
     expect(saveRequested).toBe(1);
   });
 
+  it('keeps aggregate background document state visible beside active save state', () => {
+    act(() => {
+      root.render(
+        <StatusBar
+          autosaveStatus="saved"
+          statusText="Saved"
+          workspaceStatus="2 unsaved, 1 conflicted"
+          headingPath={[]}
+          wordCount={0}
+          manuscriptScore={0}
+          manuscriptStatus="blocked"
+          errors={[]}
+          warnings={[]}
+          externalConflict={false}
+          filePath="C:\\docs\\clean.md"
+          onReviewConflict={noop}
+          onSaveAnyway={noop}
+          onReveal={noop}
+          onReload={noop}
+          onJumpToHeading={noop}
+          onOpenReadiness={noop}
+          onOpenValidation={noop}
+          onSaveNow={noop}
+        />,
+      );
+    });
+
+    expect(container.querySelector('.status-save-text')?.textContent).toBe('Saved');
+    expect(container.querySelector('.status-workspace-summary')?.textContent).toBe('Workspace: 2 unsaved, 1 conflicted');
+  });
+
   it('hides manuscript readiness and word-count indicators for source-only formats', () => {
     act(() => {
       root.render(

@@ -2,15 +2,13 @@ import type { DocumentDiagnostic, ParsedScienfyDocument, ParseScienfyDocumentOpt
 import { safeParseScienfyDocument } from '../../domain/document/documentModel';
 import type { DocumentContent, FormatAdapter, FormatDiagnostic } from '../documentFormat';
 import { createDocumentContent } from '../documentFormat';
+import { formatAdapterIdentity, requiredFormatParseBudgetBytes } from '../formatDefinitions';
 
-export const MARKDOWN_FORMAT_EXTENSIONS = ['md', 'markdown'] as const;
-export const MARKDOWN_SOURCE_ONLY_FILE_BYTES = 5 * 1024 * 1024;
+export const MARKDOWN_FORMAT_EXTENSIONS = formatAdapterIdentity('markdown').extensions;
+export const MARKDOWN_SOURCE_ONLY_FILE_BYTES = requiredFormatParseBudgetBytes('markdown');
 
 export const markdownAdapter: FormatAdapter<ParsedScienfyDocument, ParseScienfyDocumentOptions> = {
-  format: 'markdown',
-  label: 'Markdown',
-  extensions: MARKDOWN_FORMAT_EXTENSIONS,
-  mediaTypes: ['text/markdown', 'text/x-markdown'],
+  ...formatAdapterIdentity('markdown'),
   capabilities: {
     sourceEditing: true,
     sourceEditor: {

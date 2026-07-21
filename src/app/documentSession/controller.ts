@@ -6,6 +6,7 @@ import type { DocumentType } from '../../services/settingsService';
 import type { VisualStyleId } from '../../services/visualStyleService';
 import { formatFromPath } from '@sciemd/core';
 import type { DocumentFormat } from '@sciemd/core';
+import { canonicalComparisonKey } from '../documentIdentity';
 
 export interface ParsedDocumentSessionHints {
   visualStyle: string | null;
@@ -31,7 +32,7 @@ export interface DocumentSessionState {
 
 export interface OpenedDocumentInput {
   path: string | null;
-  content: string;
+  sourceText: string;
   metadata: FileMetadata;
   format?: DocumentFormat;
   preferredMode?: EditorMode;
@@ -44,7 +45,7 @@ export interface OpenedDocumentInput {
 
 export interface OpenedDocumentTransition {
   state: DocumentSessionState;
-  settingsPatch: Partial<{ visualStyle: VisualStyleId; documentType: DocumentType }>;
+  presentationPatch: Partial<{ visualStyle: VisualStyleId; documentType: DocumentType }>;
   recentFilePath: string | null;
 }
 
@@ -83,6 +84,8 @@ export type DirtyReplacementStep = 'continue' | 'flush-autosave' | 'confirm-disc
 export interface LaunchDuplicateInput {
   requestedPath: string;
   activePath: string | null;
+  requestedLocatorKey?: string;
+  activeLocatorKey?: string;
   inFlightPathKeys: ReadonlySet<string>;
   lastLaunchOpen: { pathKey: string; openedAt: number } | null;
   nowMs: number;
@@ -116,7 +119,7 @@ export function createInitialDocumentSessionState(initialSourceText: string): Do
 
 export function buildOpenedDocumentTransition({
   path,
-  content,
+  sourceText,
   metadata,
   format = inferDocumentFormat(path, DEFAULT_DOCUMENT_FORMAT),
   preferredMode,
@@ -125,20 +128,20 @@ export function buildOpenedDocumentTransition({
   parsedDocument,
   normalizeVisualStyle,
 }: OpenedDocumentInput): OpenedDocumentTransition {
-  const resolvedSavedSourceText = savedSourceText ?? savedMarkdown ?? content;
-  const settingsPatch: OpenedDocumentTransition['settingsPatch'] = {};
+  const resolvedSavedSourceText = savedSourceText ?? savedMarkdown ?? sourceText;
+  const presentationPatch: OpenedDocumentTransition['presentationPatch'] = {};
   if (parsedDocument) {
     const parsedVisualStyle = normalizeVisualStyle(parsedDocument.visualStyle);
-    if (parsedVisualStyle) settingsPatch.visualStyle = parsedVisualStyle;
+    if (parsedVisualStyle) presentationPatch.visualStyle = parsedVisualStyle;
     const documentType = settingsDocumentTypeFor(parsedDocument.documentType);
-    if (documentType) settingsPatch.documentType = documentType;
+    if (documentType) presentationPatch.documentType = documentType;
   }
 
   return {
     state: {
-      sourceText: content,
+      sourceText,
       lastSavedSourceText: resolvedSavedSourceText,
-      markdown: content,
+      markdown: sourceText,
       lastSavedMarkdown: resolvedSavedSourceText,
       format,
       filePath: path,
@@ -149,24 +152,24 @@ export function buildOpenedDocumentTransition({
       externalConflict: false,
       authorshipMarks: [],
     },
-    settingsPatch,
+    presentationPatch,
     recentFilePath: path,
   };
 }
 
 export function buildReviewedDiskMergeTransition(
-  content: string,
-  diskContent: string,
+  sourceText: string,
+  diskSourceText: string,
   diskMetadata: FileMetadata,
 ): DiskMergeTransition {
   return {
     state: {
-      sourceText: content,
-      lastSavedSourceText: diskContent,
-      markdown: content,
-      lastSavedMarkdown: diskContent,
+      sourceText,
+      lastSavedSourceText: diskSourceText,
+      markdown: sourceText,
+      lastSavedMarkdown: diskSourceText,
       fileMetadata: diskMetadata,
-      autosaveStatus: content === diskContent ? 'saved' : 'pending',
+      autosaveStatus: sourceText === diskSourceText ? 'saved' : 'pending',
       lastAutosavedAt: null,
       externalConflict: false,
     },
@@ -222,14 +225,16 @@ export function nextDirtyReplacementStep(input: DirtyReplacementInput): DirtyRep
 export function decideLaunchDuplicate({
   requestedPath,
   activePath,
+  requestedLocatorKey,
+  activeLocatorKey,
   inFlightPathKeys,
   lastLaunchOpen,
   nowMs,
   duplicateWindowMs,
 }: LaunchDuplicateInput): LaunchDuplicateDecision {
   const path = requestedPath.trim();
-  const pathKey = keyForLaunchPath(path);
-  const activePathKey = activePath ? keyForLaunchPath(activePath) : '';
+  const pathKey = requestedLocatorKey ?? canonicalComparisonKey(path);
+  const activePathKey = activeLocatorKey ?? (activePath ? canonicalComparisonKey(activePath) : '');
   if (activePathKey === pathKey) {
     return {
       duplicate: true,
@@ -278,10 +283,6 @@ export function inferDocumentFormat(
   fallback: DocumentFormat = DEFAULT_DOCUMENT_FORMAT,
 ): DocumentFormat {
   return formatFromPath(path) ?? fallback;
-}
-
-export function keyForLaunchPath(path: string): string {
-  return path.trim().replace(/\//g, '\\').toLowerCase();
 }
 
 export function settingsDocumentTypeFor(value: string | null): DocumentType | null {

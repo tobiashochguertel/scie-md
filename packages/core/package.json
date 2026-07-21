@@ -67,6 +67,7 @@
     "./markdown/targetedInstructions": "./src/markdown/targetedInstructions.ts",
     "./markdown/textOffsets": "./src/markdown/textOffsets.ts",
     "./markdown/variants": "./src/markdown/variants.ts",
-    "./security/htmlSanitizerPolicy": "./src/security/htmlSanitizerPolicy.ts"
+    "./security/htmlSanitizerPolicy": "./src/security/htmlSanitizerPolicy.ts",
+    "./sourcePresentation": "./src/sourcePresentation.ts"
   }
 }

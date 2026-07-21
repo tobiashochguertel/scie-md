@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { isTauriRuntime } from '../app/runtime';
 import { appendDiagnosticsEvent } from './nativeRecoveryService';
+import { canonicalComparisonKey } from '../app/documentIdentity';
 
 export interface FileWatchChangeEvent {
   paths: string[];
@@ -165,7 +166,7 @@ function errorMessage(error: unknown): string {
 }
 
 function watchKeyForPaths(paths: string[]): string {
-  return paths.map(normalizeWatchPath).sort().join('\n');
+  return paths.map(canonicalComparisonKey).sort().join('\n');
 }
 
 function watchedPathUnion(): string[] {
@@ -173,7 +174,7 @@ function watchedPathUnion(): string[] {
   const paths: string[] = [];
   for (const scopePaths of watchedScopes.values()) {
     for (const path of scopePaths) {
-      const key = normalizeWatchPath(path);
+      const key = canonicalComparisonKey(path);
       if (!seen.has(key)) {
         seen.add(key);
         paths.push(path);
@@ -188,24 +189,10 @@ function uniquePaths(paths: string[]): string[] {
   const unique: string[] = [];
   for (const rawPath of paths) {
     const path = rawPath.trim();
-    const key = normalizeWatchPath(path);
+    const key = canonicalComparisonKey(path);
     if (!path || seen.has(key)) continue;
     seen.add(key);
     unique.push(path);
   }
   return unique;
-}
-
-function normalizeWatchPath(path: string): string {
-  let normalized = path.trim();
-  if (/^\\\\\?\\UNC\\/i.test(normalized)) {
-    normalized = `\\\\${normalized.slice('\\\\?\\UNC\\'.length)}`;
-  } else if (/^\\\\\?\\/i.test(normalized)) {
-    normalized = normalized.slice('\\\\?\\'.length);
-  }
-  normalized = normalized.replace(/\\/g, '/');
-  const isUncPath = normalized.startsWith('//');
-  normalized = normalized.replace(/\/+/g, '/');
-  if (isUncPath && !normalized.startsWith('//')) normalized = `/${normalized}`;
-  return normalized.toLocaleLowerCase();
 }

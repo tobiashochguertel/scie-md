@@ -1,0 +1,267 @@
+{
+  "version": 1,
+  "formats": [
+    {
+      "format": "markdown",
+      "label": "Markdown",
+      "extensions": ["md", "markdown"],
+      "mediaTypes": ["text/markdown", "text/x-markdown"],
+      "structured": false,
+      "runtimeBindingId": "markdown-adapter",
+      "sourceLanguageId": "markdown",
+      "runtimePolicy": {
+        "defaultMode": "visual",
+        "parseBudgetBytes": 5242880,
+        "sourceOnlyFileBytes": 5242880,
+        "canOpenAsDocument": true,
+        "canPreview": true,
+        "canImport": true,
+        "canApplyClipboardReplace": false,
+        "sourceOnlyByDefault": false
+      },
+      "workbench": {
+        "surfaces": ["markdownVisual"],
+        "editableSurfaces": ["markdownVisual"],
+        "features": ["markdownToolbar", "manuscriptReadiness", "citations", "variablesPanel", "markdownExports", "imageInsertion", "llmMarkdownMarkers"]
+      },
+      "native": {
+        "openPicker": "include",
+        "launch": "include",
+        "osAssociation": "include"
+      }
+    },
+    {
+      "format": "json",
+      "label": "JSON",
+      "extensions": ["json"],
+      "mediaTypes": ["application/json"],
+      "structured": true,
+      "runtimeBindingId": "json-adapter",
+      "sourceLanguageId": "json",
+      "runtimePolicy": {
+        "defaultMode": "source",
+        "parseBudgetBytes": 1048576,
+        "sourceOnlyFileBytes": 1048576,
+        "canOpenAsDocument": true,
+        "canPreview": true,
+        "canImport": true,
+        "canApplyClipboardReplace": true,
+        "sourceOnlyByDefault": false
+      },
+      "workbench": {
+        "surfaces": ["structuredTree"],
+        "editableSurfaces": ["structuredTree"],
+        "features": []
+      },
+      "native": {
+        "openPicker": "include",
+        "launch": "include",
+        "osAssociation": "include"
+      }
+    },
+    {
+      "format": "jsonl",
+      "label": "JSON Lines",
+      "extensions": ["jsonl", "ndjson"],
+      "mediaTypes": ["application/jsonl", "application/x-ndjson"],
+      "structured": true,
+      "runtimeBindingId": "jsonl-adapter",
+      "sourceLanguageId": "jsonl",
+      "runtimePolicy": {
+        "defaultMode": "source",
+        "parseBudgetBytes": 1048576,
+        "sourceOnlyFileBytes": 1048576,
+        "canOpenAsDocument": true,
+        "canPreview": true,
+        "canImport": true,
+        "canApplyClipboardReplace": true,
+        "sourceOnlyByDefault": false
+      },
+      "workbench": {
+        "surfaces": ["recordList"],
+        "editableSurfaces": ["recordList"],
+        "features": []
+      },
+      "native": {
+        "openPicker": "include",
+        "launch": "include",
+        "osAssociation": "include"
+      }
+    },
+    {
+      "format": "yaml",
+      "label": "YAML",
+      "extensions": ["yaml", "yml"],
+      "mediaTypes": ["application/yaml", "application/x-yaml", "text/yaml", "text/x-yaml"],
+      "structured": true,
+      "runtimeBindingId": "yaml-adapter",
+      "sourceLanguageId": "yaml",
+      "runtimePolicy": {
+        "defaultMode": "source",
+        "parseBudgetBytes": 1048576,
+        "sourceOnlyFileBytes": 1048576,
+        "canOpenAsDocument": true,
+        "canPreview": true,
+        "canImport": true,
+        "canApplyClipboardReplace": false,
+        "sourceOnlyByDefault": false
+      },
+      "workbench": {
+        "surfaces": ["structuredTree"],
+        "editableSurfaces": [],
+        "features": []
+      },
+      "native": {
+        "openPicker": "include",
+        "launch": "include",
+        "osAssociation": "include"
+      }
+    },
+    {
+      "format": "toml",
+      "label": "TOML",
+      "extensions": ["toml"],
+      "mediaTypes": ["application/toml", "application/x-toml"],
+      "structured": true,
+      "runtimeBindingId": "toml-adapter",
+      "sourceLanguageId": "toml",
+      "runtimePolicy": {
+        "defaultMode": "source",
+        "parseBudgetBytes": 1048576,
+        "sourceOnlyFileBytes": 1048576,
+        "canOpenAsDocument": true,
+        "canPreview": true,
+        "canImport": true,
+        "canApplyClipboardReplace": false,
+        "sourceOnlyByDefault": false
+      },
+      "workbench": {
+        "surfaces": ["structuredTree"],
+        "editableSurfaces": [],
+        "features": []
+      },
+      "native": {
+        "openPicker": "include",
+        "launch": "include",
+        "osAssociation": "include"
+      }
+    },
+    {
+      "format": "xml",
+      "label": "XML",
+      "extensions": ["xml"],
+      "mediaTypes": ["application/xml", "text/xml", "application/rss+xml", "application/atom+xml"],
+      "structured": true,
+      "runtimeBindingId": "xml-adapter",
+      "sourceLanguageId": "xml",
+      "runtimePolicy": {
+        "defaultMode": "source",
+        "parseBudgetBytes": 1048576,
+        "sourceOnlyFileBytes": 1048576,
+        "canOpenAsDocument": true,
+        "canPreview": true,
+        "canImport": true,
+        "canApplyClipboardReplace": false,
+        "sourceOnlyByDefault": false
+      },
+      "workbench": {
+        "surfaces": ["structuredTree"],
+        "editableSurfaces": [],
+        "features": []
+      },
+      "native": {
+        "openPicker": "include",
+        "launch": "include",
+        "osAssociation": "include"
+      }
+    },
+    {
+      "format": "csv",
+      "label": "CSV",
+      "extensions": ["csv"],
+      "mediaTypes": ["text/csv", "application/csv"],
+      "structured": true,
+      "runtimeBindingId": "csv-adapter",
+      "sourceLanguageId": "csv",
+      "runtimePolicy": {
+        "defaultMode": "source",
+        "parseBudgetBytes": 1048576,
+        "sourceOnlyFileBytes": 1048576,
+        "canOpenAsDocument": true,
+        "canPreview": true,
+        "canImport": true,
+        "canApplyClipboardReplace": false,
+        "sourceOnlyByDefault": false
+      },
+      "workbench": {
+        "surfaces": ["tablePreview"],
+        "editableSurfaces": ["tablePreview"],
+        "features": []
+      },
+      "native": {
+        "openPicker": "include",
+        "launch": "exclude",
+        "osAssociation": "exclude",
+        "exclusionReason": "CSV remains spreadsheet-friendly while staying available through picker, drop, and the ScieMD workbench."
+      }
+    },
+    {
+      "format": "tsv",
+      "label": "TSV",
+      "extensions": ["tsv"],
+      "mediaTypes": ["text/tab-separated-values"],
+      "structured": true,
+      "runtimeBindingId": "tsv-adapter",
+      "sourceLanguageId": "tsv",
+      "runtimePolicy": {
+        "defaultMode": "source",
+        "parseBudgetBytes": 1048576,
+        "sourceOnlyFileBytes": 1048576,
+        "canOpenAsDocument": true,
+        "canPreview": true,
+        "canImport": true,
+        "canApplyClipboardReplace": false,
+        "sourceOnlyByDefault": false
+      },
+      "workbench": {
+        "surfaces": ["tablePreview"],
+        "editableSurfaces": ["tablePreview"],
+        "features": []
+      },
+      "native": {
+        "openPicker": "include",
+        "launch": "include",
+        "osAssociation": "include"
+      }
+    },
+    {
+      "format": "plainText",
+      "label": "Plain Text",
+      "extensions": ["txt", "text"],
+      "mediaTypes": ["text/plain"],
+      "structured": false,
+      "runtimeBindingId": "plain-text-source",
+      "sourceLanguageId": "plainText",
+      "runtimePolicy": {
+        "defaultMode": "source",
+        "parseBudgetBytes": null,
+        "sourceOnlyFileBytes": null,
+        "canOpenAsDocument": true,
+        "canPreview": false,
+        "canImport": true,
+        "canApplyClipboardReplace": false,
+        "sourceOnlyByDefault": true
+      },
+      "workbench": {
+        "surfaces": [],
+        "editableSurfaces": [],
+        "features": []
+      },
+      "native": {
+        "openPicker": "include",
+        "launch": "include",
+        "osAssociation": "include"
+      }
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "fixtureVersion": 1,
+  "legacyRecoveryCases": [
+    {
+      "name": "unversioned-markdown",
+      "stored": { "markdown": "# Legacy\n", "savedAt": 1000 },
+      "fallbackFormat": "markdown",
+      "expected": { "sourceText": "# Legacy\n", "savedAt": 1000, "format": "markdown" }
+    },
+    {
+      "name": "v1-empty-plain-text",
+      "stored": { "schemaVersion": 1, "markdown": "", "savedAt": 1100, "format": "plainText" },
+      "fallbackFormat": "markdown",
+      "expected": { "sourceText": "", "savedAt": 1100, "format": "plainText" }
+    },
+    {
+      "name": "v2-json-source-text",
+      "stored": { "schemaVersion": 2, "sourceText": "{\"ok\":true}\n", "savedAt": 1200, "format": "json" },
+      "fallbackFormat": "markdown",
+      "expected": { "sourceText": "{\"ok\":true}\n", "savedAt": 1200, "format": "json" }
+    }
+  ],
+  "catalogCases": [
+    {
+      "name": "saved-markdown",
+      "documentId": "fixture-markdown",
+      "sourceRevision": 2,
+      "sourceText": "# Dirty fixture\n",
+      "filePath": "C:\\Lab\\fixture.md",
+      "format": "markdown",
+      "mediaType": "text/markdown"
+    },
+    {
+      "name": "untitled-json",
+      "documentId": "fixture-json",
+      "sourceRevision": 3,
+      "sourceText": "{\"dirty\":true}\n",
+      "filePath": null,
+      "format": "json",
+      "mediaType": "application/json"
+    },
+    {
+      "name": "untitled-empty-plain-text",
+      "documentId": "fixture-empty",
+      "sourceRevision": 4,
+      "sourceText": "",
+      "filePath": null,
+      "format": "plainText",
+      "mediaType": "text/plain"
+    }
+  ],
+  "nativeInvalidCases": [
+    {
+      "name": "future-version",
+      "expectedReason": "future",
+      "snapshot": {
+        "schemaVersion": 99,
+        "generation": 1,
+        "checksum": "future",
+        "commitState": "committed",
+        "markdown": "future",
+        "filePath": null,
+        "format": "markdown",
+        "updatedAtMs": 1300,
+        "markdownBytes": 6
+      }
+    },
+    {
+      "name": "interrupted-publication",
+      "expectedReason": "not committed",
+      "snapshot": {
+        "schemaVersion": 3,
+        "generation": 2,
+        "checksum": "pending",
+        "commitState": "pending",
+        "markdown": "pending",
+        "filePath": null,
+        "format": "markdown",
+        "updatedAtMs": 1400,
+        "markdownBytes": 7
+      }
+    }
+  ]
+}

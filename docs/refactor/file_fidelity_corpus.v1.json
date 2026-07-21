@@ -1,0 +1,72 @@
+[
+  {
+    "id": "utf8-lf",
+    "bytesHex": "616c7068610a626574610a",
+    "sourceText": "alpha\nbeta\n",
+    "encoding": "utf8",
+    "bom": false,
+    "dominantLineEnding": "lf",
+    "lineEndings": "lf",
+    "losslessWrite": "yes"
+  },
+  {
+    "id": "utf8-bom-crlf",
+    "bytesHex": "efbbbf616c7068610d0a626574610d0a",
+    "sourceText": "alpha\nbeta\n",
+    "encoding": "utf8",
+    "bom": true,
+    "dominantLineEnding": "crlf",
+    "lineEndings": "crlf",
+    "losslessWrite": "yes"
+  },
+  {
+    "id": "utf16le-bom-crlf",
+    "bytesHex": "fffe61006c007000680061000d000a006200650074006100",
+    "sourceText": "alpha\nbeta",
+    "encoding": "utf16le",
+    "bom": true,
+    "dominantLineEnding": "crlf",
+    "lineEndings": "crlf",
+    "losslessWrite": "yes"
+  },
+  {
+    "id": "utf16be-bom-crlf",
+    "bytesHex": "feff0061006c007000680061000d000a0062006500740061",
+    "sourceText": "alpha\nbeta",
+    "encoding": "utf16be",
+    "bom": true,
+    "dominantLineEnding": "crlf",
+    "lineEndings": "crlf",
+    "losslessWrite": "yes"
+  },
+  {
+    "id": "windows1252",
+    "bytesHex": "636166e920972071756f7465",
+    "sourceText": "café — quote",
+    "encoding": "windows1252",
+    "bom": false,
+    "dominantLineEnding": "lf",
+    "lineEndings": "lf",
+    "losslessWrite": "yes"
+  },
+  {
+    "id": "utf8-cr",
+    "bytesHex": "616c7068610d626574610d",
+    "sourceText": "alpha\nbeta\n",
+    "encoding": "utf8",
+    "bom": false,
+    "dominantLineEnding": "cr",
+    "lineEndings": "cr",
+    "losslessWrite": "yes"
+  },
+  {
+    "id": "utf8-mixed",
+    "bytesHex": "616c7068610d0a626574610a67616d6d610d",
+    "sourceText": "alpha\nbeta\ngamma\n",
+    "encoding": "utf8",
+    "bom": false,
+    "dominantLineEnding": "lf",
+    "lineEndings": "mixed",
+    "losslessWrite": "no"
+  }
+]

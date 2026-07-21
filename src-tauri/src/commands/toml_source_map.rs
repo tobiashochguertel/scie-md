@@ -537,7 +537,10 @@ mod tests {
         assert_eq!(report.status, TomlSourceMapStatus::Valid);
         assert!(report.summary.no_op_round_trip_preserved);
         assert!(!report.summary.visual_writes_enabled);
-        assert_eq!(report.summary.boundary_status, "experimental-readonly-evidence");
+        assert_eq!(
+            report.summary.boundary_status,
+            "experimental-readonly-evidence"
+        );
         assert_eq!(report.summary.command_scope, "inspect-source-map-only");
         assert_eq!(
             report.summary.recommended_boundary,

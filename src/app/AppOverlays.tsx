@@ -60,6 +60,7 @@ interface TabularPasteDialogState {
 
 interface AppOverlaysProps {
   closeDialogOpen: boolean;
+  closeDocumentCount?: number;
   onCloseSave: () => void;
   onCloseDiscard: () => void;
   onCloseCancel: () => void;
@@ -179,6 +180,7 @@ interface AppOverlaysProps {
 
 export function AppOverlays({
   closeDialogOpen,
+  closeDocumentCount,
   onCloseSave,
   onCloseDiscard,
   onCloseCancel,
@@ -300,6 +302,7 @@ export function AppOverlays({
       <DocumentOpenOverlay status={documentOpenStatus} />
       <UnsavedDialog
         open={closeDialogOpen}
+        documentCount={closeDocumentCount}
         onSave={onCloseSave}
         onDiscard={onCloseDiscard}
         onCancel={onCloseCancel}

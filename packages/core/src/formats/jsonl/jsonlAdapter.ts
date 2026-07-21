@@ -1,14 +1,12 @@
 import type { FormatAdapter } from '../documentFormat.js';
+import { formatAdapterIdentity, requiredFormatParseBudgetBytes } from '../formatDefinitions.js';
 import { createJsonlContent, parseJsonlDocument, type ParsedJsonlDocument } from './parseJsonlDocument.js';
 
-export const JSONL_FORMAT_EXTENSIONS = ['jsonl', 'ndjson'] as const;
-export const JSONL_PARSE_BUDGET_BYTES = 1 * 1024 * 1024;
+export const JSONL_FORMAT_EXTENSIONS = formatAdapterIdentity('jsonl').extensions;
+export const JSONL_PARSE_BUDGET_BYTES = requiredFormatParseBudgetBytes('jsonl');
 
 export const jsonlAdapter: FormatAdapter<ParsedJsonlDocument> = {
-  format: 'jsonl',
-  label: 'JSON Lines',
-  extensions: JSONL_FORMAT_EXTENSIONS,
-  mediaTypes: ['application/jsonl', 'application/x-ndjson'],
+  ...formatAdapterIdentity('jsonl'),
   capabilities: {
     sourceEditing: true,
     sourceEditor: {

@@ -71,6 +71,17 @@ try {
   await waitForExpression(page, `Boolean(document.querySelector('.editor-stage') && document.querySelector('.app-menubar'))`, 15_000);
   await delay(750);
 
+  const workspaceTabContract = await evaluate(page, `(() => {
+    const tablist = document.querySelector('[role="tablist"][aria-label="Open documents"]');
+    const selected = tablist?.querySelector('[role="tab"][aria-selected="true"]');
+    const panel = document.querySelector('[role="tabpanel"]');
+    return Boolean(tablist && selected && panel
+      && selected.getAttribute('aria-controls') === panel.id
+      && panel.getAttribute('aria-labelledby') === selected.id
+      && document.querySelectorAll('.editor-stage').length === 1);
+  })()`);
+  if (!workspaceTabContract) throw new Error('Production workspace tab/tabpanel semantics or bounded editor mounting are missing.');
+
   const paletteResult = await evaluate(page, `(() => {
     const commandButton = Array.from(document.querySelectorAll('button')).find((button) => button.getAttribute('aria-label') === 'Command Palette');
     commandButton?.click();
@@ -121,6 +132,7 @@ try {
     commandPalette: ['Open insert menu', 'New document', 'Open settings', 'Open quick tour', 'Open full tutorial', 'Check external tools'],
     readinessOpensInspector: readinessOpened,
     slashRootKeepsBlocksNested: true,
+    workspaceTabContract,
   }, null, 2));
 } finally {
   browser.kill();

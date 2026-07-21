@@ -4,10 +4,21 @@ import type { DiagnosticsEvent } from '../../services/nativeRecoveryService';
 import type { PersistedSettings } from '../../services/settingsService';
 import type { UntitledDraft } from '../../services/draftRecoveryService';
 import type { FileWatchChangeEvent } from '../../services/fileWatchService';
+import type { FileDocumentLocator } from '../documentIdentity';
+
+export {
+  DOCUMENT_HOST_ERROR_CODES,
+  DOCUMENT_HOST_ERROR_CONTRACT_VERSION,
+  DocumentHostError,
+  isDocumentHostError,
+  normalizeDocumentHostError,
+} from './documentHostError';
+export type { DocumentHostErrorCode, DocumentHostErrorPayload } from './documentHostError';
 
 export type HostUnlisten = () => void;
 
 export interface FileHost {
+  /** Lifecycle methods reject with DocumentHostError, including browser/test hosts. */
   readTextFile(path: string): Promise<ReadTextFileResponse>;
   readTextFileForEdit(path: string): Promise<ReadTextFileResponse>;
   statFile(path: string, options?: { contentHash?: boolean }): Promise<FileMetadata>;
@@ -23,6 +34,7 @@ export interface FileHost {
 export interface DialogHost {
   pickMarkdownFile(): Promise<string | null>;
   pickDocumentFile(): Promise<string | null>;
+  pickDocumentFiles?(): Promise<string[]>;
   pickJsonSchemaFile(): Promise<string | null>;
   pickSavePath(defaultPath?: string | null, format?: DocumentFormat): Promise<string | null>;
 }
@@ -71,6 +83,10 @@ export interface WatcherHost {
   clearWatchedFiles(scope: string): Promise<boolean>;
 }
 
+export interface IdentityHost {
+  resolveFileLocator(path: string, options?: { allowMissing?: boolean }): Promise<FileDocumentLocator>;
+}
+
 export interface DocumentHost {
   file: FileHost;
   dialog: DialogHost;
@@ -78,4 +94,6 @@ export interface DocumentHost {
   recovery: RecoveryHost;
   settings: SettingsHost;
   watcher: WatcherHost;
+  /** Optional only for compatibility hosts; production desktop always provides it. */
+  identity?: IdentityHost;
 }

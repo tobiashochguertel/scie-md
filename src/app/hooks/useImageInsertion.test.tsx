@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useImageInsertion } from './useImageInsertion';
 import type { DesktopPlatformHost } from '../host/platformHost';
 import type { PromptState } from './useDialogs';
+import { createDocumentEffectCoordinator } from '../effects/documentEffectCoordinator';
+import { createDocumentId, sourceRevision, type DocumentId } from '../documentIdentity';
+import { documentEditorGateway } from '../documentEditorGateway';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -85,6 +88,75 @@ describe('useImageInsertion', () => {
     expect(pushToast).toHaveBeenCalledWith('Image pasted', 'success');
   });
 
+  it('never redirects a delayed image insertion into the newly active document', async () => {
+    const originDocumentId = createDocumentId();
+    const activeDocumentId = createDocumentId();
+    const revisions = new Map<DocumentId, ReturnType<typeof sourceRevision>>([
+      [originDocumentId, sourceRevision(1)],
+      [activeDocumentId, sourceRevision(1)],
+    ]);
+    const effects = createDocumentEffectCoordinator((documentId) => revisions.get(documentId) ?? null);
+    const originInsert = vi.fn<(snippet: string) => void>();
+    const activeInsert = vi.fn<(snippet: string) => void>();
+    const path = deferred<string | null>();
+    ensureDocumentPathForAssets.mockImplementation(async () => path.promise);
+    vi.mocked(platformHost.assets.grantExternalImagePath).mockResolvedValue('C:\\incoming\\figure.png');
+    vi.mocked(platformHost.assets.copyImageToAssets).mockResolvedValue({
+      markdownPath: 'assets/figure.png',
+      fileName: 'figure.png',
+      altText: 'figure',
+    });
+    vi.mocked(platformHost.assets.defaultImageAlt).mockReturnValue('figure');
+    vi.mocked(platformHost.assets.markdownImageSyntax).mockReturnValue('![figure](assets/figure.png)');
+    documentEditorGateway.registerRuntime(originDocumentId, 'sourceInsert', originInsert);
+
+    act(() => {
+      root.render(
+        <TargetedHarness
+          documentId={originDocumentId}
+          effects={effects}
+          platformHost={platformHost}
+          sourceInsertHandler={originInsert}
+          ensureDocumentPathForAssets={ensureDocumentPathForAssets}
+          promptText={promptText}
+          pushToast={pushToast}
+          onState={(state) => { latestState = state; }}
+        />,
+      );
+    });
+    let insertion!: Promise<void>;
+    act(() => { insertion = latestState!.insertImageFromPath('C:\\incoming\\figure.png'); });
+
+    documentEditorGateway.registerRuntime(activeDocumentId, 'sourceInsert', activeInsert);
+    act(() => {
+      root.render(
+        <TargetedHarness
+          documentId={activeDocumentId}
+          effects={effects}
+          platformHost={platformHost}
+          sourceInsertHandler={activeInsert}
+          ensureDocumentPathForAssets={ensureDocumentPathForAssets}
+          promptText={promptText}
+          pushToast={pushToast}
+          onState={(state) => { latestState = state; }}
+        />,
+      );
+    });
+    path.resolve('C:\\docs\\origin.md');
+    await act(async () => { await insertion; });
+
+    expect(ensureDocumentPathForAssets).toHaveBeenCalledWith(originDocumentId);
+    expect(originInsert).toHaveBeenCalledWith('![figure](assets/figure.png)\n');
+    expect(activeInsert).not.toHaveBeenCalled();
+    expect(platformHost.assets.copyImageToAssets).toHaveBeenCalledWith(
+      'C:\\docs\\origin.md',
+      'C:\\incoming\\figure.png',
+      'figure',
+    );
+    documentEditorGateway.releaseDocument(originDocumentId);
+    documentEditorGateway.releaseDocument(activeDocumentId);
+  });
+
   function renderHarness() {
     act(() => {
       root.render(
@@ -121,6 +193,40 @@ function Harness({
   const state = useImageInsertion({
     mode: 'source',
     sourceInsertHandler: sourceInsert,
+    visualInsertHandler: undefined,
+    ensureDocumentPathForAssets,
+    promptText,
+    pushToast,
+    platformHost,
+  });
+  onState(state);
+  return null;
+}
+
+function TargetedHarness({
+  documentId,
+  effects,
+  platformHost,
+  sourceInsertHandler,
+  ensureDocumentPathForAssets,
+  promptText,
+  pushToast,
+  onState,
+}: {
+  documentId: DocumentId;
+  effects: ReturnType<typeof createDocumentEffectCoordinator>;
+  platformHost: DesktopPlatformHost;
+  sourceInsertHandler: (snippet: string) => void;
+  ensureDocumentPathForAssets: (documentId?: DocumentId) => Promise<string | null>;
+  promptText: PromptText;
+  pushToast: PushToast;
+  onState: (state: ImageInsertionState) => void;
+}) {
+  const state = useImageInsertion({
+    documentId,
+    effects,
+    mode: 'source',
+    sourceInsertHandler,
     visualInsertHandler: undefined,
     ensureDocumentPathForAssets,
     promptText,
@@ -181,4 +287,10 @@ function createFakePlatformHost(): DesktopPlatformHost {
       cleanupStaleTempFilesForPaths: vi.fn(),
     },
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
 }

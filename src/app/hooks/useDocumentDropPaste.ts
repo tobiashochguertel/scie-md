@@ -58,7 +58,8 @@ interface DocumentDropPasteParams {
     preferredMode?: EditorMode,
     savedSourceText?: string,
     documentFormat?: DocumentFormat,
-  ) => void;
+    options?: { ingressOrigin?: 'drop' },
+  ) => unknown;
   validateNow: (sourceText: string, sizeBytes?: number) => unknown;
   setAuthorshipMarks: Dispatch<SetStateAction<AuthorshipMark[]>>;
   setPasteReview: Dispatch<SetStateAction<PasteReviewState | null>>;
@@ -83,14 +84,11 @@ export function useDocumentDropPaste({
   platformHost = desktopPlatformHost,
 }: DocumentDropPasteParams) {
   const handleDroppedPaths = useCallback(async (paths: string[]) => {
-    const documentPath = paths.find((path) => isDroppedDocumentFormat(inferStructuredDocument({
-      text: '',
-      path,
-      origin: 'drop',
-      trust: 'userConfirmed',
+    const documentPaths = paths.filter((path) => isDroppedDocumentFormat(inferStructuredDocument({
+      text: '', path, origin: 'drop', trust: 'userConfirmed',
     }).format));
-    if (documentPath) {
-      await openDocumentPath(documentPath);
+    if (documentPaths.length > 0) {
+      for (const documentPath of documentPaths) await openDocumentPath(documentPath);
       return;
     }
 
@@ -196,7 +194,7 @@ export function useDocumentDropPaste({
     const files = Array.from(event.dataTransfer.files);
     if (files.length === 0) return;
 
-    const documentCandidate = files
+    const documentCandidates = files
       .map((file) => ({
         file,
         ingest: inferStructuredDocument({
@@ -207,29 +205,35 @@ export function useDocumentDropPaste({
           trust: 'userConfirmed',
         }),
       }))
-      .find((candidate) => isDroppedDocumentFormat(candidate.ingest.format));
-    if (documentCandidate) {
+      .filter((candidate) => isDroppedDocumentFormat(candidate.ingest.format));
+    if (documentCandidates.length > 0) {
       event.preventDefault();
-      const { file: documentFile, ingest: initialIngest } = documentCandidate;
-      const budgetBytes = formatBrowserTextIngressBudgetBytes(initialIngest.format);
-      if (documentFile.size > budgetBytes) {
-        pushToast(
-          `${documentFile.name} is too large for browser drag-and-drop import (${formatBytes(documentFile.size)} > ${formatBytes(budgetBytes)}). Open it through the file picker instead.`,
-          'warning',
-        );
-        return;
-      }
       void (async () => {
-        if (!(await settleDirtyDocumentBeforeReplace())) return;
-        const { text: content } = canonicalizeStructuredIngressText(await documentFile.text());
-        const ingest = inferStructuredDocument({
-          text: content,
-          path: documentFile.name,
-          mimeType: documentFile.type,
-          origin: 'drop',
-          trust: 'userConfirmed',
-        });
-        commitOpenedDocument(null, content, DEFAULT_METADATA, 'visual', content, ingest.format);
+        for (const { file: documentFile, ingest: initialIngest } of documentCandidates) {
+          const budgetBytes = formatBrowserTextIngressBudgetBytes(initialIngest.format);
+          if (documentFile.size > budgetBytes) {
+            pushToast(
+              `${documentFile.name} is too large for browser drag-and-drop import (${formatBytes(documentFile.size)} > ${formatBytes(budgetBytes)}). Open it through the file picker instead.`,
+              'warning',
+            );
+            continue;
+          }
+          if (!(await settleDirtyDocumentBeforeReplace())) return;
+          const { text: content } = canonicalizeStructuredIngressText(await documentFile.text());
+          const ingest = inferStructuredDocument({
+            text: content, path: documentFile.name, mimeType: documentFile.type, origin: 'drop', trust: 'userConfirmed',
+          });
+          const committed = commitOpenedDocument(
+            null,
+            content,
+            DEFAULT_METADATA,
+            formatRuntimePolicyFor(ingest.format).defaultMode,
+            content,
+            ingest.format,
+            { ingressOrigin: 'drop' },
+          );
+          if (committed === false || committed === null) return;
+        }
       })().catch((error) => {
         console.warn('Dropped document file could not be opened.', error);
         pushToast(error instanceof Error ? error.message : 'Could not open dropped document.', 'error');

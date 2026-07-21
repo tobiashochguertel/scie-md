@@ -19,8 +19,10 @@ pub(super) fn detect_line_endings(content: &str) -> LineEndingDetection {
         .count();
 
     LineEndingDetection {
-        line_ending: if crlf > lf + cr {
+        line_ending: if crlf > lf && crlf > cr {
             "crlf".to_string()
+        } else if cr > lf && cr > crlf {
+            "cr".to_string()
         } else {
             "lf".to_string()
         },
@@ -69,6 +71,7 @@ pub(super) struct DecodedText {
     pub(super) raw: String,
     pub(super) encoding: String,
     pub(super) has_bom: bool,
+    pub(super) decode_lossy: bool,
 }
 
 pub(super) fn decode_text_bytes(bytes: &[u8]) -> Result<DecodedText, String> {
@@ -79,20 +82,25 @@ pub(super) fn decode_text_bytes(bytes: &[u8]) -> Result<DecodedText, String> {
             raw,
             encoding: "utf8".to_string(),
             has_bom: true,
+            decode_lossy: false,
         });
     }
     if bytes.starts_with(&[0xFF, 0xFE]) {
+        let (raw, decode_lossy) = decode_utf16(&bytes[2..], true);
         return Ok(DecodedText {
-            raw: decode_utf16(&bytes[2..], true),
+            raw,
             encoding: "utf16le".to_string(),
             has_bom: true,
+            decode_lossy,
         });
     }
     if bytes.starts_with(&[0xFE, 0xFF]) {
+        let (raw, decode_lossy) = decode_utf16(&bytes[2..], false);
         return Ok(DecodedText {
-            raw: decode_utf16(&bytes[2..], false),
+            raw,
             encoding: "utf16be".to_string(),
             has_bom: true,
+            decode_lossy,
         });
     }
     if let Ok(raw) = String::from_utf8(bytes.to_vec()) {
@@ -100,26 +108,32 @@ pub(super) fn decode_text_bytes(bytes: &[u8]) -> Result<DecodedText, String> {
             raw,
             encoding: "utf8".to_string(),
             has_bom: false,
+            decode_lossy: false,
         });
     }
     if looks_like_utf16(bytes, true) {
+        let (raw, decode_lossy) = decode_utf16(bytes, true);
         return Ok(DecodedText {
-            raw: decode_utf16(bytes, true),
+            raw,
             encoding: "utf16le".to_string(),
             has_bom: false,
+            decode_lossy,
         });
     }
     if looks_like_utf16(bytes, false) {
+        let (raw, decode_lossy) = decode_utf16(bytes, false);
         return Ok(DecodedText {
-            raw: decode_utf16(bytes, false),
+            raw,
             encoding: "utf16be".to_string(),
             has_bom: false,
+            decode_lossy,
         });
     }
     Ok(DecodedText {
         raw: decode_windows_1252(bytes),
         encoding: "windows1252".to_string(),
         has_bom: false,
+        decode_lossy: false,
     })
 }
 
@@ -128,10 +142,12 @@ pub(super) fn decode_text_bytes_lossy(bytes: &[u8]) -> DecodedText {
         raw: decode_windows_1252(bytes),
         encoding: "windows1252".to_string(),
         has_bom: false,
+        decode_lossy: true,
     })
 }
 
-fn decode_utf16(bytes: &[u8], little_endian: bool) -> String {
+fn decode_utf16(bytes: &[u8], little_endian: bool) -> (String, bool) {
+    let mut decode_lossy = !bytes.len().is_multiple_of(2);
     let units = bytes.chunks_exact(2).map(|chunk| {
         if little_endian {
             u16::from_le_bytes([chunk[0], chunk[1]])
@@ -139,9 +155,16 @@ fn decode_utf16(bytes: &[u8], little_endian: bool) -> String {
             u16::from_be_bytes([chunk[0], chunk[1]])
         }
     });
-    std::char::decode_utf16(units)
-        .map(|result| result.unwrap_or(char::REPLACEMENT_CHARACTER))
-        .collect()
+    let raw = std::char::decode_utf16(units)
+        .map(|result| match result {
+            Ok(character) => character,
+            Err(_) => {
+                decode_lossy = true;
+                char::REPLACEMENT_CHARACTER
+            }
+        })
+        .collect();
+    (raw, decode_lossy)
 }
 
 fn looks_like_utf16(bytes: &[u8], little_endian: bool) -> bool {
@@ -193,17 +216,17 @@ fn decode_windows_1252(bytes: &[u8]) -> String {
         .collect()
 }
 
-pub(super) fn markdown_to_bytes(
-    markdown: &str,
+pub(super) fn source_text_to_bytes(
+    source_text: &str,
     line_ending: &str,
     encoding: &str,
     has_bom: bool,
 ) -> Result<Vec<u8>, String> {
-    let normalized = normalize_to_lf(markdown);
-    let output = if line_ending == "crlf" {
-        normalized.replace('\n', "\r\n")
-    } else {
-        normalized
+    let normalized = normalize_to_lf(source_text);
+    let output = match line_ending {
+        "crlf" => normalized.replace('\n', "\r\n"),
+        "cr" => normalized.replace('\n', "\r"),
+        _ => normalized,
     };
 
     match encoding {

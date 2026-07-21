@@ -5,6 +5,11 @@ import { DEFAULT_METADATA, type FileMetadata } from '../documentState';
 import type { DocumentHost, HostUnlisten } from '../host/documentHost';
 import type { FileWatchChangeEvent } from '../../services/fileWatchService';
 import { useLayerTwoDocument } from './useLayerTwoDocument';
+import { createDocumentId, sourceRevision } from '../documentIdentity';
+import { createDocumentEffectCoordinator } from '../effects/documentEffectCoordinator';
+
+const layerDocumentId = createDocumentId();
+const layerEffects = createDocumentEffectCoordinator(() => sourceRevision(0));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -145,7 +150,7 @@ function Harness({
   filePath: string;
   host: TestHost;
 }) {
-  useLayerTwoDocument(markdown, filePath, host);
+  useLayerTwoDocument({ documentId: layerDocumentId, effects: layerEffects }, markdown, filePath, host);
   return null;
 }
 

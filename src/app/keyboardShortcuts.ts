@@ -12,7 +12,12 @@ export type KeyboardShortcutAction =
   | 'decreaseFont'
   | 'resetFont'
   | 'undo'
-  | 'redo';
+  | 'redo'
+  | 'nextWorkspaceTab'
+  | 'previousWorkspaceTab'
+  | 'closeWorkspaceTab'
+  | 'reopenWorkspaceTab'
+  | 'saveAllWorkspace';
 
 export interface KeyboardShortcutChord {
   key: string;
@@ -43,7 +48,17 @@ export const KEYBOARD_SHORTCUTS: KeyboardShortcutDefinition[] = [
   { action: 'undo', label: 'Undo', chords: [{ key: 'z', ctrlOrMeta: true, display: 'Ctrl/Cmd+Z' }] },
   { action: 'redo', label: 'Redo', chords: [{ key: 'z', ctrlOrMeta: true, shift: true, display: 'Ctrl/Cmd+Shift+Z' }, { key: 'y', ctrlOrMeta: true, display: 'Ctrl/Cmd+Y' }] },
   { action: 'shortcutSheet', label: 'Shortcut sheet', chords: [{ key: '/', ctrlOrMeta: true, display: 'Ctrl/Cmd+/' }] },
+  { action: 'nextWorkspaceTab', label: 'Next document tab', chords: [{ key: 'PageDown', ctrlOrMeta: true, display: 'Ctrl/Cmd+PageDown' }] },
+  { action: 'previousWorkspaceTab', label: 'Previous document tab', chords: [{ key: 'PageUp', ctrlOrMeta: true, display: 'Ctrl/Cmd+PageUp' }] },
+  { action: 'closeWorkspaceTab', label: 'Close document tab', chords: [{ key: 'w', ctrlOrMeta: true, display: 'Ctrl/Cmd+W' }] },
+  { action: 'reopenWorkspaceTab', label: 'Reopen closed document tab', chords: [{ key: 't', ctrlOrMeta: true, shift: true, display: 'Ctrl/Cmd+Shift+T' }] },
+  { action: 'saveAllWorkspace', label: 'Save all documents', chords: [{ key: 's', ctrlOrMeta: true, alt: true, display: 'Ctrl/Cmd+Alt+S' }] },
 ];
+
+export function findDirectWorkspaceTabIndex(event: KeyboardEvent): number | null {
+  if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || !/^[1-9]$/.test(event.key)) return null;
+  return Number(event.key) - 1;
+}
 
 export function findKeyboardShortcut(event: KeyboardEvent): KeyboardShortcutDefinition | null {
   return KEYBOARD_SHORTCUTS.find((definition) => definition.chords.some((chord) => matchesShortcutChord(event, chord))) ?? null;

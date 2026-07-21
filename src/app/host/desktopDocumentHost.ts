@@ -7,6 +7,7 @@ import {
   peekPendingDocumentOpen,
   peekPendingMarkdownOpen,
   pickDocumentFile,
+  pickDocumentFiles,
   pickJsonSchemaFile,
   pickMarkdownFile,
   pickSavePath,
@@ -17,6 +18,7 @@ import {
   statFile,
   writeTextFileAtomic,
   createBackupSnapshot,
+  resolveDocumentLocator,
 } from '../../services/fileService';
 import {
   clearFileDraft,
@@ -40,18 +42,31 @@ import {
   updateWatchedFiles,
 } from '../../services/fileWatchService';
 import type { DocumentHost } from './documentHost';
+import { normalizeDocumentHostError } from './documentHostError';
+import { normalizeNativeLocator } from '../documentIdentity';
+
+async function typedFileCall<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw normalizeDocumentHostError(error);
+  }
+}
 
 export const desktopDocumentHost: DocumentHost = {
   file: {
-    readTextFile,
-    readTextFileForEdit,
-    statFile,
-    writeTextFileAtomic,
-    createBackupSnapshot,
+    readTextFile: (path) => typedFileCall(() => readTextFile(path)),
+    readTextFileForEdit: (path) => typedFileCall(() => readTextFileForEdit(path)),
+    statFile: (path, options) => typedFileCall(() => statFile(path, options)),
+    writeTextFileAtomic: (path, sourceText, metadata, expectedMetadata) => typedFileCall(
+      () => writeTextFileAtomic(path, sourceText, metadata, expectedMetadata),
+    ),
+    createBackupSnapshot: (path, label) => typedFileCall(() => createBackupSnapshot(path, label)),
   },
   dialog: {
     pickMarkdownFile,
     pickDocumentFile,
+    pickDocumentFiles,
     pickJsonSchemaFile,
     pickSavePath,
   },
@@ -92,5 +107,11 @@ export const desktopDocumentHost: DocumentHost = {
     listenFileWatchChanges,
     updateWatchedFiles,
     clearWatchedFiles,
+  },
+  identity: {
+    resolveFileLocator: async (path, options) => normalizeNativeLocator(
+      await resolveDocumentLocator(path, options?.allowMissing ?? false),
+      path,
+    ),
   },
 };

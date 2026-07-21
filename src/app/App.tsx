@@ -3,7 +3,7 @@ import type { DragEvent as ReactDragEvent, SetStateAction } from 'react';
 import type { Editor } from '@milkdown/kit/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { EditorMode } from './documentState';
-import { createWindowTitle, DEFAULT_METADATA } from './documentState';
+import { DEFAULT_METADATA } from './documentState';
 import { useBackgroundJobTracker, type BackgroundJobSignal } from './backgroundJobs';
 import { AppOverlays } from './AppOverlays';
 import { AppWorkbench } from './AppWorkbench';
@@ -15,7 +15,8 @@ import type { EditorHistoryControls } from '../components/editorControls';
 import type { EditorSelectionSnapshot } from '../components/editorSelection';
 import type { SourceMarkdownFind, SourceMarkdownInsert, SourceMarkdownJump, SourceMarkdownSelection } from '../components/SourceMarkdownEditor';
 import type { VisualMarkdownFind, VisualMarkdownInsert, VisualMarkdownJump, VisualMarkdownSelection } from '../components/VisualMarkdownEditor';
-import { commitVisualEditorState, readVisualEditorState } from '../components/visualEditorStateSync';
+import type { EditorAdapter } from '../components/editorAdapter';
+import { documentEditorGateway } from './documentEditorGateway';
 import { useDialogs } from './hooks/useDialogs';
 import {
   initialDocumentMarkdownForLaunch,
@@ -30,7 +31,7 @@ import { useDocumentDropPaste } from './hooks/useDocumentDropPaste';
 import type { PasteReviewState, TabularPasteState } from './hooks/useDocumentDropPaste';
 import { useDocumentSession } from './hooks/useDocumentSession';
 import { labelForDocumentFormat } from './documentConflictPolicy';
-import { formatCapabilitiesFor } from './formatCapabilities';
+import { createWorkspaceShellProjection, createWorkspaceTabsModel, PRODUCTION_WORKSPACE_CAPABILITY } from './workspace';
 import { formatDiagnosticsToValidationIssues } from './formatDiagnostics';
 import { useAuthorshipMaintenance } from './hooks/useAuthorshipMaintenance';
 import { useDerivedDocumentInsights } from './hooks/useDerivedDocumentInsights';
@@ -54,7 +55,6 @@ import {
 import {
   appendStructuredEditJournalEntry,
   createStructuredEditJournalEntry,
-  type StructuredEditJournalEntry,
 } from './structuredEditJournal';
 import {
   canCreateStructuredContextPackets,
@@ -80,6 +80,7 @@ import {
   type StructuredNavigationTarget,
 } from './structuredNavigation';
 import { useCitationWorkflow } from './hooks/useCitationWorkflow';
+import { clearActiveDocumentCompatibilityState } from './activeDocumentCompatibility';
 import { useMissingImageDetection } from './hooks/useMissingImageDetection';
 import { useLlmWorkflow } from './hooks/useLlmWorkflow';
 import { usePasteReviewWorkflow } from './hooks/usePasteReviewWorkflow';
@@ -90,13 +91,11 @@ import { useToasts } from './hooks/useToasts';
 import { useWindowChrome } from './hooks/useWindowChrome';
 import { desktopDocumentHost } from './host/desktopDocumentHost';
 import { desktopPlatformHost } from './host/desktopPlatformHost';
-import { updateRawDocumentRescue } from '../services/rawDocumentRescue';
 import { exportDiagnosticsBundle } from '../services/nativeRecoveryService';
 import { loadSettings, normalizeSidebarWidth, updateSettings } from '../services/settingsService';
 import type { DocumentType, SidebarView, ThemeMode } from '../services/settingsService';
 import { getVisualStyleOption, nextVisualStyle } from '../services/visualStyleService';
 import type { VisualStyleId } from '../services/visualStyleService';
-import type { AuthorshipMark } from '../markdown/authorship';
 import { analyzeMarkdownDocument } from '../markdown/documentIntelligence';
 import { assessManuscriptReadiness } from '../markdown/manuscriptReadiness';
 import {
@@ -205,22 +204,23 @@ function isStructuredSurfaceFormat(format: string): boolean {
 export function App() {
   const [settings, setSettings] = useState(loadSettings);
   const [sidebarWidth, setSidebarWidth] = useState(settings.sidebarWidth);
-  const [authorshipMarks, setAuthorshipMarks] = useState<AuthorshipMark[]>([]);
   const { promptState, confirmState, promptText, confirmText, completePrompt, completeConfirm } = useDialogs();
   const { toasts, pushToast, dismissToast, pauseToast, resumeToast } = useToasts();
   const [pasteReview, setPasteReview] = useState<PasteReviewState | null>(null);
   const [tabularPaste, setTabularPaste] = useState<TabularPasteState | null>(null);
   const [jsonEditReview, setJsonEditReview] = useState<JsonEditReviewState | null>(null);
-  const [structuredEditJournal, setStructuredEditJournal] = useState<StructuredEditJournalEntry[]>([]);
   const documentEpochRef = useRef(0);
   const handleDocumentReplaced = useCallback(() => {
     documentEpochRef.current += 1;
     setPasteReview(null);
     setTabularPaste(null);
     setJsonEditReview(null);
-    setStructuredEditJournal([]);
   }, []);
   const {
+    workspaceState,
+    documentRecord,
+    documentId,
+    documentEffects,
     sourceText,
     markdown,
     format,
@@ -243,6 +243,10 @@ export function App() {
     startupDocumentOpenFailure,
     documentOpenStatus,
     externalConflict,
+    workspaceExternalChanges,
+    setAuthorshipMarks,
+    updateDocumentView,
+    updateDocumentPresentation,
     dirty,
     validation,
     validateNow,
@@ -253,8 +257,16 @@ export function App() {
     linkedVariableLoading,
     reloadBibliography,
     closeDialogOpen,
-    setCloseDialogOpen,
+    closeDecision,
+    closeSummary,
     closeWindow,
+    activateWorkspaceDocument,
+    closeWorkspaceDocument,
+    closeOtherWorkspaceDocuments,
+    closeWorkspaceDocumentsRight,
+    reorderWorkspaceDocument,
+    reopenWorkspaceDocument,
+    saveAllWorkspaceDocuments,
     cancelAutosave,
     saveCurrent,
     confirmVisualRoundTripWrite,
@@ -279,22 +291,62 @@ export function App() {
       welcomeMarkdown,
     }),
     setSettings,
-    setAuthorshipMarks,
     onDocumentReplaced: handleDocumentReplaced,
     confirmText,
     pushToast,
+    workspaceCapability: PRODUCTION_WORKSPACE_CAPABILITY,
   });
+  const shellProjection = useMemo(
+    () => createWorkspaceShellProjection(workspaceState, closeSummary),
+    [closeSummary, workspaceState],
+  );
+  const workspaceTabsModel = useMemo(() => createWorkspaceTabsModel(workspaceState), [workspaceState]);
+  const authorshipMarks = documentRecord.view.authorshipMarks;
+  const structuredEditJournal = documentRecord.view.structuredEditJournal;
+  const selectedJsonPath = documentRecord.view.selectedStructuredPath;
+  const activeStructuredNavigationTargetKey = documentRecord.view.activeStructuredNavigationTargetKey;
+  const explicitJsonSchemaPath = documentRecord.view.explicitJsonSchemaPath;
+  const preferredStructuredSurface = documentRecord.view.preferredStructuredSurface;
+  const selectedVariableName = documentRecord.view.selectedVariableName;
+  const setStructuredEditJournal = useCallback((action: SetStateAction<typeof structuredEditJournal>) => {
+    updateDocumentView((current) => ({
+      structuredEditJournal: typeof action === 'function' ? action(current.structuredEditJournal) : action,
+    }));
+  }, [updateDocumentView]);
+  const setSelectedJsonPath = useCallback((action: SetStateAction<string | null>) => {
+    updateDocumentView((current) => ({
+      selectedStructuredPath: typeof action === 'function' ? action(current.selectedStructuredPath) : action,
+    }));
+  }, [updateDocumentView]);
+  const setActiveStructuredNavigationTargetKey = useCallback((action: SetStateAction<string | null>) => {
+    updateDocumentView((current) => ({
+      activeStructuredNavigationTargetKey: typeof action === 'function'
+        ? action(current.activeStructuredNavigationTargetKey)
+        : action,
+    }));
+  }, [updateDocumentView]);
+  const setExplicitJsonSchemaPath = useCallback((action: SetStateAction<string | null>) => {
+    updateDocumentView((current) => ({
+      explicitJsonSchemaPath: typeof action === 'function' ? action(current.explicitJsonSchemaPath) : action,
+    }));
+  }, [updateDocumentView]);
+  const setSelectedVariableName = useCallback((action: SetStateAction<string | null>) => {
+    updateDocumentView((current) => ({
+      selectedVariableName: typeof action === 'function' ? action(current.selectedVariableName) : action,
+    }));
+  }, [updateDocumentView]);
   const [visualEditor, setVisualEditor] = useState<Editor | undefined>();
-  const [selectedVariableName, setSelectedVariableName] = useState<string | null>(null);
-  const [sourceInsertHandler, handleSourceInsertReady] = useStableRegistration<SourceMarkdownInsert>();
-  const [visualInsertHandler, handleVisualInsertReady] = useStableRegistration<VisualMarkdownInsert>();
-  const [sourceJumpHandler, handleSourceJumpReady] = useStableRegistration<SourceMarkdownJump>();
-  const [sourceFindHandler, handleSourceFindReady] = useStableRegistration<SourceMarkdownFind>();
-  const [visualJumpHandler, handleVisualJumpReady] = useStableRegistration<VisualMarkdownJump>();
-  const [visualFindHandler, handleVisualFindReady] = useStableRegistration<VisualMarkdownFind>();
-  const [sourceHistory, handleSourceHistoryReady] = useStableRegistration<EditorHistoryControls>();
-  const [visualHistory, handleVisualHistoryReady] = useStableRegistration<EditorHistoryControls>();
-  const selectionTextGetterRef = useRef<SourceMarkdownSelection | VisualMarkdownSelection | undefined>(undefined);
+  const [sourceInsertHandler, handleSourceInsertReady] = useStableRegistration<SourceMarkdownInsert>(documentId, 'sourceInsert', documentEditorGateway);
+  const [visualInsertHandler, handleVisualInsertReady] = useStableRegistration<VisualMarkdownInsert>(documentId, 'visualInsert', documentEditorGateway);
+  const [sourceJumpHandler, handleSourceJumpReady] = useStableRegistration<SourceMarkdownJump>(documentId, 'sourceJump', documentEditorGateway);
+  const [sourceFindHandler, handleSourceFindReady] = useStableRegistration<SourceMarkdownFind>(documentId, 'sourceFind', documentEditorGateway);
+  const [visualJumpHandler, handleVisualJumpReady] = useStableRegistration<VisualMarkdownJump>(documentId, 'visualJump', documentEditorGateway);
+  const [visualFindHandler, handleVisualFindReady] = useStableRegistration<VisualMarkdownFind>(documentId, 'visualFind', documentEditorGateway);
+  const [, handleSourceHistoryReady] = useStableRegistration<EditorHistoryControls>(documentId, 'sourceHistory', documentEditorGateway);
+  const [, handleVisualHistoryReady] = useStableRegistration<EditorHistoryControls>(documentId, 'visualHistory', documentEditorGateway);
+  const [sourceSelectionGetter, handleSourceSelectionReady] = useStableRegistration<SourceMarkdownSelection>(documentId, 'sourceSelection', documentEditorGateway);
+  const [visualSelectionGetter, handleVisualSelectionReady] = useStableRegistration<VisualMarkdownSelection>(documentId, 'visualSelection', documentEditorGateway);
+  const activeOverlayDocumentIdRef = useRef(documentId);
   const [findOpen, setFindOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [shortcutDialogOpen, setShortcutDialogOpen] = useState(false);
@@ -309,10 +361,6 @@ export function App() {
   const [citationDialogInitialKey, setCitationDialogInitialKey] = useState<string | null>(null);
   const [blockDialogState, setBlockDialogState] = useState<{ selection: EditorSelectionSnapshot | null } | null>(null);
   const [inspectorFocusSection, setInspectorFocusSection] = useState<'readiness' | 'validation' | null>(null);
-  const [selectedJsonPath, setSelectedJsonPath] = useState<string | null>('$');
-  const [activeStructuredNavigationTargetKey, setActiveStructuredNavigationTargetKey] = useState<string | null>(null);
-  const [preferredStructuredSurfaceByDocument, setPreferredStructuredSurfaceByDocument] = useState<Record<string, StructuredSurfaceId>>({});
-  const [explicitJsonSchemaPath, setExplicitJsonSchemaPath] = useState<string | null>(null);
   const updateUserSettings = useCallback((patch: Parameters<typeof updateSettings>[0]) => {
     setSettings(updateSettings(patch));
   }, []);
@@ -328,9 +376,45 @@ export function App() {
   const exportLogSinkRef = useRef<(entries: ExportLogEntry[]) => void>(() => undefined);
   const [exportRenderHostMounted, setExportRenderHostMounted] = useState(false);
   const [dropOverlayVisible, setDropOverlayVisible] = useState(false);
-  const handleSelectionTextReady = useCallback((getter: SourceMarkdownSelection | VisualMarkdownSelection | undefined) => {
-    selectionTextGetterRef.current = getter;
-  }, []);
+  useEffect(() => {
+    const previousDocumentId = activeOverlayDocumentIdRef.current;
+    const changed = clearActiveDocumentCompatibilityState(previousDocumentId, documentId, {
+      clearRuntimeDocument: (id) => documentEditorGateway.clearRuntime(id),
+      clearEditorRuntime: () => {
+        setVisualEditor(undefined);
+      },
+      clearReviewOverlays: () => {
+        setPasteReview(null);
+        setTabularPaste(null);
+        setJsonEditReview(null);
+        setCitationDialogOpen(false);
+      },
+      clearPendingDecisions: () => {
+        completePrompt(null);
+        completeConfirm(false);
+      },
+      clearDocumentUi: () => {
+        setFindOpen(false);
+        setLinkDialog(null);
+        setVariableDialog(null);
+        setCitationDialogInitialKey(null);
+        setBlockDialogState(null);
+        setInspectorFocusSection(null);
+        setActiveTopbarMenu(null);
+        setDropOverlayVisible(false);
+      },
+    });
+    if (!changed) return;
+    activeOverlayDocumentIdRef.current = documentId;
+  }, [documentId]);
+  const handleSourceAdapterReady = useCallback((adapter: EditorAdapter | undefined, retiringAdapter?: EditorAdapter) => {
+    if (retiringAdapter) documentEditorGateway.unregisterAdapter(documentId, 'source', retiringAdapter);
+    else documentEditorGateway.registerAdapter(documentId, 'source', adapter);
+  }, [documentId]);
+  const handleVisualAdapterReady = useCallback((adapter: EditorAdapter | undefined, retiringAdapter?: EditorAdapter) => {
+    if (retiringAdapter) documentEditorGateway.unregisterAdapter(documentId, 'visual', retiringAdapter);
+    else documentEditorGateway.registerAdapter(documentId, 'visual', adapter);
+  }, [documentId]);
   const sourceTextRef = useRef(sourceText);
   const commitSourceText = useCallback((action: SetStateAction<string>) => {
     const next = typeof action === 'function'
@@ -346,7 +430,7 @@ export function App() {
     ));
   }, []);
   const getEditorSelectionSnapshot = useCallback((): EditorSelectionSnapshot => {
-    const snapshot = selectionTextGetterRef.current?.();
+    const snapshot = (mode === 'visual' ? visualSelectionGetter : sourceSelectionGetter)?.();
     if (snapshot) {
       return {
         ...snapshot,
@@ -354,23 +438,22 @@ export function App() {
       };
     }
     return { text: (window.getSelection()?.toString() || '').trim(), surface: 'unknown' };
-  }, []);
+  }, [mode, sourceSelectionGetter, visualSelectionGetter]);
   const getSelectedEditorText = useCallback(() => getEditorSelectionSnapshot().text.trim(), [getEditorSelectionSnapshot]);
-  const formatCapabilities = useMemo(() => formatCapabilitiesFor(format), [format]);
+  const formatCapabilities = shellProjection.active.formatCapabilities;
   const jsonSchemaDiscovery = useJsonSchemaDiscovery({
+    target: { documentId, effects: documentEffects },
     format,
     filePath,
     explicitSchemaPath: explicitJsonSchemaPath,
     fileHost: desktopDocumentHost.file,
   });
-  const sourceFormatDiagnosticState = useSourceFormatDiagnostics(format, sourceText, filePath, {
+  const sourceFormatDiagnosticState = useSourceFormatDiagnostics({ documentId, effects: documentEffects }, format, sourceText, filePath, {
     jsonSchema: jsonSchemaDiscovery.schemaSource,
   });
-  const structuredSurfaceDocumentKey = `${format}:${filePath ?? 'untitled'}`;
   useEffect(() => {
     setActiveStructuredNavigationTargetKey(null);
-  }, [structuredSurfaceDocumentKey]);
-  const preferredStructuredSurface = preferredStructuredSurfaceByDocument[structuredSurfaceDocumentKey] ?? null;
+  }, [documentId, setActiveStructuredNavigationTargetKey]);
   const jsonArraySurfaceAvailable = useMemo(() => {
     if (format !== 'json') return false;
     const parsed = sourceFormatDiagnosticState.jsonAnalysis?.parseResult.parsed;
@@ -475,10 +558,12 @@ export function App() {
     [formatCapabilities.canUseVisualMarkdown, sourceFormatDiagnosticState.diagnostics, validation.issues],
   );
 
-  const documentTitle = createWindowTitle(filePath, dirty, format);
+  const documentTitle = shellProjection.active.chrome.windowTitle;
   const warnings = activeValidationIssues.filter((issue) => issue.severity === 'warning');
   const errors = activeValidationIssues.filter((issue) => issue.severity === 'error');
-  const currentVisualStyle = getVisualStyleOption(settings.visualStyle);
+  const activeVisualStyle = documentRecord.presentation.visualStyle ?? settings.visualStyle;
+  const activeDocumentType = documentRecord.presentation.documentType ?? settings.documentType;
+  const currentVisualStyle = getVisualStyleOption(activeVisualStyle);
   const recentPreviews = useRecentFilePreviews(settings.recentFiles);
   const deferredMarkdownForPanels = useDeferredValue(markdown);
   const citationCompletionKeys = useMemo(() => Array.from(new Set([
@@ -504,6 +589,10 @@ export function App() {
     protectedBlocks: formatCapabilities.canUseLLMMarkdownMarkers ? parseProtectedBlocks(markdown) : [],
     variantGroups: formatCapabilities.canUseLLMMarkdownMarkers ? parseVariantGroups(markdown) : [],
   }), [formatCapabilities, markdown]);
+  const readExternalConflictDocument = useCallback(
+    (targetDocumentId: typeof documentId) => workspaceExternalChanges.compareDocument(targetDocumentId),
+    [workspaceExternalChanges],
+  );
   const {
     baseDocumentInsights,
     navigationHeadings,
@@ -693,9 +782,7 @@ export function App() {
             cancelLabel: 'Cancel',
           });
           if (!replace) return;
-          await desktopDocumentHost.file.createBackupSnapshot(targetPath, 'conversion').catch((error) => {
-            console.warn('Conversion backup snapshot could not be created.', error);
-          });
+          await desktopDocumentHost.file.createBackupSnapshot(targetPath, 'conversion');
         }
         await desktopDocumentHost.file.writeTextFileAtomic(
           targetPath,
@@ -870,16 +957,14 @@ export function App() {
     [pasteReview],
   );
   const resolvedTheme = useThemeAttribute(settings.themeMode);
-  useLayoutAttributes(settings.fontScale, settings.visualStyle);
+  useLayoutAttributes(settings.fontScale, activeVisualStyle);
 
   useEffect(() => {
+    if (format === 'json') return;
     setSelectedJsonPath('$');
-    setJsonEditReview(null);
-  }, [filePath, format]);
-
-  useEffect(() => {
     setExplicitJsonSchemaPath(null);
-  }, [filePath, format]);
+    setJsonEditReview(null);
+  }, [format, setExplicitJsonSchemaPath, setSelectedJsonPath]);
 
   useEffect(() => {
     if (mode !== 'visual') return;
@@ -905,8 +990,7 @@ export function App() {
 
   useEffect(() => {
     sourceTextRef.current = sourceText;
-    updateRawDocumentRescue(sourceText, filePath);
-  }, [filePath, sourceText]);
+  }, [sourceText]);
 
   useAuthorshipMaintenance(setAuthorshipMarks);
 
@@ -923,6 +1007,8 @@ export function App() {
     insertImageBlob,
     handleInsertImage,
   } = useImageInsertion({
+    documentId,
+    effects: documentEffects,
     mode: effectiveEditorMode,
     sourceInsertHandler,
     visualInsertHandler,
@@ -1205,7 +1291,7 @@ export function App() {
     insertImageBlob,
     insertImageFromPath,
     openDocumentPath: async (path) => {
-      await handleOpen(path);
+      await handleOpen(path, { ingressOrigin: 'drop' });
     },
     settleDirtyDocumentBeforeReplace,
     commitOpenedDocument,
@@ -1264,7 +1350,7 @@ export function App() {
   }, [updateUserSettings]);
 
   const openExplorerDocument = useCallback((path: string) => {
-    void handleOpen(path);
+    void handleOpen(path, { ingressOrigin: 'explorer' });
   }, [handleOpen]);
   const initialExplorerPath = useMemo(() => initialExplorerPathForLaunch({
     persistedExplorerRootPath: settings.explorerRootPath,
@@ -1552,8 +1638,8 @@ export function App() {
     }
   }, [filePath, layerTwoDocument.citations.bibtexEntries, layerTwoDocument.variables.definitions]);
   const getCurrentOutputMarkdown = useCallback(() => (
-    readVisualEditorState()?.markdown ?? sourceTextRef.current
-  ), []);
+    documentEditorGateway.read(documentId)?.markdown ?? sourceTextRef.current
+  ), [documentId]);
 
   const { copyRichText, exportHtml, exportPandoc, printPreview } = useExportActions({
     markdown,
@@ -1562,7 +1648,7 @@ export function App() {
     citationEntries: layerTwoDocument.citations.bibtexEntries,
     themeMode: settings.themeMode,
     resolvedTheme,
-    visualStyle: settings.visualStyle,
+    visualStyle: activeVisualStyle,
     fontScale: settings.fontScale,
     exportOptions: settings.exportOptions,
     getCurrentOutputMarkdown,
@@ -1728,6 +1814,7 @@ export function App() {
     applyStructuredJsonConflictReview,
     applyStructuredConflictReview,
   } = useExternalConflictReviewWorkflow({
+    target: { documentId, effects: documentEffects },
     filePath,
     documentEpochRef,
     format,
@@ -1737,6 +1824,7 @@ export function App() {
     setAuthorshipMarks,
     pushToast,
     host: desktopDocumentHost,
+    readExternalDocument: readExternalConflictDocument,
   });
   const lineExternalConflictReview = externalConflictReview?.kind === 'line-review' ? externalConflictReview : null;
   const structuredExternalConflictReview = externalConflictReview?.kind === 'structured-source' ? externalConflictReview : null;
@@ -1744,9 +1832,10 @@ export function App() {
     ? labelForDocumentFormat(structuredExternalConflictReview.format)
     : labelForDocumentFormat(format);
   const keepStructuredConflict = useCallback(() => {
+    workspaceExternalChanges.keepLocal(documentId);
     closeExternalConflictReview();
     pushToast('Kept current in-memory source. Save As or Save Anyway when ready.', 'info');
-  }, [closeExternalConflictReview, pushToast]);
+  }, [closeExternalConflictReview, documentId, pushToast, workspaceExternalChanges]);
   const reloadStructuredConflict = useCallback(() => {
     closeExternalConflictReview();
     if (filePath) void handleReloadFromDisk();
@@ -1757,8 +1846,8 @@ export function App() {
   }, [closeExternalConflictReview, saveCurrent]);
   const saveStructuredConflictAnyway = useCallback(() => {
     closeExternalConflictReview();
-    void saveCurrent({ forceOverwrite: true });
-  }, [closeExternalConflictReview, saveCurrent]);
+    void workspaceExternalChanges.overwrite(documentId);
+  }, [closeExternalConflictReview, documentId, workspaceExternalChanges]);
 
   const handleSidebarViewChange = useCallback((sidebarView: SidebarView) => {
     updateUserSettings({ outlineOpen: true, sidebarView });
@@ -1795,10 +1884,10 @@ export function App() {
   }, []);
 
   const setVisualStyle = useCallback((visualStyle: VisualStyleId) => {
-    updateUserSettings({ visualStyle });
+    updateDocumentPresentation({ visualStyle });
     setActiveTopbarMenu(null);
     pushToast(`Visual style: ${getVisualStyleOption(visualStyle).label}`, 'info');
-  }, [pushToast, updateUserSettings]);
+  }, [pushToast, updateDocumentPresentation]);
 
   const setThemeMode = useCallback((themeMode: ThemeMode) => {
     updateUserSettings({ themeMode });
@@ -1807,8 +1896,8 @@ export function App() {
   }, [pushToast, updateUserSettings]);
 
   const cycleVisualStyle = useCallback(() => {
-    setVisualStyle(nextVisualStyle(settings.visualStyle));
-  }, [setVisualStyle, settings.visualStyle]);
+    setVisualStyle(nextVisualStyle(activeVisualStyle));
+  }, [activeVisualStyle, setVisualStyle]);
 
   const adjustFontScale = useCallback((delta: number) => {
     const next = Math.min(1.35, Math.max(0.85, Math.round((settings.fontScale + delta) * 20) / 20));
@@ -1919,7 +2008,19 @@ export function App() {
     onRedo: () => runHistoryCommand('redo'),
     onPrint: runPrintPreview,
     onToggleOutline: () => updateUserSettings({ outlineOpen: !settings.outlineOpen }),
-  }), [adjustFontScale, handleOpen, openCommandPalette, openTemplateDialog, resetFontScale, runHistoryCommand, runPrintPreview, saveCurrent, settings.outlineOpen, updateUserSettings]), { enabled: shortcutsEnabled });
+    onNextWorkspaceTab: () => {
+      const index = workspaceTabsModel.tabs.findIndex((tab) => tab.active);
+      activateWorkspaceDocument(workspaceTabsModel.tabs[(index + 1) % workspaceTabsModel.tabs.length].documentId);
+    },
+    onPreviousWorkspaceTab: () => workspaceTabsModel.mruDocumentId && activateWorkspaceDocument(workspaceTabsModel.mruDocumentId),
+    onCloseWorkspaceTab: () => void closeWorkspaceDocument(workspaceTabsModel.activeDocumentId),
+    onReopenWorkspaceTab: reopenWorkspaceDocument,
+    onSaveAllWorkspace: () => void saveAllWorkspaceDocuments(),
+    onActivateWorkspaceTab: (index) => {
+      const tab = workspaceTabsModel.tabs[index];
+      if (tab) activateWorkspaceDocument(tab.documentId);
+    },
+  }), [activateWorkspaceDocument, adjustFontScale, closeWorkspaceDocument, handleOpen, openCommandPalette, openTemplateDialog, reopenWorkspaceDocument, resetFontScale, runHistoryCommand, runPrintPreview, saveAllWorkspaceDocuments, saveCurrent, settings.outlineOpen, updateUserSettings, workspaceTabsModel]), { enabled: shortcutsEnabled });
 
   const handleModeChange = useCallback(async (nextMode: EditorMode) => {
     if (nextMode === mode) return;
@@ -1933,20 +2034,21 @@ export function App() {
       });
       if (!allowed) return;
     }
-    commitVisualEditorState(commitSourceText);
+    documentEditorGateway.deactivate(documentId, commitSourceText);
     preserveLineForModeChange(currentLine, nextMode);
     setMode(nextMode);
-  }, [canUseReadonlyTreeMode, canUseRecordListMode, canUseTabularPreviewMode, commitSourceText, confirmVisualRoundTripWrite, currentLine, formatCapabilities.canUseVisualMarkdown, mode, preserveLineForModeChange, setMode]);
+    window.requestAnimationFrame(() => {
+      documentEditorGateway.activate(documentId, nextMode);
+      documentEditorGateway.focus(documentId);
+    });
+  }, [canUseReadonlyTreeMode, canUseRecordListMode, canUseTabularPreviewMode, commitSourceText, confirmVisualRoundTripWrite, currentLine, documentId, formatCapabilities.canUseVisualMarkdown, mode, preserveLineForModeChange, setMode]);
 
   const handleStructuredSurfaceChange = useCallback((surface: StructuredSurfaceId) => {
     if (surface !== 'source') {
-      setPreferredStructuredSurfaceByDocument((current) => ({
-        ...current,
-        [structuredSurfaceDocumentKey]: surface,
-      }));
+      updateDocumentView({ preferredStructuredSurface: surface });
     }
     void handleModeChange(surface === 'source' ? 'source' : 'visual');
-  }, [handleModeChange, structuredSurfaceDocumentKey]);
+  }, [handleModeChange, updateDocumentView]);
 
   const selectJsonSchema = useCallback(async () => {
     try {
@@ -2026,7 +2128,7 @@ export function App() {
     handleWindowClose,
     handleTitlebarMouseDown,
     handleTitlebarDoubleClick,
-  } = useWindowChrome({ dirty, onDirtyCloseRequested: cancelAutosave, setCloseDialogOpen, closeWindow });
+  } = useWindowChrome({ closeWindow });
 
   const copySelectionFromFloatingToolbar = useCallback(async () => {
     const selectedText = getSelectedEditorText();
@@ -2210,19 +2312,26 @@ export function App() {
       activeTopbarMenu={activeTopbarMenu}
       onToggleTopbarMenu={(menu) => setActiveTopbarMenu((current) => current === menu ? null : menu)}
       onCloseTopbarMenus={() => setActiveTopbarMenu(null)}
-      formatCapabilities={formatCapabilities}
+      activeProjection={shellProjection.active}
+      workspaceTabs={{
+        model: workspaceTabsModel,
+        onActivate: activateWorkspaceDocument,
+        onClose: (targetDocumentId) => void closeWorkspaceDocument(targetDocumentId),
+        onCloseOthers: (targetDocumentId) => void closeOtherWorkspaceDocuments(targetDocumentId),
+        onCloseRight: (targetDocumentId) => void closeWorkspaceDocumentsRight(targetDocumentId),
+        onReorder: reorderWorkspaceDocument,
+        onReopenClosed: reopenWorkspaceDocument,
+        onSaveAll: () => void saveAllWorkspaceDocuments(),
+      }}
       topbar={{
         mode: effectiveEditorMode,
-        format,
-        filePath,
-        dirty,
         outlineOpen: settings.outlineOpen,
         inspectorOpen: settings.inspectorOpen,
         focusMode: settings.focusMode,
         structuredSurfaceNavigation,
         themeMode: settings.themeMode,
         currentVisualStyle,
-        selectedVisualStyle: settings.visualStyle,
+        selectedVisualStyle: activeVisualStyle,
         recentFiles: recentPreviews,
         hasPasteReview: Boolean(pasteReview),
         structuredContextAvailable,
@@ -2419,6 +2528,7 @@ export function App() {
         onMarkdownChange: commitEditorSourceTextEdit,
         onEditorReset: () => setEditorResetToken((current) => current + 1),
         onVisualEditorReady: setVisualEditor,
+        onVisualAdapterReady: handleVisualAdapterReady,
         onVisualInsertReady: handleVisualInsertReady,
         onVisualJumpReady: handleVisualJumpReady,
         onVisualFindReady: handleVisualFindReady,
@@ -2427,7 +2537,9 @@ export function App() {
         onSourceJumpReady: handleSourceJumpReady,
         onSourceFindReady: handleSourceFindReady,
         onSourceHistoryReady: handleSourceHistoryReady,
-        onSelectionTextReady: handleSelectionTextReady,
+        onSourceAdapterReady: handleSourceAdapterReady,
+        onSourceSelectionTextReady: handleSourceSelectionReady,
+        onVisualSelectionTextReady: handleVisualSelectionReady,
         onCursorLineChange: handleCursorPositionChange,
         onViewportLineChange: handleViewportLineChange,
         onJsonSelectedPathChange: setSelectedJsonPath,
@@ -2483,9 +2595,9 @@ export function App() {
           editorComments,
           targetedInstructions,
           variantGroups,
-          visualStyle: settings.visualStyle,
+          visualStyle: activeVisualStyle,
           visualStyleLabel: currentVisualStyle.label,
-          documentType: settings.documentType,
+          documentType: activeDocumentType,
           hasPasteReview: Boolean(pasteReview),
           layerTwoDocument,
           manuscriptReadiness,
@@ -2524,6 +2636,7 @@ export function App() {
         formatCapabilities,
         autosaveStatus,
         statusText,
+        workspaceStatus: shellProjection.active.chrome.aggregateStatus,
         headingPath: currentHeadingPath,
         wordCount: validation.wordCount,
         manuscriptScore: manuscriptReadiness.score,
@@ -2533,7 +2646,7 @@ export function App() {
         externalConflict,
         filePath,
         onReviewConflict: () => void openExternalConflictReview(),
-        onSaveAnyway: () => void saveCurrent({ forceOverwrite: true }),
+        onSaveAnyway: () => void workspaceExternalChanges.overwrite(documentId),
         onReveal: () => filePath && void desktopPlatformHost.reveal.revealInFileManager(filePath),
         onReload: () => filePath && void handleReloadFromDisk(),
         onSaveNow: () => void saveCurrent({ forceSaveAs: true }),
@@ -2552,6 +2665,7 @@ export function App() {
 
       <AppOverlays
         closeDialogOpen={closeDialogOpen}
+        closeDocumentCount={closeDecision?.unresolvedDocumentIds.length}
         onCloseSave={() => void handleCloseSave()}
         onCloseDiscard={() => void handleCloseDiscard()}
         onCloseCancel={handleCloseCancel}

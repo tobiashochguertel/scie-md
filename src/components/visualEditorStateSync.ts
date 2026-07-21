@@ -1,29 +1,13 @@
-import type { EditorReadResult } from './editorAdapter';
+import type { EditorAdapter, EditorReadResult } from './editorAdapter';
 
-type VisualEditorStateReader = () => EditorReadResult | null;
-
-interface RegisteredVisualEditorStateReader {
-  id: symbol;
-  reader: VisualEditorStateReader;
+/** Host-neutral read semantics shared by the document-keyed gateway. */
+export function readEditorAdapterState(adapter: EditorAdapter | undefined): EditorReadResult | null {
+  return adapter?.read() ?? null;
 }
 
-const registeredReaders: RegisteredVisualEditorStateReader[] = [];
-
-export function setVisualEditorStateReader(reader: VisualEditorStateReader): () => void {
-  const id = Symbol('visual-editor-state-reader');
-  registeredReaders.push({ id, reader });
-  return () => {
-    const index = registeredReaders.findIndex((entry) => entry.id === id);
-    if (index >= 0) registeredReaders.splice(index, 1);
-  };
-}
-
-export function readVisualEditorState(): EditorReadResult | null {
-  return registeredReaders.at(-1)?.reader() ?? null;
-}
-
-export function flushVisualEditorState(): string | null {
-  return readVisualEditorState()?.markdown ?? null;
+/** Flushes editor-owned pending controls before reading their canonical Markdown. */
+export function flushEditorAdapterState(adapter: EditorAdapter | undefined): EditorReadResult | null {
+  return adapter?.flushPendingEdits() ?? null;
 }
 
 export function commitVisualEditorReadResult(
@@ -36,8 +20,4 @@ export function commitVisualEditorReadResult(
     onCommit(result.markdown);
   }
   return result.markdown;
-}
-
-export function commitVisualEditorState(onCommit: (markdown: string) => void): string | null {
-  return commitVisualEditorReadResult(readVisualEditorState(), onCommit);
 }

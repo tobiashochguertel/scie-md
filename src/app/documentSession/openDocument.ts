@@ -1,9 +1,11 @@
 import type { Dispatch, SetStateAction } from 'react';
 import type { EditorMode, FileMetadata, ReadTextFileResponse } from '../documentState';
+import { readSourceEnvelope } from '../documentState';
 import type { DocumentFormat } from '@sciemd/core';
 import type { DocumentOpenPhase } from '../documentOpenStatus';
 import { shouldRestoreExternalLaunchDraft } from '../documentSessionPolicy';
 import type { DocumentHost, RecoveryHost } from '../host/documentHost';
+import { normalizeDocumentHostError } from '../host/documentHost';
 import type { ConfirmState } from '../hooks/useDialogs';
 import type { PersistedSettings } from '../../services/settingsService';
 import {
@@ -16,12 +18,16 @@ import {
   recordDocumentOpenDiagnostic,
   withTimeout,
 } from './openEffects';
+import { resolveFileLocator } from '../documentIdentity';
+import type { FileDocumentLocator } from '../documentIdentity';
+import type { WorkspaceIngressOrigin } from '../workspace/workspaceIngressCoordinator';
 
 export interface OpenDocumentOptions {
   preferredMode?: EditorMode;
   externalLaunch?: boolean;
   draftRestore?: 'prompt' | 'auto' | 'skip';
   skipDirtySettlement?: boolean;
+  ingressOrigin?: WorkspaceIngressOrigin;
 }
 
 export interface DocumentOpenTimeouts {
@@ -36,12 +42,12 @@ export const DEFAULT_DOCUMENT_OPEN_TIMEOUTS: DocumentOpenTimeouts = {
 
 export type CommitOpenedDocument = (
   path: string | null,
-  content: string,
+  sourceText: string,
   metadata: FileMetadata,
   preferredMode?: EditorMode,
   savedSourceText?: string,
   format?: DocumentFormat,
-) => void;
+) => boolean | void;
 
 export interface OpenDocumentForSessionInput {
   explicitPath?: string;
@@ -58,6 +64,8 @@ export interface OpenDocumentForSessionInput {
   showDocumentOpenStatus: (path: string, phase: DocumentOpenPhase, options?: { immediate?: boolean }) => number;
   clearDocumentOpenStatus: (token: number, delayMs?: number) => void;
   commitOpenedDocument: CommitOpenedDocument;
+  /** Returns true when the workspace focused an already-open owner. */
+  onResolvedLocator?: (locator: FileDocumentLocator) => boolean;
   timeouts?: DocumentOpenTimeouts;
 }
 
@@ -76,6 +84,7 @@ export async function openDocumentForSession({
   showDocumentOpenStatus,
   clearDocumentOpenStatus,
   commitOpenedDocument,
+  onResolvedLocator,
   timeouts = DEFAULT_DOCUMENT_OPEN_TIMEOUTS,
 }: OpenDocumentForSessionInput): Promise<boolean> {
   let selectedPath = explicitPath ?? null;
@@ -91,20 +100,30 @@ export async function openDocumentForSession({
     clearDocumentOpenStatus(openStatusToken, delayMs);
     openStatusToken = null;
   };
+  const settleReplacement = async () => {
+    if (options.skipDirtySettlement) return true;
+    if (options.externalLaunch) {
+      preserveDirtyDraftBeforeExternalOpen();
+      return settleDirtyDocumentBeforeReplace();
+    }
+    return settleDirtyDocumentBeforeReplace();
+  };
 
   try {
-    if (options.skipDirtySettlement) {
-      // Caller already made the replacement decision.
-    } else if (options.externalLaunch) {
-      preserveDirtyDraftBeforeExternalOpen();
-      if (!(await settleDirtyDocumentBeforeReplace())) return false;
-    } else if (!(await settleDirtyDocumentBeforeReplace())) {
-      return false;
-    }
+    if (!explicitPath && !(await settleReplacement())) return false;
     if (!isLatestOpenRequest()) return false;
 
     selectedPath = explicitPath ?? (await host.dialog.pickDocumentFile());
     if (!selectedPath) return false;
+    if (!isLatestOpenRequest()) return false;
+
+    const resolvedLocator = await resolveFileLocator(host.identity, selectedPath);
+    if (onResolvedLocator?.(resolvedLocator)) {
+      recordDocumentOpenDiagnostic(host.recovery, 'document-open-duplicate-skipped', 'Focused the existing workspace document.', selectedPath);
+      return true;
+    }
+
+    if (explicitPath && !(await settleReplacement())) return false;
     if (!isLatestOpenRequest()) return false;
 
     recordDocumentOpenDiagnostic(host.recovery, 'document-open-selected', 'Document open path selected.', selectedPath);
@@ -115,13 +134,14 @@ export async function openDocumentForSession({
       timeouts.fileReadMs,
       `Reading ${displayNameForPath(selectedPath)} took too long.`,
     );
+    const diskSourceText = readSourceEnvelope(response).sourceText;
 
     recordDocumentOpenDiagnostic(
       host.recovery,
       'document-open-read-complete',
       'Document file read completed.',
       selectedPath,
-      response.content,
+      diskSourceText,
     );
     if (!isLatestOpenRequest()) return false;
 
@@ -131,14 +151,14 @@ export async function openDocumentForSession({
       if (immediatePreparingOverlay) await waitForDocumentOpenPaint();
       if (!isLatestOpenRequest()) return false;
 
-      commitOpenedDocument(selectedPath, response.content, response.metadata, options.preferredMode);
+      if (commitOpenedDocument(selectedPath, diskSourceText, response.metadata, options.preferredMode) === false) return false;
       committedDocument = true;
       recordDocumentOpenDiagnostic(
         host.recovery,
         'document-open-committed',
         'External launch document committed before draft recovery.',
         selectedPath,
-        response.content,
+        diskSourceText,
       );
       if (options.draftRestore !== 'skip') {
         const launchPath = selectedPath;
@@ -162,11 +182,11 @@ export async function openDocumentForSession({
       : await loadFileDraftWithTimeout(host.recovery, selectedPath, timeouts.draftRestoreMs);
     if (!isLatestOpenRequest()) return false;
 
-    if (draft && draft.markdown !== response.content && host.recovery.shouldOfferFileDraftRestore(draft, response.metadata)) {
+    if (draft && draft.markdown !== diskSourceText && host.recovery.shouldOfferFileDraftRestore(draft, response.metadata)) {
       if (options.draftRestore === 'auto') {
         showOpeningPhase('restoring', { immediate: true });
         if (!isLatestOpenRequest()) return false;
-        commitOpenedDocument(selectedPath, draft.markdown, response.metadata, options.preferredMode, response.content, draft.format);
+        if (commitOpenedDocument(selectedPath, draft.markdown, response.metadata, options.preferredMode, diskSourceText, draft.format) === false) return false;
         committedDocument = true;
         pushToast('Restored unsaved file draft.', 'warning');
         return true;
@@ -184,13 +204,13 @@ export async function openDocumentForSession({
       if (restoreDraft) {
         showOpeningPhase('restoring', { immediate: true });
         if (!isLatestOpenRequest()) return false;
-        commitOpenedDocument(selectedPath, draft.markdown, response.metadata, options.preferredMode ?? 'visual', response.content, draft.format);
+        if (commitOpenedDocument(selectedPath, draft.markdown, response.metadata, options.preferredMode ?? 'visual', diskSourceText, draft.format) === false) return false;
         committedDocument = true;
         pushToast('Restored unsaved file draft.', 'warning');
         return true;
       }
       host.recovery.clearFileDraft(selectedPath);
-    } else if (draft && draft.markdown !== response.content) {
+    } else if (draft && draft.markdown !== diskSourceText) {
       pushToast('An older recovery draft exists, but the disk file changed after it. Opened the disk version and kept the draft.', 'warning');
     }
 
@@ -199,21 +219,22 @@ export async function openDocumentForSession({
     if (immediatePreparingOverlay) await waitForDocumentOpenPaint();
     if (!isLatestOpenRequest()) return false;
 
-    commitOpenedDocument(selectedPath, response.content, response.metadata, options.preferredMode);
+    if (commitOpenedDocument(selectedPath, diskSourceText, response.metadata, options.preferredMode) === false) return false;
     committedDocument = true;
     recordDocumentOpenDiagnostic(
       host.recovery,
       'document-open-committed',
       'Document committed.',
       selectedPath,
-      response.content,
+      diskSourceText,
     );
     return true;
   } catch (error) {
     if (!isLatestOpenRequest()) return false;
     console.error(error);
-    const message = error instanceof Error ? error.message : String(error);
-    if (selectedPath && !/File access denied/i.test(message)) {
+    const hostError = normalizeDocumentHostError(error);
+    const message = hostError.message;
+    if (selectedPath && hostError.code !== 'PERMISSION_DENIED') {
       setSettings(host.settings.forgetRecentFile(selectedPath));
     }
     recordDocumentOpenDiagnostic(
@@ -222,7 +243,7 @@ export async function openDocumentForSession({
       message || 'Document open failed.',
       selectedPath,
     );
-    pushToast(/File access denied/i.test(message) ? 'Use Open or Files to grant access to this document again.' : message || 'Open failed.', 'error');
+    pushToast(hostError.code === 'PERMISSION_DENIED' ? 'Use Open or Files to grant access to this document again.' : message || 'Open failed.', 'error');
     return false;
   } finally {
     clearOpeningStatus(documentOpenStatusClearDelay(committedDocument));
@@ -252,6 +273,7 @@ export async function restoreExternalLaunchDraftAfterCommit({
   pushToast,
   draftRestoreTimeoutMs = DEFAULT_DOCUMENT_OPEN_TIMEOUTS.draftRestoreMs,
 }: RestoreExternalLaunchDraftInput): Promise<void> {
+  const diskSourceText = readSourceEnvelope(response).sourceText;
   recordDocumentOpenDiagnostic(recoveryHost, 'document-open-draft-check-start', 'Checking launch document recovery draft.', path);
   const draft = await loadFileDraftWithTimeout(recoveryHost, path, draftRestoreTimeoutMs);
   const stillCurrentDocument = isStillCurrentDocument();
@@ -260,13 +282,13 @@ export async function restoreExternalLaunchDraftAfterCommit({
   if (shouldRestoreExternalLaunchDraft({
     stillCurrentDocument,
     currentSourceText: getCurrentSourceText(),
-    diskSourceText: response.content,
+    diskSourceText,
     draftSourceText: draft?.sourceText ?? draft?.markdown ?? null,
     draftRestoreOfferable: draft ? recoveryHost.shouldOfferFileDraftRestore(draft, response.metadata) : false,
   })) {
     if (!draft) return;
     const draftSourceText = draft.sourceText ?? draft.markdown;
-    commitOpenedDocument(path, draftSourceText, response.metadata, preferredMode, response.content, draft.format);
+    commitOpenedDocument(path, draftSourceText, response.metadata, preferredMode, diskSourceText, draft.format);
     recordDocumentOpenDiagnostic(
       recoveryHost,
       'document-open-draft-restored',
@@ -278,7 +300,7 @@ export async function restoreExternalLaunchDraftAfterCommit({
     return;
   }
 
-  if (draft && draft.markdown !== response.content) {
+  if (draft && draft.markdown !== diskSourceText) {
     pushToast('An older recovery draft exists, but the disk file changed after it. Opened the disk version and kept the draft.', 'warning');
   }
 }

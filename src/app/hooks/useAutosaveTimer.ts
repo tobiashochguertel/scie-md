@@ -1,23 +1,35 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { AutosaveStatus } from '../documentState';
 import { AUTOSAVE_DELAY_MS, AUTOSAVE_MAX_WAIT_MS, shouldScheduleAutosave } from '../../services/autosaveService';
+import type { DocumentId, SourceRevision } from '../documentIdentity';
+import type { WorkspaceSaveCoordinator } from '../workspace/workspaceSaveCoordinator';
+import type { StructuredSavePolicy } from '../structuredSavePolicy';
+import type { SaveCurrentOptions } from './useSaveOperations';
 
 interface UseAutosaveTimerOptions {
+  documentId?: DocumentId;
+  sourceRevision?: SourceRevision;
+  saveCoordinator?: WorkspaceSaveCoordinator;
   filePath: string | null;
   sourceText: string;
   dirty: boolean;
   externalConflict: boolean;
   autosaveBlocked?: boolean;
-  saveCurrent: (options?: { autosave?: boolean; forceSaveAs?: boolean }) => Promise<string | false>;
+  structuredSavePolicy?: StructuredSavePolicy;
+  saveCurrent: (options?: SaveCurrentOptions) => Promise<string | false>;
   setAutosaveStatus: (status: AutosaveStatus) => void;
 }
 
 export function useAutosaveTimer({
+  documentId,
+  sourceRevision,
+  saveCoordinator,
   filePath,
   sourceText,
   dirty,
   externalConflict,
   autosaveBlocked = false,
+  structuredSavePolicy,
   saveCurrent,
   setAutosaveStatus,
 }: UseAutosaveTimerOptions) {
@@ -30,11 +42,15 @@ export function useAutosaveTimer({
   latestStateRef.current = { filePath, dirty, externalConflict, autosaveBlocked };
 
   const cancelAutosave = useCallback(() => {
+    if (saveCoordinator && documentId) {
+      saveCoordinator.cancelAutosave(documentId);
+      return;
+    }
     if (timerRef.current) {
       window.clearTimeout(timerRef.current);
       timerRef.current = null;
     }
-  }, []);
+  }, [documentId, saveCoordinator]);
 
   const resetPendingWindow = useCallback(() => {
     firstPendingAtRef.current = null;
@@ -75,6 +91,7 @@ export function useAutosaveTimer({
   }, [resetPendingWindow, saveCurrent]);
 
   const flushAutosave = useCallback(async () => {
+    if (saveCoordinator && documentId) return saveCoordinator.flushAutosave(documentId);
     cancelAutosave();
     if (filePath && dirty && !autosaveBlocked) {
       return runAutosave();
@@ -82,9 +99,25 @@ export function useAutosaveTimer({
     if (filePath && dirty && autosaveBlocked) return false;
     resetPendingWindow();
     return true;
-  }, [autosaveBlocked, cancelAutosave, dirty, filePath, resetPendingWindow, runAutosave]);
+  }, [autosaveBlocked, cancelAutosave, dirty, documentId, filePath, resetPendingWindow, runAutosave, saveCoordinator]);
 
   const scheduleAutosave = useCallback(() => {
+    if (saveCoordinator && documentId && sourceRevision !== undefined) {
+      const eligible = shouldScheduleAutosave({ filePath, dirty, conflictDetected: externalConflict }) && !autosaveBlocked;
+      saveCoordinator.scheduleAutosave({
+        documentId,
+        sourceRevision,
+        eligible,
+        blocked: dirty && (autosaveBlocked || externalConflict || !filePath),
+        delayMs: AUTOSAVE_DELAY_MS,
+        maxWaitMs: AUTOSAVE_MAX_WAIT_MS,
+        save: () => saveCurrent(structuredSavePolicy
+          ? { autosave: true, structuredSavePolicyOverride: structuredSavePolicy }
+          : { autosave: true }),
+        setStatus: setAutosaveStatus,
+      });
+      return;
+    }
     cancelAutosave();
 
     if (!filePath) {
@@ -122,11 +155,16 @@ export function useAutosaveTimer({
     autosaveBlocked,
     cancelAutosave,
     dirty,
+    documentId,
     externalConflict,
     filePath,
     resetPendingWindow,
     runAutosave,
+    saveCoordinator,
+    saveCurrent,
     setAutosaveStatus,
+    sourceRevision,
+    structuredSavePolicy,
   ]);
 
   const resumeAutosave = useCallback(() => {
@@ -136,8 +174,8 @@ export function useAutosaveTimer({
   useEffect(() => {
     scheduleAutosave();
 
-    return cancelAutosave;
-  }, [cancelAutosave, scheduleAutosave, sourceText]);
+    return saveCoordinator ? undefined : cancelAutosave;
+  }, [cancelAutosave, saveCoordinator, scheduleAutosave, sourceText]);
 
   return { cancelAutosave, flushAutosave, resumeAutosave };
 }

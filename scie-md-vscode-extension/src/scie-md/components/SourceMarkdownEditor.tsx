@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { autocompletion } from '@codemirror/autocomplete';
 import type { CompletionContext, CompletionResult } from '@codemirror/autocomplete';
 import { defaultKeymap, indentWithTab } from '@codemirror/commands';
@@ -7,7 +7,7 @@ import { Compartment, EditorState, Transaction } from '@codemirror/state';
 import type { Extension } from '@codemirror/state';
 import { Decoration, EditorView, hoverTooltip, keymap } from '@codemirror/view';
 import type { AuthorshipMark } from '../markdown/authorship';
-import { fencedCodeRanges, inlineCodeRanges, isOffsetInsideRanges, mergeRanges, scieMdCommentRanges } from '@sciemd/core';
+import { fencedCodeRanges, formatByteLengthUtf8, formatDefinitionFor, inlineCodeRanges, isOffsetInsideRanges, mergeRanges, scieMdCommentRanges, sourceSemanticPresentationMode } from '@sciemd/core';
 import type { ValidationIssue } from '../markdown/markdownValidation';
 import { changeTouchesProtectedAnchor, changeTouchesProtectedBlockBody, parseProtectedAnchors, parseProtectedBlocks } from '@sciemd/core';
 import type { ProtectedAnchor, ProtectedBlock } from '@sciemd/core';
@@ -18,6 +18,7 @@ import type { CrossReferenceLabel } from '@sciemd/core';
 import type { VariableDefinition } from '@sciemd/core';
 import { extractCitationTokens } from '@sciemd/core';
 import type { BibtexEntry } from '@sciemd/core';
+import { createScieMdSemanticHighlighting } from './sourceSemanticHighlighting';
 
 export type SourceMarkdownInsert = (markdown: string) => void;
 export type SourceMarkdownJump = (line: number) => void;
@@ -83,6 +84,11 @@ export function SourceMarkdownEditor({
   onLockViolation,
   readOnly = false,
 }: SourceMarkdownEditorProps) {
+  const semanticPresentationMode = useMemo(() => sourceSemanticPresentationMode({
+    byteLength: formatByteLengthUtf8(markdown),
+    sourceOnlyThresholdBytes: formatDefinitionFor('markdown')?.runtimePolicy.sourceOnlyFileBytes ?? Number.POSITIVE_INFINITY,
+    languageAvailable: true,
+  }), [markdown]);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -103,6 +109,7 @@ export function SourceMarkdownEditor({
   const variableDecorationCompartmentRef = useRef(new Compartment());
   const editableCompartmentRef = useRef(new Compartment());
   const readOnlyCompartmentRef = useRef(new Compartment());
+  const presentationCompartmentRef = useRef(new Compartment());
   const readOnlyRef = useRef(readOnly);
 
   useEffect(() => {
@@ -190,7 +197,7 @@ export function SourceMarkdownEditor({
       state: EditorState.create({
         doc: markdown,
         extensions: [
-          markdownLanguage(),
+          presentationCompartmentRef.current.of(createMarkdownPresentationExtension(semanticPresentationMode)),
           EditorState.tabSize.of(2),
           EditorState.allowMultipleSelections.of(true),
           EditorView.lineWrapping,
@@ -302,6 +309,12 @@ export function SourceMarkdownEditor({
   }, []);
 
   useEffect(() => {
+    viewRef.current?.dispatch({
+      effects: presentationCompartmentRef.current.reconfigure(createMarkdownPresentationExtension(semanticPresentationMode)),
+    });
+  }, [semanticPresentationMode]);
+
+  useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     const current = view.state.doc.toString();
@@ -361,7 +374,7 @@ export function SourceMarkdownEditor({
   }, [highlightedVariableName, variableDefinitions]);
 
   return (
-    <div className="source-editor source-editor-shell" data-readonly={readOnly ? 'true' : undefined}>
+    <div className="source-editor source-editor-shell" data-readonly={readOnly ? 'true' : undefined} data-source-semantic-highlighting={semanticPresentationMode}>
       <div className="source-editor-host" ref={hostRef} />
       <SourceValidationTicks
         markdown={markdown}
@@ -370,6 +383,10 @@ export function SourceMarkdownEditor({
       />
     </div>
   );
+}
+
+export function createMarkdownPresentationExtension(mode: 'enabled' | 'large-file-fallback' | 'unsupported-plain'): Extension {
+  return mode === 'enabled' ? [markdownLanguage(), createScieMdSemanticHighlighting()] : [];
 }
 
 function SourceValidationTicks({

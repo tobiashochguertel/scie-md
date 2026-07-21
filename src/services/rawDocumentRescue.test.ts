@@ -1,15 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeNativeRecoverySnapshot } from './nativeRecoveryService';
+import { createDocumentId, createUntitledLocator, sourceRevision } from '../app/documentIdentity';
+import { resetRecoveryCatalogForTests } from './recoveryCatalog';
 import {
   RAW_RESCUE_SESSION_STORAGE_MAX_BYTES,
+  exportRawDocumentRescueMarkdown,
   flushRawDocumentRescueSnapshotForTests,
   nativeRescueMarkdown,
+  listRawDocumentRescueSnapshots,
   rawDocumentRescuePolicy,
   updateRawDocumentRescue,
 } from './rawDocumentRescue';
 
 vi.mock('./nativeRecoveryService', () => ({
   readNativeRecoverySnapshot: vi.fn(async () => null),
+  listNativeRecoverySnapshots: vi.fn(async () => []),
+  clearNativeRecoverySnapshot: vi.fn(async () => true),
   writeNativeRecoverySnapshot: vi.fn(async () => true),
 }));
 
@@ -19,6 +25,8 @@ describe('raw document rescue policy', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     window.sessionStorage.clear();
+    localStorage.clear();
+    resetRecoveryCatalogForTests();
     vi.mocked(writeNativeRecoverySnapshot).mockClear();
   });
 
@@ -77,5 +85,57 @@ describe('raw document rescue policy', () => {
     expect(rescue).toContain('Original markdown bytes:');
     expect(rescue).toContain('Native rescue cap bytes: 120');
     expect(rescue).toContain('Tail marker');
+  });
+
+  it('keeps generic rescue snapshots independently by DocumentId and format', async () => {
+    const jsonId = createDocumentId();
+    const plainId = createDocumentId();
+    updateRawDocumentRescue('{"dirty":true}', null, {
+      documentId: jsonId,
+      locator: createUntitledLocator(),
+      format: 'json',
+      sourceRevision: sourceRevision(2),
+    });
+    updateRawDocumentRescue('', null, {
+      documentId: plainId,
+      locator: createUntitledLocator(),
+      format: 'plainText',
+      sourceRevision: sourceRevision(3),
+    });
+    await flushRawDocumentRescueSnapshotForTests();
+
+    expect(listRawDocumentRescueSnapshots()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ documentId: jsonId, sourceText: '{"dirty":true}', format: 'json', sourceRevision: 2 }),
+      expect.objectContaining({ documentId: plainId, sourceText: '', format: 'plainText', sourceRevision: 3 }),
+    ]));
+  });
+
+  it('exports with the canonical format extension and media type', async () => {
+    const documentId = createDocumentId();
+    let downloadedName = '';
+    const downloadedBlobs: Blob[] = [];
+    const createUrl = vi.spyOn(URL, 'createObjectURL').mockImplementation((blob) => {
+      downloadedBlobs.push(blob as Blob);
+      return 'blob:recovery-test';
+    });
+    const revokeUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function captureDownload(this: HTMLAnchorElement) {
+      downloadedName = this.download;
+    });
+    updateRawDocumentRescue('# recover', null, {
+      documentId,
+      locator: createUntitledLocator(),
+      format: 'markdown',
+      sourceRevision: sourceRevision(4),
+    });
+    await flushRawDocumentRescueSnapshotForTests();
+
+    expect(await exportRawDocumentRescueMarkdown(documentId)).toBe(true);
+    expect(downloadedName).toBe('scie-md-rescue.md');
+    expect(downloadedBlobs[0]?.type).toBe('text/markdown;charset=utf-8');
+
+    createUrl.mockRestore();
+    revokeUrl.mockRestore();
+    click.mockRestore();
   });
 });

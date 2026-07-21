@@ -5,17 +5,19 @@ interface RegisteredVisualEditorStateReader {
   reader: VisualEditorStateReader;
 }
 
-const registeredReaders: RegisteredVisualEditorStateReader[] = [];
+// The VS Code webview is intentionally a single-document host. This is a thin
+// compatibility slot with the desktop gateway's read/flush semantics, not a
+// second workspace or document-lifecycle kernel.
+let registeredReader: RegisteredVisualEditorStateReader | null = null;
 
 export function setVisualEditorStateReader(reader: VisualEditorStateReader): () => void {
   const id = Symbol('visual-editor-state-reader');
-  registeredReaders.push({ id, reader });
+  registeredReader = { id, reader };
   return () => {
-    const index = registeredReaders.findIndex((entry) => entry.id === id);
-    if (index >= 0) registeredReaders.splice(index, 1);
+    if (registeredReader?.id === id) registeredReader = null;
   };
 }
 
 export function flushVisualEditorState(): string | null {
-  return registeredReaders.at(-1)?.reader() ?? null;
+  return registeredReader?.reader() ?? null;
 }

@@ -14,6 +14,12 @@ export interface EditorSelectionAnchor {
   to?: number;
 }
 
+export interface EditorViewSnapshot {
+  surface: EditorSurface;
+  selection: EditorSelectionAnchor | null;
+  scrollTop: number;
+}
+
 export interface EditorAdapter {
   surface: EditorSurface;
   read(): EditorReadResult | null;
@@ -21,8 +27,10 @@ export interface EditorAdapter {
   focus(): void;
   getSelectionAnchor?(): EditorSelectionAnchor | null;
   restoreSelectionAnchor?(anchor: EditorSelectionAnchor): boolean;
+  captureView?(): EditorViewSnapshot;
+  restoreView?(snapshot: EditorViewSnapshot): boolean;
   flushPendingEdits(): EditorReadResult | null;
   history?: EditorHistoryControls;
 }
 
-export type EditorAdapterReady = (adapter: EditorAdapter | undefined) => void;
+export type EditorAdapterReady = (adapter: EditorAdapter | undefined, retiringAdapter?: EditorAdapter) => void;

@@ -1,14 +1,12 @@
 import type { FormatAdapter } from '../documentFormat.js';
+import { formatAdapterIdentity, requiredFormatParseBudgetBytes } from '../formatDefinitions.js';
 import { createTomlContent, parseTomlDocument, type ParsedTomlDocument } from './parseTomlDocument.js';
 
-export const TOML_FORMAT_EXTENSIONS = ['toml'] as const;
-export const TOML_PARSE_BUDGET_BYTES = 1 * 1024 * 1024;
+export const TOML_FORMAT_EXTENSIONS = formatAdapterIdentity('toml').extensions;
+export const TOML_PARSE_BUDGET_BYTES = requiredFormatParseBudgetBytes('toml');
 
 export const tomlAdapter: FormatAdapter<ParsedTomlDocument> = {
-  format: 'toml',
-  label: 'TOML',
-  extensions: TOML_FORMAT_EXTENSIONS,
-  mediaTypes: ['application/toml', 'application/x-toml'],
+  ...formatAdapterIdentity('toml'),
   capabilities: {
     sourceEditing: true,
     sourceEditor: {

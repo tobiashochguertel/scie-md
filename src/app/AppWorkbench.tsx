@@ -1,17 +1,19 @@
-import { useMemo } from 'react';
-import type { ComponentProps, CSSProperties, ReactNode } from 'react';
+import type { ComponentProps, ReactNode } from 'react';
 import { AmbientSuggestions } from '../components/AmbientSuggestions';
 import { AppTopbar, type AppTopbarMenuId } from '../components/AppTopbar';
 import { FindReplacePanel } from '../components/FindReplacePanel';
 import { InspectorPane } from '../components/InspectorPane';
-import { LocalPanelErrorBoundary } from '../components/LocalPanelErrorBoundary';
 import { MarkdownToolbar } from '../components/MarkdownToolbar';
 import { StatusBar } from '../components/StatusBar';
 import { AppEditorStage } from './AppEditorStage';
 import { AppSidebar } from './AppSidebar';
-import { MARKDOWN_UI_CAPABILITIES, type FormatUiCapabilities } from './formatCapabilities';
+import { ActiveDocumentWorkbench } from './ActiveDocumentWorkbench';
+import { WorkspaceShell } from './WorkspaceShell';
+import { WorkspaceTabStrip } from './WorkspaceTabStrip';
+import type { ActiveDocumentProjection } from './workspace';
 
-type AppTopbarWorkbenchProps = Omit<ComponentProps<typeof AppTopbar>, 'activeMenu' | 'onToggleMenu' | 'onCloseMenus'>;
+type AppTopbarWorkbenchProps = Omit<ComponentProps<typeof AppTopbar>,
+  'activeMenu' | 'onToggleMenu' | 'onCloseMenus' | 'format' | 'formatCapabilities' | 'documentChrome'>;
 
 export interface AppWorkbenchProps {
   focusMode: boolean;
@@ -19,7 +21,7 @@ export interface AppWorkbenchProps {
   activeTopbarMenu: AppTopbarMenuId | null;
   onToggleTopbarMenu: (menu: AppTopbarMenuId) => void;
   onCloseTopbarMenus: () => void;
-  formatCapabilities?: FormatUiCapabilities;
+  activeProjection: ActiveDocumentProjection;
   topbar: AppTopbarWorkbenchProps;
   toolbar: ComponentProps<typeof MarkdownToolbar>;
   findReplace: ComponentProps<typeof FindReplacePanel> | null;
@@ -31,6 +33,7 @@ export interface AppWorkbenchProps {
   inspector: ComponentProps<typeof InspectorPane>;
   ambientSuggestions: ComponentProps<typeof AmbientSuggestions>;
   statusBar: ComponentProps<typeof StatusBar>;
+  workspaceTabs: ComponentProps<typeof WorkspaceTabStrip>;
   children?: ReactNode;
 }
 
@@ -40,7 +43,7 @@ export function AppWorkbench({
   activeTopbarMenu,
   onToggleTopbarMenu,
   onCloseTopbarMenus,
-  formatCapabilities = MARKDOWN_UI_CAPABILITIES,
+  activeProjection,
   topbar,
   toolbar,
   findReplace,
@@ -52,40 +55,34 @@ export function AppWorkbench({
   inspector,
   ambientSuggestions,
   statusBar,
+  workspaceTabs,
   children,
 }: AppWorkbenchProps) {
-  const workbenchStyle = useMemo(() => ({
-    '--outline-width': `${sidebarWidth}px`,
-  }) as CSSProperties, [sidebarWidth]);
-
   return (
-    <div className={`app-shell ${focusMode ? 'focus-mode' : ''}`}>
-      <a className="skip-link" href="#editor-stage">{skipToEditorLabel}</a>
-      <AppTopbar
-        {...topbar}
-        formatCapabilities={formatCapabilities}
-        activeMenu={activeTopbarMenu}
-        onToggleMenu={onToggleTopbarMenu}
-        onCloseMenus={onCloseTopbarMenus}
+    <WorkspaceShell
+      focusMode={focusMode}
+      skipToEditorLabel={skipToEditorLabel}
+      activeTopbarMenu={activeTopbarMenu}
+      onToggleTopbarMenu={onToggleTopbarMenu}
+      onCloseTopbarMenus={onCloseTopbarMenus}
+      activeProjection={activeProjection}
+      topbar={topbar}
+      statusBar={statusBar}
+      tabStrip={<WorkspaceTabStrip {...workspaceTabs} />}
+      overlays={children}
+    >
+      <ActiveDocumentWorkbench
+        formatCapabilities={activeProjection.formatCapabilities}
+        toolbar={toolbar}
+        findReplace={findReplace}
+        outlineOpen={outlineOpen}
+        inspectorOpen={inspectorOpen}
+        sidebarWidth={sidebarWidth}
+        sidebar={sidebar}
+        editorStage={editorStage}
+        inspector={inspector}
+        ambientSuggestions={ambientSuggestions}
       />
-      {formatCapabilities.canUseMarkdownToolbar && <MarkdownToolbar {...toolbar} />}
-      {findReplace && <FindReplacePanel {...findReplace} />}
-      <div
-        className={`workbench ${outlineOpen ? 'with-outline' : ''} ${inspectorOpen ? 'with-inspector' : ''}`}
-        style={workbenchStyle}
-      >
-        <AppSidebar {...sidebar} />
-        <AppEditorStage {...editorStage} />
-        <LocalPanelErrorBoundary
-          label="Inspector"
-          resetKey={`inspector:${inspector.open ? 'open' : 'closed'}:${inspector.data.filePath ?? 'untitled'}:${inspector.data.mode}:${inspector.data.autosaveStatus}`}
-        >
-          <InspectorPane {...inspector} />
-        </LocalPanelErrorBoundary>
-      </div>
-      <AmbientSuggestions {...ambientSuggestions} />
-      <StatusBar {...statusBar} />
-      {children}
-    </div>
+    </WorkspaceShell>
   );
 }

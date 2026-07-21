@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_METADATA } from '../documentState';
 import type { ReadTextFileResponse } from '../documentState';
-import type { DocumentHost } from '../host/documentHost';
+import { DocumentHostError, type DocumentHost } from '../host/documentHost';
 import { loadSettings } from '../../services/settingsService';
 import type { PersistedSettings } from '../../services/settingsService';
 import {
@@ -107,11 +107,27 @@ describe('openDocumentForSession', () => {
     expect(input.host.file.readTextFileForEdit).not.toHaveBeenCalled();
   });
 
+  it('focuses an explicitly opened workspace duplicate before settlement or disk read', async () => {
+    const path = 'C:\\docs\\already-open.md';
+    const input = createOpenInput({
+      onResolvedLocator: vi.fn<NonNullable<OpenDocumentForSessionInput['onResolvedLocator']>>().mockReturnValue(true),
+    });
+
+    const opened = await openDocumentForSession({ ...input, explicitPath: path });
+
+    expect(opened).toBe(true);
+    expect(input.onResolvedLocator).toHaveBeenCalledWith(expect.objectContaining({ kind: 'file', displayPath: path }));
+    expect(input.settleDirtyDocumentBeforeReplace).not.toHaveBeenCalled();
+    expect(input.host.file.readTextFileForEdit).not.toHaveBeenCalled();
+    expect(input.commitOpenedDocument).not.toHaveBeenCalled();
+    expect(diagnosticEventTypes(input.host)).toEqual(['document-open-duplicate-skipped']);
+  });
+
   it('records open failures and forgets recent files except for grant failures', async () => {
     const path = 'C:\\docs\\missing.md';
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const input = createOpenInput();
-    input.host.file.readTextFileForEdit = vi.fn().mockRejectedValue(new Error('Not found'));
+    input.host.file.readTextFileForEdit = vi.fn().mockRejectedValue(new DocumentHostError('NOT_FOUND', 'Not found'));
 
     const opened = await openDocumentForSession({ ...input, explicitPath: path });
 
@@ -124,7 +140,9 @@ describe('openDocumentForSession', () => {
 
     const accessDeniedInput = createOpenInput();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    accessDeniedInput.host.file.readTextFileForEdit = vi.fn().mockRejectedValue(new Error('File access denied'));
+    accessDeniedInput.host.file.readTextFileForEdit = vi.fn().mockRejectedValue(
+      new DocumentHostError('PERMISSION_DENIED', 'Autorisation refusée'),
+    );
 
     const accessDeniedOpened = await openDocumentForSession({ ...accessDeniedInput, explicitPath: path });
 

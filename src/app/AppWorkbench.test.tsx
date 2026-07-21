@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppWorkbench } from './AppWorkbench';
 import { DEFAULT_METADATA } from './documentState';
 import { formatCapabilitiesFor } from './formatCapabilities';
+import { createDocumentId } from './documentIdentity';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -12,8 +13,7 @@ vi.mock('../components/AppTopbar', async () => {
   return {
     AppTopbar: (props: {
       activeMenu: string | null;
-      dirty: boolean;
-      filePath: string | null;
+      documentChrome: { activeDirty: boolean; filePath: string | null };
       onToggleMenu: (menu: string) => void;
       onCloseMenus: () => void;
       onSave: () => void;
@@ -22,8 +22,8 @@ vi.mock('../components/AppTopbar', async () => {
       {
         'data-testid': 'topbar',
         'data-active-menu': props.activeMenu ?? '',
-        'data-dirty': String(props.dirty),
-        'data-file-path': props.filePath ?? '',
+        'data-dirty': String(props.documentChrome.activeDirty),
+        'data-file-path': props.documentChrome.filePath ?? '',
       },
       React.createElement('button', { type: 'button', onClick: () => props.onToggleMenu('file') }, 'toggle file'),
       React.createElement('button', { type: 'button', onClick: props.onCloseMenus }, 'close menus'),
@@ -259,7 +259,7 @@ describe('AppWorkbench', () => {
 
   it('hides the Markdown toolbar for source-only formats', () => {
     const props = createProps({
-      formatCapabilities: formatCapabilitiesFor('json'),
+      activeProjection: createActiveProjection('json'),
     });
 
     renderWorkbench(props);
@@ -268,6 +268,57 @@ describe('AppWorkbench', () => {
     expect(container.querySelector('[data-testid="topbar"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="editor-stage"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="status-bar"]')).not.toBeNull();
+  });
+
+  it('exposes one tabpanel with roving tabs and keyboard/reorder lifecycle controls', () => {
+    const firstId = createDocumentId();
+    const secondId = createDocumentId();
+    const callbacks = {
+      onActivate: vi.fn(),
+      onClose: vi.fn(),
+      onCloseOthers: vi.fn(),
+      onCloseRight: vi.fn(),
+      onReorder: vi.fn(),
+      onReopenClosed: vi.fn(),
+      onSaveAll: vi.fn(),
+    };
+    const props = createProps({
+      activeProjection: { ...createActiveProjection('markdown'), documentId: firstId, chrome: { ...createActiveProjection('markdown').chrome, documentId: firstId } },
+      workspaceTabs: {
+        ...callbacks,
+        model: {
+          activeDocumentId: firstId,
+          mruDocumentId: secondId,
+          recentlyClosedCount: 1,
+          tabs: [
+            { documentId: firstId, label: 'paper.md — papers', accessibleName: 'paper.md, MARKDOWN, active, Unsaved, tab 1 of 2', formatLabel: 'MARKDOWN', statuses: ['Unsaved'], active: true, index: 0, count: 2, canMoveLeft: false, canMoveRight: true },
+            { documentId: secondId, label: 'paper.md — data', accessibleName: 'paper.md, JSON, Read only, tab 2 of 2', formatLabel: 'JSON', statuses: ['Read only'], active: false, index: 1, count: 2, canMoveLeft: true, canMoveRight: false },
+          ],
+        },
+      },
+    });
+    renderWorkbench(props);
+
+    const tablist = container.querySelector<HTMLElement>('[role="tablist"]')!;
+    const tabs = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+    expect(tabs).toHaveLength(2);
+    expect(tabs[0].getAttribute('aria-selected')).toBe('true');
+    expect(tabs[0].tabIndex).toBe(0);
+    expect(tabs[1].tabIndex).toBe(-1);
+    expect(container.querySelectorAll('[role="tabpanel"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-testid="editor-stage"]')).toHaveLength(1);
+
+    act(() => tabs[0].focus());
+    act(() => tablist.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })));
+    expect(callbacks.onActivate).toHaveBeenCalledWith(secondId);
+    act(() => tablist.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', altKey: true, shiftKey: true, bubbles: true })));
+    expect(callbacks.onReorder).toHaveBeenCalled();
+    clickButton('×');
+    expect(callbacks.onClose).toHaveBeenCalledWith(firstId);
+    clickButton('Reopen closed');
+    clickButton('Save All');
+    expect(callbacks.onReopenClosed).toHaveBeenCalledTimes(1);
+    expect(callbacks.onSaveAll).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -287,18 +338,42 @@ function clickButton(label: string): void {
 }
 
 function createProps(overrides: Partial<ComponentProps<typeof AppWorkbench>> = {}): ComponentProps<typeof AppWorkbench> {
+  const activeProjection = overrides.activeProjection ?? createActiveProjection('markdown');
   return {
     focusMode: false,
     skipToEditorLabel: 'Skip editor',
     activeTopbarMenu: null,
     onToggleTopbarMenu: vi.fn(),
     onCloseTopbarMenus: vi.fn(),
-    formatCapabilities: formatCapabilitiesFor('markdown'),
+    activeProjection,
+    workspaceTabs: {
+      model: {
+        activeDocumentId: activeProjection.documentId,
+        mruDocumentId: null,
+        recentlyClosedCount: 0,
+        tabs: [{
+          documentId: activeProjection.documentId,
+          label: activeProjection.chrome.displayName,
+          accessibleName: `${activeProjection.chrome.displayName}, active, tab 1 of 1`,
+          formatLabel: activeProjection.format.toUpperCase(),
+          statuses: ['Unsaved'],
+          active: true,
+          index: 0,
+          count: 1,
+          canMoveLeft: false,
+          canMoveRight: false,
+        }],
+      },
+      onActivate: vi.fn(),
+      onClose: vi.fn(),
+      onCloseOthers: vi.fn(),
+      onCloseRight: vi.fn(),
+      onReorder: vi.fn(),
+      onReopenClosed: vi.fn(),
+      onSaveAll: vi.fn(),
+    },
     topbar: {
       mode: 'visual',
-      format: 'markdown',
-      filePath: 'C:\\docs\\paper.md',
-      dirty: true,
       outlineOpen: true,
       inspectorOpen: true,
       focusMode: false,
@@ -480,7 +555,10 @@ function createProps(overrides: Partial<ComponentProps<typeof AppWorkbench>> = {
       onSourceJumpReady: vi.fn(),
       onSourceFindReady: vi.fn(),
       onSourceHistoryReady: vi.fn(),
-      onSelectionTextReady: vi.fn(),
+      onSourceAdapterReady: vi.fn(),
+      onVisualAdapterReady: vi.fn(),
+      onSourceSelectionTextReady: vi.fn(),
+      onVisualSelectionTextReady: vi.fn(),
       onCursorLineChange: vi.fn(),
       onViewportLineChange: vi.fn(),
       onLockViolation: vi.fn(),
@@ -578,6 +656,7 @@ function createProps(overrides: Partial<ComponentProps<typeof AppWorkbench>> = {
       formatCapabilities: formatCapabilitiesFor('markdown'),
       autosaveStatus: 'saved',
       statusText: 'Saved',
+      workspaceStatus: '1 unsaved',
       headingPath: [],
       wordCount: 123,
       manuscriptScore: 80,
@@ -597,6 +676,30 @@ function createProps(overrides: Partial<ComponentProps<typeof AppWorkbench>> = {
     },
     children: <div data-testid="overlay-child" />,
     ...overrides,
+  };
+}
+
+function createActiveProjection(format: 'markdown' | 'json') {
+  const documentId = createDocumentId();
+  const filePath = format === 'markdown' ? 'C:\\docs\\paper.md' : 'C:\\docs\\data.json';
+  const displayName = format === 'markdown' ? 'paper.md' : 'data.json';
+  return {
+    documentId,
+    format,
+    mode: 'visual' as const,
+    formatCapabilities: formatCapabilitiesFor(format),
+    chrome: {
+      documentId,
+      filePath,
+      displayName,
+      activeDirty: true,
+      unsavedCount: 1,
+      backgroundUnsavedCount: 0,
+      savingCount: 0,
+      conflictCount: 0,
+      aggregateStatus: '1 unsaved',
+      windowTitle: `* ${displayName} · 1 unsaved - ScieMD`,
+    },
   };
 }
 

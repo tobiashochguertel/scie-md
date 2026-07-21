@@ -3,6 +3,7 @@ import type { FileExplorerEntry } from '../../services/fileService';
 import { fileWatchRetryDelayMs } from '../../services/fileWatchService';
 import { desktopPlatformHost } from '../host/desktopPlatformHost';
 import type { DesktopPlatformHost } from '../host/platformHost';
+import { canonicalComparisonKey } from '../documentIdentity';
 
 const VISIBLE_DIRECTORY_LOAD_TIMEOUT_MS = 15_000;
 const SILENT_DIRECTORY_LOAD_TIMEOUT_MS = 30_000;
@@ -246,13 +247,9 @@ export function useFileExplorer({
 }
 
 function pathInsideDirectory(path: string, directory: string): boolean {
-  const normalizedPath = normalizePath(path);
-  const normalizedDirectory = normalizePath(directory).replace(/\/$/, '');
+  const normalizedPath = canonicalComparisonKey(path);
+  const normalizedDirectory = canonicalComparisonKey(directory).replace(/\/$/, '');
   return normalizedPath === normalizedDirectory || normalizedPath.startsWith(`${normalizedDirectory}/`);
-}
-
-function normalizePath(path: string): string {
-  return path.replace(/\\/g, '/').replace(/\/+/g, '/').toLocaleLowerCase();
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {

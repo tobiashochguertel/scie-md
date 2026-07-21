@@ -7,6 +7,8 @@ import type { RecentFilePreview } from '../markdown/documentIntelligence';
 import { formatCapabilitiesFor } from '../app/formatCapabilities';
 import { parseSourceFormatDiagnostics } from '../app/formatDiagnostics';
 import { createStructuredSurfaceNavigationModel } from '../app/structuredSurfaceNavigation';
+import { displayNameForPath } from '../app/documentState';
+import { createDocumentId } from '../app/documentIdentity';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -129,6 +131,28 @@ describe('AppTopbar menu architecture', () => {
     expect(container.querySelector('.structured-surface-toggle')).toBeNull();
     expect(container.querySelector('[aria-label="Theme: dark"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="Toggle navigation sidebar"]')).not.toBeNull();
+  });
+
+  it('exposes aggregate background work in title chrome and the close affordance', () => {
+    renderTopbar(null, [], {
+      documentChrome: {
+        documentId: createDocumentId(),
+        filePath: 'C:\\docs\\clean.md',
+        displayName: 'clean.md',
+        activeDirty: false,
+        unsavedCount: 2,
+        backgroundUnsavedCount: 2,
+        savingCount: 1,
+        conflictCount: 1,
+        aggregateStatus: '2 unsaved, 1 saving, 1 conflicted',
+        windowTitle: 'clean.md · 2 unsaved - ScieMD',
+      },
+    });
+
+    expect(container.querySelector('.document-title')?.textContent).toContain('clean.md');
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('2 unsaved, 1 saving, 1 conflicted');
+    expect(container.querySelector<HTMLButtonElement>('.window-controls button:last-child')?.ariaLabel)
+      .toContain('2 unsaved, 1 saving, 1 conflicted');
   });
 
   it('renders explicit structured surface controls and disabled reasons', () => {
@@ -338,15 +362,26 @@ function renderTopbar(
   overrides: Partial<ComponentProps<typeof AppTopbar>> = {},
 ) {
   const handler = vi.fn();
+  const format = overrides.format ?? 'markdown';
   act(() => {
     root.render(
       <AppTopbar
         mode={overrides.mode ?? 'visual'}
-        format={overrides.format ?? 'markdown'}
+        format={format}
         formatCapabilities={overrides.formatCapabilities}
         activeMenu={activeMenu}
-        filePath={null}
-        dirty={false}
+        documentChrome={overrides.documentChrome ?? {
+          documentId: createDocumentId(),
+          filePath: null,
+          displayName: displayNameForPath(null, format),
+          activeDirty: false,
+          unsavedCount: 0,
+          backgroundUnsavedCount: 0,
+          savingCount: 0,
+          conflictCount: 0,
+          aggregateStatus: null,
+          windowTitle: `${displayNameForPath(null, format)} - ScieMD`,
+        }}
         outlineOpen
         inspectorOpen={false}
         focusMode={false}

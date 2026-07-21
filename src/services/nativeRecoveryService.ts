@@ -4,6 +4,13 @@ import { isTauriRuntime } from '../app/runtime';
 
 export interface NativeRecoverySnapshot {
   schemaVersion?: number;
+  generation?: number;
+  checksum?: string;
+  commitState?: 'pending' | 'committed';
+  documentId?: string | null;
+  sourceRevision?: number | null;
+  catalogSchemaVersion?: number | null;
+  mediaType?: string | null;
   sourceText?: string;
   /** @deprecated Native snapshots keep this field for recovery compatibility. */
   markdown: string;
@@ -66,13 +73,22 @@ export async function writeNativeRecoverySnapshot(snapshot: {
   filePath: string | null;
   format?: DocumentFormat;
   updatedAtMs: number;
+  documentId?: string | null;
+  sourceRevision?: number | null;
+  catalogSchemaVersion?: number | null;
+  mediaType?: string | null;
 }): Promise<boolean> {
   if (!canUseNativeDiagnostics()) return false;
   const sourceText = snapshot.sourceText ?? snapshot.markdown ?? '';
   try {
     await invoke('write_recovery_snapshot', {
       payload: {
-        schemaVersion: 2,
+        schemaVersion: 3,
+        commitState: 'committed',
+        documentId: snapshot.documentId ?? null,
+        sourceRevision: snapshot.sourceRevision ?? null,
+        catalogSchemaVersion: snapshot.catalogSchemaVersion ?? null,
+        mediaType: snapshot.mediaType ?? null,
         markdown: sourceText,
         filePath: snapshot.filePath,
         format: snapshot.format ?? 'markdown',
@@ -86,11 +102,12 @@ export async function writeNativeRecoverySnapshot(snapshot: {
   }
 }
 
-export async function readNativeRecoverySnapshot(filePath?: string | null): Promise<NativeRecoverySnapshot | null> {
+export async function readNativeRecoverySnapshot(filePath?: string | null, documentId?: string | null): Promise<NativeRecoverySnapshot | null> {
   if (!canUseNativeDiagnostics()) return null;
   try {
     const snapshot = await invoke<NativeRecoverySnapshot | null>('read_recovery_snapshot', {
       filePath: filePath ?? null,
+      documentId: documentId ?? null,
       latest: filePath === undefined,
     });
     return snapshot;
@@ -100,17 +117,29 @@ export async function readNativeRecoverySnapshot(filePath?: string | null): Prom
   }
 }
 
-export async function clearNativeRecoverySnapshot(filePath?: string | null): Promise<boolean> {
+export async function clearNativeRecoverySnapshot(filePath?: string | null, documentId?: string | null, upToSourceRevision?: number): Promise<boolean> {
   if (!canUseNativeDiagnostics()) return false;
   try {
     await invoke('clear_recovery_snapshot', {
       filePath: filePath ?? null,
+      documentId: documentId ?? null,
+      upToSourceRevision: upToSourceRevision ?? null,
       latest: filePath === undefined,
     });
     return true;
   } catch (error) {
     console.warn('Native recovery snapshot cleanup failed.', error);
     return false;
+  }
+}
+
+export async function listNativeRecoverySnapshots(): Promise<NativeRecoverySnapshot[]> {
+  if (!canUseNativeDiagnostics()) return [];
+  try {
+    return await invoke<NativeRecoverySnapshot[]>('list_recovery_snapshots');
+  } catch (error) {
+    console.warn('Native recovery catalog read failed.', error);
+    return [];
   }
 }
 

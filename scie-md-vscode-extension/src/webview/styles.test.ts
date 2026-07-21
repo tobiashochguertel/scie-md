@@ -6,6 +6,11 @@ const extensionRoot = process.cwd();
 const webviewStyles = readFileSync(join(extensionRoot, 'src/webview/styles.css'), 'utf8');
 const scieStyleRoot = join(extensionRoot, 'src/scie-md/styles');
 const extensionTokenStyles = readFileSync(join(scieStyleRoot, 'app.tokens.css'), 'utf8');
+const desktopTokenStyles = readFileSync(join(extensionRoot, '..', 'src/styles/app.tokens.css'), 'utf8');
+const extensionSourceStyles = readFileSync(join(scieStyleRoot, 'app.source-editor.css'), 'utf8');
+const desktopSourceStyles = readFileSync(join(extensionRoot, '..', 'src/styles/app.source-editor.css'), 'utf8');
+const extensionHighlightFactory = readFileSync(join(extensionRoot, 'src/scie-md/components/sourceSemanticHighlighting.ts'), 'utf8');
+const desktopHighlightFactory = readFileSync(join(extensionRoot, '..', 'src/components/sourceSemanticHighlighting.ts'), 'utf8');
 const desktopStyleFiles = readdirSync(scieStyleRoot)
   .filter((fileName) => fileName.endsWith('.css'))
   .sort();
@@ -27,6 +32,15 @@ function referencedCustomProperties(css: string): Set<string> {
 }
 
 describe('VS Code webview CSS token bridge', () => {
+  it('keeps the semantic source token and interaction contract exact across hosts', () => {
+    expect(extensionHighlightFactory).toBe(desktopHighlightFactory);
+    const declarations = (css: string) => Array.from(css.matchAll(/--source-[\w-]+\s*:\s*[^;]+;/g), (match) => match[0]).sort();
+    expect(declarations(extensionTokenStyles)).toEqual(declarations(desktopTokenStyles));
+    expect(extensionSourceStyles.match(/\.source-editor \.cm-(?:selectionBackground|searchMatch|lintRange-error)[\s\S]*?\}/g)).toEqual(
+      desktopSourceStyles.match(/\.source-editor \.cm-(?:selectionBackground|searchMatch|lintRange-error)[\s\S]*?\}/g),
+    );
+    expect(webviewStyles).toContain('--source-syntax-heading: var(--vscode-symbolIcon-classForeground');
+  });
   it('documents the host-owned bridge and maps VS Code mode into desktop ScieMD tokens', () => {
     expect(webviewStyles).toContain('VS Code-to-ScieMD token bridge');
     expect(webviewStyles).toMatch(/:root\[data-theme-mode="vscode"\]\s*{[\s\S]*--surface:\s*var\(--scie-widget\);/);

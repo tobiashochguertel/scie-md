@@ -1,4 +1,5 @@
 import type { DocumentFormat, FormatParseResult } from '@sciemd/core';
+import type { EffectToken } from '../../app/effects/documentEffectCoordinator';
 import { parseFormatDocumentSync } from './parseFormatDocument';
 
 interface FormatParseWorkerRequest {
@@ -23,6 +24,7 @@ interface PendingFormatParse {
   worker: Worker;
   retryCount: number;
   supersedeKey: string | null;
+  effectToken?: EffectToken;
 }
 
 let formatParserWorker: Worker | null = null;
@@ -39,6 +41,7 @@ export function parseFormatDocumentAsync(
   text: string,
   path: string | null = null,
   options?: unknown,
+  effectToken?: EffectToken,
 ): Promise<FormatParseResult> {
   const worker = getFormatParserWorker();
   if (!worker) return Promise.resolve().then(() => parseFormatDocumentSync(format, text, path, options));
@@ -46,8 +49,9 @@ export function parseFormatDocumentAsync(
   const id = nextRequestId++;
   const request: FormatParseWorkerRequest = { id, format, text, path, options };
   return new Promise((resolve, reject) => {
+    const supersedeKey = supersedeKeyForRequest(request, effectToken);
     trimPendingFormatParseQueue();
-    rejectSupersededFormatParses(supersedeKeyForRequest(request));
+    rejectSupersededFormatParses(supersedeKey);
     const timeout = setTimeout(() => {
       if (!pendingFormatParses.has(id)) return;
       handleFormatParseTimeout(id);
@@ -59,7 +63,8 @@ export function parseFormatDocumentAsync(
       request,
       worker,
       retryCount: 0,
-      supersedeKey: supersedeKeyForRequest(request),
+      supersedeKey,
+      effectToken,
     });
     try {
       worker.postMessage(request);
@@ -68,6 +73,16 @@ export function parseFormatDocumentAsync(
       reject(error instanceof Error ? error : new Error(String(error)));
     }
   });
+}
+
+export function cancelFormatDocumentParse(token: EffectToken): boolean {
+  for (const [id, pending] of pendingFormatParses) {
+    if (pending.effectToken?.operationId !== token.operationId) continue;
+    clearPendingFormatParse(id);
+    pending.reject(new Error('Format parser worker request superseded by targeted cancellation.'));
+    return true;
+  }
+  return false;
 }
 
 export function isTransientFormatParserWorkerFailure(error: unknown): boolean {
@@ -195,7 +210,8 @@ function rejectPendingFormatParses(error: Error): void {
   formatParserWorker = null;
 }
 
-function supersedeKeyForRequest(request: FormatParseWorkerRequest): string | null {
+function supersedeKeyForRequest(request: FormatParseWorkerRequest, effectToken?: EffectToken): string | null {
+  if (effectToken) return `${effectToken.documentId}\0${request.format}\0${stableOptionsKey(request.options)}`;
   if (!request.path) return null;
   return `${request.format}\0${request.path}\0${stableOptionsKey(request.options)}`;
 }

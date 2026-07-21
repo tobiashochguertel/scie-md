@@ -8,6 +8,16 @@ const configPath = path.join(repoRoot, 'src-tauri', 'tauri.conf.json');
 const cargoManifestPath = path.join(repoRoot, 'src-tauri', 'Cargo.toml');
 const nsisHooksPath = path.join(repoRoot, 'src-tauri', 'windows', 'nsis-hooks.nsh');
 const tomlSourceMapPath = path.join(repoRoot, 'src-tauri', 'src', 'commands', 'toml_source_map.rs');
+const hostErrorPath = path.join(repoRoot, 'src-tauri', 'src', 'commands', 'host_error.rs');
+const fileIoPath = path.join(repoRoot, 'src-tauri', 'src', 'commands', 'file_io.rs');
+const backupsPath = path.join(repoRoot, 'src-tauri', 'src', 'commands', 'backups.rs');
+const documentHostErrorPath = path.join(repoRoot, 'src', 'app', 'host', 'documentHostError.ts');
+const hostErrorFixturePath = path.join(repoRoot, 'src', 'app', 'host', 'fixtures', 'documentHostErrors.v1.json');
+const openDocumentPath = path.join(repoRoot, 'src', 'app', 'documentSession', 'openDocument.ts');
+const saveOperationsPath = path.join(repoRoot, 'src', 'app', 'hooks', 'useSaveOperations.ts');
+const documentStatePath = path.join(repoRoot, 'src', 'app', 'documentState.ts');
+const fileServicePath = path.join(repoRoot, 'src', 'services', 'fileService.ts');
+const fidelityCorpusPath = path.join(repoRoot, 'docs', 'refactor', 'file_fidelity_corpus.v1.json');
 const sourceRoot = path.join(repoRoot, 'src');
 const failures = [];
 
@@ -18,6 +28,16 @@ const config = JSON.parse(readFileSync(configPath, 'utf8'));
 const cargoManifest = readFileSync(cargoManifestPath, 'utf8');
 const nsisHooksSource = readFileSync(nsisHooksPath, 'utf8');
 const tomlSourceMapSource = readFileSync(tomlSourceMapPath, 'utf8');
+const hostErrorSource = readFileSync(hostErrorPath, 'utf8');
+const fileIoSource = readFileSync(fileIoPath, 'utf8');
+const backupsSource = readFileSync(backupsPath, 'utf8');
+const documentHostErrorSource = readFileSync(documentHostErrorPath, 'utf8');
+const hostErrorFixture = JSON.parse(readFileSync(hostErrorFixturePath, 'utf8'));
+const openDocumentSource = readFileSync(openDocumentPath, 'utf8');
+const saveOperationsSource = readFileSync(saveOperationsPath, 'utf8');
+const documentStateSource = readFileSync(documentStatePath, 'utf8');
+const fileServiceSource = readFileSync(fileServicePath, 'utf8');
+const fidelityCorpus = JSON.parse(readFileSync(fidelityCorpusPath, 'utf8'));
 const registeredCommands = parseRegisteredCommands(libSource);
 
 const DOCUMENT_ASSOCIATION_PROGIDS = new Map([
@@ -50,6 +70,7 @@ const requiredCommandGroups = {
   dialogs: [
     'pick_markdown_file',
     'pick_document_file',
+    'pick_document_files',
     'pick_json_schema_file',
     'pick_image_file',
     'pick_citation_style_file',
@@ -137,6 +158,8 @@ validateDocumentLaunchPolicy(libSource);
 validateWindowsInstallerDocumentPolicy(nsisHooksSource);
 validateManualStructuredOpenPolicy(dialogsSource);
 validateExperimentalTomlSourceMapPolicy(tomlSourceMapSource, registeredCommands, invokedCommands);
+validateDocumentLifecycleErrorBoundary();
+validateDocumentFidelityBoundary();
 
 if (failures.length > 0) {
   console.error('[tauri-contract] Native command contract failed:');
@@ -319,6 +342,85 @@ function validateExperimentalTomlSourceMapPolicy(source, registeredCommands, inv
   }
   if (!source.includes('visual_writes_enabled: false')) {
     failures.push('TOML source-map command must keep visual_writes_enabled false.');
+  }
+}
+
+function validateDocumentLifecycleErrorBoundary() {
+  const expectedCodes = [
+    'FILE_CHANGED',
+    'NOT_FOUND',
+    'PERMISSION_DENIED',
+    'CLOUD_UNAVAILABLE',
+    'BACKUP_FAILED',
+    'LOSSY_WRITE_REQUIRED',
+    'UNKNOWN_HOST_ERROR',
+  ];
+  const fixtureCodes = hostErrorFixture.map((entry) => entry.code);
+  if (hostErrorFixture.some((entry) => entry.contractVersion !== 1)) {
+    failures.push('Document lifecycle error fixture must stay on contractVersion 1.');
+  }
+  if (JSON.stringify(fixtureCodes) !== JSON.stringify(expectedCodes)) {
+    failures.push('Document lifecycle error fixture must contain the complete ordered v1 code set.');
+  }
+  if (!documentHostErrorSource.includes('DOCUMENT_HOST_ERROR_CONTRACT_VERSION = 1')) {
+    failures.push('TypeScript document host error boundary must declare contract version 1.');
+  }
+  if (!hostErrorSource.includes('HOST_ERROR_CONTRACT_VERSION: u16 = 1')) {
+    failures.push('Rust document host error boundary must declare contract version 1.');
+  }
+  for (const code of expectedCodes) {
+    if (!documentHostErrorSource.includes(`'${code}'`)) {
+      failures.push(`TypeScript document host error boundary is missing ${code}.`);
+    }
+  }
+  for (const command of ['read_text_file', 'read_text_file_for_edit', 'stat_file', 'write_text_file_atomic']) {
+    const signature = new RegExp(`pub fn ${command}\\b[\\s\\S]*?\\) -> HostResult<`);
+    if (!signature.test(fileIoSource)) failures.push(`${command} must return the typed HostResult boundary.`);
+  }
+  if (!/pub fn create_backup_snapshot\b[\s\S]*?\) -> HostResult</.test(backupsSource)) {
+    failures.push('create_backup_snapshot must return the typed HostResult boundary.');
+  }
+  for (const [label, source] of [['openDocumentForSession', openDocumentSource], ['useSaveOperations', saveOperationsSource]]) {
+    if (/File access denied|isMissingFileStatError|isExternalChangeSaveError|changed on disk\|/.test(source)) {
+      failures.push(`${label} must not branch on English lifecycle error text.`);
+    }
+  }
+}
+
+function validateDocumentFidelityBoundary() {
+  for (const field of ['sourceText', 'savedSourceText', 'encoding', 'bom', 'lineEndings', 'dominantLineEnding', 'originalByteHash', 'losslessWrite', 'lossReasons']) {
+    if (!documentStateSource.includes(`${field}:`)) {
+      failures.push(`TypeScript SourceEnvelope is missing ${field}.`);
+    }
+  }
+  for (const field of ['source_text', 'line_endings', 'decode_lossy', 'lossless_write', 'loss_reasons', 'original_byte_hash']) {
+    if (!fileIoSource.includes(field)) {
+      failures.push(`Rust document fidelity DTO is missing ${field}.`);
+    }
+  }
+  if (!/write_text_file_atomic\([\s\S]*?source_text: String/.test(fileIoSource)) {
+    failures.push('Native atomic write must use the generic source_text argument.');
+  }
+  if (!/write_text_file_create_new\([\s\S]*?source_text: String/.test(fileIoSource)) {
+    failures.push('Native create-new write must use the generic source_text argument.');
+  }
+  const atomicInvoke = fileServiceSource.match(/invoke<FileMetadata>\('write_text_file_atomic',[\s\S]*?\}\)\)/)?.[0] ?? '';
+  if (!atomicInvoke.includes('sourceText') || atomicInvoke.includes('markdown:')) {
+    failures.push('TypeScript atomic write must project sourceText rather than a Markdown-named argument.');
+  }
+  const createNewInvoke = fileServiceSource.match(/invoke<FileMetadata>\('write_text_file_create_new',[\s\S]*?\}\)\)/)?.[0] ?? '';
+  if (!createNewInvoke.includes('sourceText') || createNewInvoke.includes('markdown:')) {
+    failures.push('TypeScript create-new write must project sourceText rather than a Markdown-named argument.');
+  }
+  const requiredCorpusCases = ['utf8-lf', 'utf8-bom-crlf', 'utf16le-bom-crlf', 'utf16be-bom-crlf', 'windows1252', 'utf8-cr', 'utf8-mixed'];
+  const corpusIds = new Set(fidelityCorpus.map((entry) => entry.id));
+  for (const id of requiredCorpusCases) {
+    if (!corpusIds.has(id)) failures.push(`File fidelity corpus is missing ${id}.`);
+  }
+  for (const entry of fidelityCorpus) {
+    if (entry.lineEndings === 'mixed' && entry.losslessWrite === 'yes') {
+      failures.push(`Mixed-ending fidelity case ${entry.id} cannot be labelled lossless without reconstruction data.`);
+    }
   }
 }
 

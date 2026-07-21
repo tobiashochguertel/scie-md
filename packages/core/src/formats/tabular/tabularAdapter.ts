@@ -1,34 +1,29 @@
 import type { DocumentContent, FormatAdapter, FormatParseResult } from '../documentFormat.js';
 import { createDocumentContent } from '../documentFormat.js';
+import { formatAdapterIdentity, requiredFormatParseBudgetBytes } from '../formatDefinitions.js';
 import {
   parseDelimitedText,
   type DelimitedTextParseOptions,
   type ParsedDelimitedText,
 } from './parseDelimitedText.js';
 
-export const CSV_FORMAT_EXTENSIONS = ['csv'] as const;
-export const TSV_FORMAT_EXTENSIONS = ['tsv'] as const;
+export const CSV_FORMAT_EXTENSIONS = formatAdapterIdentity('csv').extensions;
+export const TSV_FORMAT_EXTENSIONS = formatAdapterIdentity('tsv').extensions;
 export const TABULAR_DOCUMENT_PREVIEW_ROW_LIMIT = 500;
-export const TABULAR_PARSE_BUDGET_BYTES = 1 * 1024 * 1024;
+export const TABULAR_PARSE_BUDGET_BYTES = requiredFormatParseBudgetBytes('csv');
 
 export type TabularDocumentFormat = 'csv' | 'tsv';
 export type ParsedTabularDocument = ParsedDelimitedText;
 
 export const csvAdapter: FormatAdapter<ParsedTabularDocument, DelimitedTextParseOptions> = {
-  format: 'csv',
-  label: 'CSV',
-  extensions: CSV_FORMAT_EXTENSIONS,
-  mediaTypes: ['text/csv', 'application/csv'],
+  ...formatAdapterIdentity('csv'),
   capabilities: tabularCapabilities('csv'),
   createContent: createCsvContent,
   parse: (content, options) => parseTabularDocument('csv', content, options),
 };
 
 export const tsvAdapter: FormatAdapter<ParsedTabularDocument, DelimitedTextParseOptions> = {
-  format: 'tsv',
-  label: 'TSV',
-  extensions: TSV_FORMAT_EXTENSIONS,
-  mediaTypes: ['text/tab-separated-values'],
+  ...formatAdapterIdentity('tsv'),
   capabilities: tabularCapabilities('tsv'),
   createContent: createTsvContent,
   parse: (content, options) => parseTabularDocument('tsv', content, options),

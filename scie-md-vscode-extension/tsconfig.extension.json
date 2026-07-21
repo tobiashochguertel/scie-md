@@ -4,6 +4,7 @@
     "lib": ["ES2022"],
     "module": "Node16",
     "moduleResolution": "Node16",
+    "resolveJsonModule": true,
     "rootDir": "..",
     "outDir": "dist",
     "strict": true,

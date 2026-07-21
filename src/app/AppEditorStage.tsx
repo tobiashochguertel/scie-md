@@ -96,6 +96,7 @@ interface AppEditorStageProps {
   onMarkdownChange: (markdown: string) => void;
   onEditorReset: () => void;
   onVisualEditorReady: ComponentProps<typeof VisualMarkdownEditor>['onEditorReady'];
+  onVisualAdapterReady: ComponentProps<typeof VisualMarkdownEditor>['onAdapterReady'];
   onVisualInsertReady: ComponentProps<typeof VisualMarkdownEditor>['onInsertReady'];
   onVisualJumpReady: ComponentProps<typeof VisualMarkdownEditor>['onJumpReady'];
   onVisualFindReady: ComponentProps<typeof VisualMarkdownEditor>['onFindReady'];
@@ -104,7 +105,9 @@ interface AppEditorStageProps {
   onSourceJumpReady: ComponentProps<typeof SourceMarkdownEditor>['onJumpReady'];
   onSourceFindReady: ComponentProps<typeof SourceMarkdownEditor>['onFindReady'];
   onSourceHistoryReady: ComponentProps<typeof SourceMarkdownEditor>['onHistoryReady'];
-  onSelectionTextReady: ComponentProps<typeof VisualMarkdownEditor>['onSelectionTextReady'];
+  onSourceAdapterReady: ComponentProps<typeof SourceMarkdownEditor>['onAdapterReady'];
+  onSourceSelectionTextReady: ComponentProps<typeof SourceMarkdownEditor>['onSelectionTextReady'];
+  onVisualSelectionTextReady: ComponentProps<typeof VisualMarkdownEditor>['onSelectionTextReady'];
   onCursorLineChange: ComponentProps<typeof VisualMarkdownEditor>['onCursorLineChange'];
   onViewportLineChange: ComponentProps<typeof VisualMarkdownEditor>['onViewportLineChange'];
   onJsonSelectedPathChange?: (path: string) => void;
@@ -214,6 +217,7 @@ export function AppEditorStage({
   onMarkdownChange,
   onEditorReset,
   onVisualEditorReady,
+  onVisualAdapterReady,
   onVisualInsertReady,
   onVisualJumpReady,
   onVisualFindReady,
@@ -222,7 +226,9 @@ export function AppEditorStage({
   onSourceJumpReady,
   onSourceFindReady,
   onSourceHistoryReady,
-  onSelectionTextReady,
+  onSourceAdapterReady,
+  onSourceSelectionTextReady,
+  onVisualSelectionTextReady,
   onCursorLineChange,
   onViewportLineChange,
   onJsonSelectedPathChange,
@@ -814,7 +820,8 @@ export function AppEditorStage({
             onJumpReady={onVisualJumpReady}
             onFindReady={onVisualFindReady}
             onHistoryReady={onVisualHistoryReady}
-            onSelectionTextReady={onSelectionTextReady}
+            onSelectionTextReady={onVisualSelectionTextReady}
+            onAdapterReady={onVisualAdapterReady}
             onCursorLineChange={onCursorLineChange}
             onViewportLineChange={onViewportLineChange}
             outlineHeadings={navigationHeadings}
@@ -903,7 +910,8 @@ export function AppEditorStage({
             onJumpReady={onSourceJumpReady}
             onFindReady={onSourceFindReady}
             onHistoryReady={onSourceHistoryReady}
-            onSelectionTextReady={onSelectionTextReady}
+            onSelectionTextReady={onSourceSelectionTextReady}
+            onAdapterReady={onSourceAdapterReady}
             onContextMenuRequest={handleSourceContextMenuRequest}
             onCursorLineChange={onCursorLineChange}
             onViewportLineChange={onViewportLineChange}
@@ -929,7 +937,8 @@ export function AppEditorStage({
             onJumpReady={onSourceJumpReady}
             onFindReady={onSourceFindReady}
             onHistoryReady={onSourceHistoryReady}
-            onSelectionTextReady={onSelectionTextReady}
+            onSelectionTextReady={onSourceSelectionTextReady}
+            onAdapterReady={onSourceAdapterReady}
             onContextMenuRequest={handleSourceContextMenuRequest}
             onCursorLineChange={onCursorLineChange}
             onViewportLineChange={onViewportLineChange}

@@ -3,6 +3,11 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DocumentFormat } from '@sciemd/core';
 import { jsonSchemaSiblingCandidates, useJsonSchemaDiscovery } from './useJsonSchemaDiscovery';
+import { createDocumentId, sourceRevision } from '../documentIdentity';
+import { createDocumentEffectCoordinator } from '../effects/documentEffectCoordinator';
+
+const schemaDocumentId = createDocumentId();
+const schemaEffects = createDocumentEffectCoordinator(() => sourceRevision(0));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -118,6 +123,7 @@ function Harness({
   onState: (state: HookState) => void;
 }) {
   const state = useJsonSchemaDiscovery({
+    target: { documentId: schemaDocumentId, effects: schemaEffects },
     format,
     filePath,
     explicitSchemaPath,

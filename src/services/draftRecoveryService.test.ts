@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 
 const nativeRecovery = vi.hoisted(() => ({
   snapshot: null as null | {
     schemaVersion?: number;
+    commitState?: string;
     markdown: string;
     filePath: string | null;
     format?: string;
@@ -11,6 +13,7 @@ const nativeRecovery = vi.hoisted(() => ({
   },
   snapshots: new Map<string, {
     schemaVersion?: number;
+    commitState?: string;
     markdown: string;
     filePath: string | null;
     format?: string;
@@ -24,7 +27,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (
     command: string,
     args?: {
-      payload?: { schemaVersion?: number; markdown: string; filePath: string | null; format?: string; updatedAtMs: number };
+      payload?: { schemaVersion?: number; commitState?: string; markdown: string; filePath: string | null; format?: string; updatedAtMs: number };
       filePath?: string | null;
       latest?: boolean;
     },
@@ -34,6 +37,7 @@ vi.mock('@tauri-apps/api/core', () => ({
       if (!payload) throw new Error('missing recovery payload');
       const snapshot = {
         schemaVersion: payload.schemaVersion,
+        commitState: payload.commitState,
         markdown: payload.markdown,
         filePath: payload.filePath,
         format: payload.format,
@@ -92,6 +96,7 @@ import {
 } from './draftRecoveryService';
 import type { UntitledDraft } from './draftRecoveryService';
 import type { FileMetadata } from '../app/documentState';
+import { createPersistenceEnvelope, encodePersistenceEnvelope, PERSISTENCE_QUARANTINE_PREFIX } from './persistence/persistenceRegistry';
 
 describe('draftRecoveryService', () => {
   let originalIndexedDb: IDBFactory | undefined;
@@ -117,12 +122,85 @@ describe('draftRecoveryService', () => {
     saveUntitledDraft('# Draft\n', 1000);
 
     expect(loadUntitledDraft(1500)).toEqual({ markdown: '# Draft\n', savedAt: 1000, format: 'markdown' });
+    expect(JSON.parse(localStorage.getItem('scie_md.untitledDraft.v1')!)).toMatchObject({
+      family: 'recoveryDraft',
+      schemaVersion: 3,
+      commitState: 'committed',
+      generation: 1,
+      payload: { sourceText: '# Draft\n', savedAt: 1000, format: 'markdown' },
+    });
+  });
+
+  it.each(['', '   \n'])('stores and restores dirty empty or whitespace-only untitled source %#', (sourceText) => {
+    saveUntitledDraft(sourceText, 1000, 'plainText');
+
+    expect(loadUntitledDraft(1500)).toEqual({ markdown: sourceText, savedAt: 1000, format: 'plainText' });
   });
 
   it('restores legacy untitled draft payloads without a format as Markdown', () => {
     localStorage.setItem('scie_md.untitledDraft.v1', JSON.stringify({ markdown: '# Legacy\n', savedAt: 1000 }));
 
     expect(loadUntitledDraft(1500)).toEqual({ markdown: '# Legacy\n', savedAt: 1000, format: 'markdown' });
+    expect(JSON.parse(localStorage.getItem('scie_md.untitledDraft.v1')!)).toMatchObject({
+      family: 'recoveryDraft',
+      schemaVersion: 3,
+      commitState: 'committed',
+      payload: { sourceText: '# Legacy\n', format: 'markdown' },
+    });
+  });
+
+  it('quarantines future recovery data without normalizing it as current', () => {
+    const key = 'scie_md.untitledDraft.v1';
+    const raw = JSON.stringify({
+      family: 'recoveryDraft',
+      schemaVersion: 99,
+      generation: 1,
+      checksum: 'future',
+      commitState: 'committed',
+      payload: { sourceText: '# Future\n', savedAt: 1000, format: 'markdown' },
+    });
+    localStorage.setItem(key, raw);
+
+    expect(loadUntitledDraft(1500)).toBeNull();
+    expect(localStorage.getItem(key)).toBeNull();
+    const quarantineKey = Object.keys(localStorage).find((candidate) => candidate.startsWith(PERSISTENCE_QUARANTINE_PREFIX));
+    expect(JSON.parse(localStorage.getItem(quarantineKey!)!)).toMatchObject({ reason: 'future-version', raw });
+  });
+
+  it('quarantines an interrupted pending publication while retaining the last committed generation', () => {
+    saveUntitledDraft('# Last valid\n', 1000);
+    const pending = encodePersistenceEnvelope(createPersistenceEnvelope(
+      'recoveryDraft',
+      { sourceText: '# Interrupted\n', savedAt: 2000, format: 'markdown' },
+      2,
+      'pending',
+    ));
+    localStorage.setItem('scie_md.untitledDraft.v1.pending', pending);
+    resetDraftRecoveryForTests();
+
+    expect(loadUntitledDraft(2500)).toEqual({ markdown: '# Last valid\n', savedAt: 1000, format: 'markdown' });
+    expect(localStorage.getItem('scie_md.untitledDraft.v1.pending')).toBeNull();
+    const quarantine = Object.keys(localStorage)
+      .filter((candidate) => candidate.startsWith(PERSISTENCE_QUARANTINE_PREFIX))
+      .map((candidate) => JSON.parse(localStorage.getItem(candidate)!));
+    expect(quarantine).toContainEqual(expect.objectContaining({ reason: 'interrupted-publication', raw: pending }));
+  });
+
+  it('does not destroy the last committed payload when publication fails after the pending marker', () => {
+    saveUntitledDraft('# Last valid\n', 1000);
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (key === 'scie_md.untitledDraft.v1') throw new DOMException('Injected publication failure', 'QuotaExceededError');
+      return originalSetItem.call(this, key, value);
+    };
+    try {
+      saveUntitledDraft('# New but interrupted\n', 2000);
+    } finally {
+      Storage.prototype.setItem = originalSetItem;
+    }
+    resetDraftRecoveryForTests();
+
+    expect(loadUntitledDraft(2500)).toEqual({ markdown: '# Last valid\n', savedAt: 1000, format: 'markdown' });
   });
 
   it('restores untitled draft payloads that use sourceText as the canonical text field', () => {
@@ -156,6 +234,12 @@ describe('draftRecoveryService', () => {
     saveFileDraft('C:\\docs\\paper.md', '# Edited\n', 1000);
 
     expect(loadFileDraft('c:/docs/paper.md', 1500)).toEqual({ markdown: '# Edited\n', savedAt: 1000, format: 'markdown' });
+  });
+
+  it.each(['', '   \n'])('stores and restores dirty empty or whitespace-only file source %#', (sourceText) => {
+    saveFileDraft('C:\\docs\\paper.md', sourceText, 1000);
+
+    expect(loadFileDraft('C:\\docs\\paper.md', 1500)).toEqual({ markdown: sourceText, savedAt: 1000, format: 'markdown' });
   });
 
   it('infers JSON format for legacy file drafts without a stored format', () => {
@@ -277,6 +361,28 @@ describe('draftRecoveryService', () => {
     expect(loadFileDraft('/tmp/Paper.md', 1500)).toEqual({ markdown: '# Upper\n', savedAt: 1000, format: 'markdown' });
   });
 
+  it('converges Windows separator, case, and verbatim aliases for recovery', () => {
+    saveFileDraft('C:\\Lab\\Paper.md', '# Draft\n', 1000);
+
+    expect(loadFileDraft('\\\\?\\c:\\lab\\paper.md', 1500)).toEqual({
+      markdown: '# Draft\n',
+      savedAt: 1000,
+      format: 'markdown',
+    });
+  });
+
+  it('reads the pre-Round-4 SHA recovery key before rewriting under canonical identity', () => {
+    const priorNormalizedPath = '//?/c:/lab/paper.md';
+    const priorKey = `scie_md.fileDraft.v2.sha256.${createHash('sha256').update(priorNormalizedPath).digest('hex')}`;
+    localStorage.setItem(priorKey, JSON.stringify({ markdown: '# Before migration\n', savedAt: 1000, format: 'markdown' }));
+
+    expect(loadFileDraft('\\\\?\\C:\\Lab\\Paper.md', 1500)).toEqual({
+      markdown: '# Before migration\n',
+      savedAt: 1000,
+      format: 'markdown',
+    });
+  });
+
   it('prunes older file-specific drafts so local recovery storage cannot grow without bound', () => {
     const corruptKey = `scie_md.fileDraft.v2.sha256.${'0'.repeat(64)}`;
     localStorage.setItem(corruptKey, '{not-json');
@@ -288,6 +394,7 @@ describe('draftRecoveryService', () => {
     const fileDraftKeys = Object.keys(localStorage).filter((key) => key.startsWith('scie_md.fileDraft.v2.sha256.'));
     expect(fileDraftKeys).toHaveLength(40);
     expect(localStorage.getItem(corruptKey)).toBeNull();
+    expect(Object.keys(localStorage).some((key) => key.startsWith(PERSISTENCE_QUARANTINE_PREFIX))).toBe(true);
     expect(loadFileDraft('C:\\docs\\paper-0.md', 2000)).toBeNull();
     expect(loadFileDraft('C:\\docs\\paper-44.md', 2000)?.markdown).toBe('# Draft 44\n');
   });
@@ -319,6 +426,8 @@ describe('draftRecoveryService', () => {
   it('does not persist the unchanged bundled tutorial', () => {
     expect(shouldPersistUntitledDraft('# Welcome\n', '# Welcome\n')).toBe(false);
     expect(shouldPersistUntitledDraft('# My note\n', '# Welcome\n')).toBe(true);
+    expect(shouldPersistUntitledDraft('', '# Deleted content\n')).toBe(true);
+    expect(shouldPersistUntitledDraft('   \n', '# Deleted content\n')).toBe(true);
   });
 
   it('can suppress edited copies of the bundled welcome tutorial', () => {
@@ -348,6 +457,20 @@ describe('draftRecoveryService', () => {
       savedAt: 2000,
       format: 'markdown',
     });
+  });
+
+  it('restores a large whitespace-only draft from IndexedDB', async () => {
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      value: createFakeIndexedDb(),
+    });
+    const whitespaceDraft = `${' '.repeat(1_050_000)}\n`;
+
+    saveFileDraft('C:\\docs\\blank-large.md', whitespaceDraft, 1000);
+    await flushDraftRecoveryForTests();
+    resetDraftRecoveryForTests();
+
+    expect((await loadFileDraftAsync('C:\\docs\\blank-large.md', 1500))?.markdown).toBe(whitespaceDraft);
   });
 
   it('keeps a large draft recoverable in memory when IndexedDB access is blocked', async () => {
@@ -382,7 +505,7 @@ describe('draftRecoveryService', () => {
     expect(nativeRecovery.snapshot).toMatchObject({
       filePath: 'C:\\docs\\native.md',
       format: 'markdown',
-      schemaVersion: 2,
+      schemaVersion: 3,
       updatedAtMs: 2000,
       markdownBytes: largeDraft.length,
     });
@@ -402,7 +525,7 @@ describe('draftRecoveryService', () => {
     resetDraftRecoveryForTests();
 
     expect(nativeRecovery.snapshot).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       filePath: 'C:\\docs\\results.json',
       format: 'json',
       updatedAtMs: 2200,
@@ -468,13 +591,24 @@ describe('draftRecoveryService', () => {
     expect(await loadFileDraftAsync('C:\\docs\\stale-native.md', 16 * 24 * 60 * 60 * 1000)).toBeNull();
   });
 
-  it('clears a matching desktop-native file snapshot when an async save receives blank markdown', async () => {
+  it('keeps a matching desktop-native file snapshot when dirty source becomes blank', async () => {
     (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     await saveFileDraftAsync('C:\\docs\\blank.md', '# Draft\n', 5000);
 
     await saveFileDraftAsync('C:\\docs\\blank.md', '   \n', 6000);
 
-    expect(nativeRecovery.snapshot).toBeNull();
+    expect(nativeRecovery.snapshot).toMatchObject({
+      filePath: 'C:\\docs\\blank.md',
+      markdown: '   \n',
+      updatedAtMs: 6000,
+    });
+    localStorage.clear();
+    resetDraftRecoveryForTests();
+    expect(await loadFileDraftAsync('C:\\docs\\blank.md', 6500)).toEqual({
+      markdown: '   \n',
+      savedAt: 6000,
+      format: 'markdown',
+    });
   });
 
   it('does not clear a native snapshot for another active file draft', async () => {
@@ -580,9 +714,14 @@ class FakeObjectStore {
     private readonly values: Map<IDBValidKey, unknown>,
   ) {}
 
-  put(value: UntitledDraft, key: IDBValidKey) {
+  put(value: unknown, key: IDBValidKey) {
     const request = new FakeRequest<IDBValidKey>();
-    const delay = value.savedAt === 1000 ? 3 : 0;
+    const parsed = (typeof value === 'string' ? JSON.parse(value) : value) as {
+      payload?: { savedAt?: number };
+      savedAt?: number;
+    };
+    const savedAt = parsed.payload?.savedAt ?? parsed.savedAt;
+    const delay = savedAt === 1000 ? 3 : 0;
     scheduleMicrotasks(delay, () => {
       this.values.set(key, value);
       request.succeed(key);

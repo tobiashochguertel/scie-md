@@ -123,5 +123,12 @@ describe('format runtime policy', () => {
     });
     expect(adapters.csv?.capabilities.sourceEditor.contextMenuOperations).toContain('convertSelection');
     expect(adapters.tsv?.capabilities.sourceEditor.languageId).toBe('tsv');
+    expect(formatRuntimePolicyFor('plainText')).toMatchObject({
+      defaultMode: 'source',
+      canOpenAsDocument: true,
+      canImport: true,
+      canPreview: false,
+      sourceOnlyByDefault: true,
+    });
   });
 });

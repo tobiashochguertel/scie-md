@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { findKeyboardShortcut, KeyboardShortcutAction } from '../keyboardShortcuts';
+import { findDirectWorkspaceTabIndex, findKeyboardShortcut, KeyboardShortcutAction } from '../keyboardShortcuts';
 
 interface KeyboardShortcutHandlers {
   onSave: () => void;
@@ -16,6 +16,12 @@ interface KeyboardShortcutHandlers {
   onResetFont: () => void;
   onUndo: () => void;
   onRedo: () => void;
+  onNextWorkspaceTab: () => void;
+  onPreviousWorkspaceTab: () => void;
+  onCloseWorkspaceTab: () => void;
+  onReopenWorkspaceTab: () => void;
+  onSaveAllWorkspace: () => void;
+  onActivateWorkspaceTab: (index: number) => void;
 }
 
 interface KeyboardShortcutOptions {
@@ -29,6 +35,12 @@ export function useKeyboardShortcuts(handlers: KeyboardShortcutHandlers, options
     const handler = (event: KeyboardEvent) => {
       if (event.defaultPrevented || isTextInputOutsideEditor(event.target)) return;
       if (!enabled) return;
+      const directTabIndex = findDirectWorkspaceTabIndex(event);
+      if (directTabIndex !== null) {
+        event.preventDefault();
+        handlers.onActivateWorkspaceTab(directTabIndex);
+        return;
+      }
       const shortcut = findKeyboardShortcut(event);
       if (!shortcut) return;
       event.preventDefault();
@@ -56,6 +68,11 @@ function handlerByAction(handlers: KeyboardShortcutHandlers, action: KeyboardSho
     case 'resetFont': return handlers.onResetFont;
     case 'undo': return handlers.onUndo;
     case 'redo': return handlers.onRedo;
+    case 'nextWorkspaceTab': return handlers.onNextWorkspaceTab;
+    case 'previousWorkspaceTab': return handlers.onPreviousWorkspaceTab;
+    case 'closeWorkspaceTab': return handlers.onCloseWorkspaceTab;
+    case 'reopenWorkspaceTab': return handlers.onReopenWorkspaceTab;
+    case 'saveAllWorkspace': return handlers.onSaveAllWorkspace;
   }
 }
 

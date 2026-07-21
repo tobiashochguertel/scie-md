@@ -1,4 +1,5 @@
 import type { FormatAdapter } from '../documentFormat.js';
+import { formatAdapterIdentity } from '../formatDefinitions.js';
 import {
   createXmlContent,
   parseXmlDocument,
@@ -6,13 +7,10 @@ import {
   XML_PARSE_BUDGET_BYTES,
 } from './parseXmlDocument.js';
 
-export const XML_FORMAT_EXTENSIONS = ['xml'] as const;
+export const XML_FORMAT_EXTENSIONS = formatAdapterIdentity('xml').extensions;
 
 export const xmlAdapter: FormatAdapter<ParsedXmlDocument> = {
-  format: 'xml',
-  label: 'XML',
-  extensions: XML_FORMAT_EXTENSIONS,
-  mediaTypes: ['application/xml', 'text/xml', 'application/rss+xml', 'application/atom+xml'],
+  ...formatAdapterIdentity('xml'),
   capabilities: {
     sourceEditing: true,
     sourceEditor: {

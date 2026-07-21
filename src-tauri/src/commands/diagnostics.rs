@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 #[cfg(not(windows))]
 use std::io::Read;
 use std::{
@@ -9,11 +10,15 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
+use super::path_utils::canonical_comparison_key;
+
 const DIAGNOSTICS_DIR: &str = "diagnostics";
 const HEARTBEAT_FILE: &str = "renderer-heartbeat.json";
 const DIAGNOSTICS_LOG_FILE: &str = "diagnostics.jsonl";
 const RECOVERY_SNAPSHOT_FILE: &str = "latest-recovery-snapshot.json";
 const RECOVERY_SNAPSHOT_DIR: &str = "recovery-snapshots";
+const RECOVERY_QUARANTINE_DIR: &str = "recovery-quarantine";
+const CURRENT_RECOVERY_SCHEMA_VERSION: u16 = 3;
 const DIAGNOSTICS_BUNDLE_PREFIX: &str = "diagnostics-bundle";
 const MAX_DIAGNOSTICS_LOG_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_RECOVERY_SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
@@ -81,7 +86,21 @@ pub struct DiagnosticsEventPayload {
 #[serde(rename_all = "camelCase")]
 pub struct RecoverySnapshotPayload {
     #[serde(default)]
-    pub schema_version: Option<u8>,
+    pub schema_version: Option<u16>,
+    #[serde(default)]
+    pub generation: Option<u64>,
+    #[serde(default)]
+    pub checksum: Option<String>,
+    #[serde(default)]
+    pub commit_state: Option<String>,
+    #[serde(default)]
+    pub document_id: Option<String>,
+    #[serde(default)]
+    pub source_revision: Option<u64>,
+    #[serde(default)]
+    pub catalog_schema_version: Option<u16>,
+    #[serde(default)]
+    pub media_type: Option<String>,
     pub markdown: String,
     pub file_path: Option<String>,
     #[serde(default)]
@@ -89,11 +108,25 @@ pub struct RecoverySnapshotPayload {
     pub updated_at_ms: u128,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecoverySnapshot {
     #[serde(default = "default_recovery_schema_version")]
-    pub schema_version: u8,
+    pub schema_version: u16,
+    #[serde(default = "default_recovery_generation")]
+    pub generation: u64,
+    #[serde(default)]
+    pub checksum: String,
+    #[serde(default = "default_recovery_commit_state")]
+    pub commit_state: String,
+    #[serde(default)]
+    pub document_id: Option<String>,
+    #[serde(default)]
+    pub source_revision: Option<u64>,
+    #[serde(default)]
+    pub catalog_schema_version: Option<u16>,
+    #[serde(default)]
+    pub media_type: Option<String>,
     pub markdown: String,
     pub file_path: Option<String>,
     #[serde(default)]
@@ -151,7 +184,8 @@ struct DiagnosticsLogBundle {
 #[serde(rename_all = "camelCase")]
 struct RecoverySnapshotBundle {
     path: String,
-    schema_version: u8,
+    schema_version: u16,
+    generation: u64,
     file_path: Option<String>,
     format: Option<String>,
     updated_at_ms: u128,
@@ -253,19 +287,75 @@ pub fn write_recovery_snapshot(
     let dir = diagnostics_dir(&app)?;
     fs::create_dir_all(&dir)
         .map_err(|error| format!("Could not create diagnostics dir: {error}"))?;
-    let snapshot = RecoverySnapshot {
-        schema_version: payload
-            .schema_version
-            .unwrap_or(default_recovery_schema_version()),
+    let requested_version = payload
+        .schema_version
+        .unwrap_or(CURRENT_RECOVERY_SCHEMA_VERSION);
+    if requested_version > CURRENT_RECOVERY_SCHEMA_VERSION {
+        return Err(format!(
+            "Unsupported future recovery schema version: {requested_version}."
+        ));
+    }
+    if payload
+        .commit_state
+        .as_deref()
+        .is_some_and(|state| state != "committed")
+    {
+        return Err("Recovery publication is not committed.".into());
+    }
+    validate_recovery_catalog_metadata(
+        payload.document_id.as_deref(),
+        payload.source_revision,
+        payload.catalog_schema_version,
+        payload.media_type.as_deref(),
+    )?;
+    let path = recovery_snapshot_path(
+        &dir,
+        payload.file_path.as_deref(),
+        payload.document_id.as_deref(),
+    );
+    let previous = read_recovery_snapshot_with_fallback(&dir, &path)?;
+    let minimum_generation = previous
+        .as_ref()
+        .map_or(1, |snapshot| snapshot.generation.saturating_add(1));
+    let generation = payload.generation.unwrap_or(minimum_generation);
+    if generation < minimum_generation {
+        return Err(format!(
+            "Recovery generation {generation} does not advance the current generation."
+        ));
+    }
+    let mut snapshot = RecoverySnapshot {
+        schema_version: CURRENT_RECOVERY_SCHEMA_VERSION,
+        generation,
+        checksum: String::new(),
+        commit_state: "committed".into(),
+        document_id: payload.document_id,
+        source_revision: payload.source_revision,
+        catalog_schema_version: payload.catalog_schema_version,
+        media_type: payload.media_type,
         markdown: payload.markdown,
         file_path: payload.file_path,
         format: payload.format,
         updated_at_ms: payload.updated_at_ms,
         markdown_bytes,
     };
-    let path = recovery_snapshot_path(&dir, snapshot.file_path.as_deref());
+    snapshot.checksum = recovery_snapshot_checksum(&snapshot);
+    if let Some(requested_checksum) = payload.checksum {
+        if requested_checksum != snapshot.checksum {
+            return Err("Recovery snapshot checksum does not match its payload.".into());
+        }
+    }
+    if let Some(previous) = previous {
+        write_json_atomically(&previous_recovery_snapshot_path(&path), &previous)?;
+    }
     write_json_atomically(&path, &snapshot)?;
-    write_json_atomically(&dir.join(RECOVERY_SNAPSHOT_FILE), &snapshot)?;
+    let latest_path = dir.join(RECOVERY_SNAPSHOT_FILE);
+    if let Some(previous_latest) = read_recovery_snapshot_with_fallback(&dir, &latest_path)? {
+        write_json_atomically(
+            &previous_recovery_snapshot_path(&latest_path),
+            &previous_latest,
+        )?;
+    }
+    write_json_atomically(&latest_path, &snapshot)?;
     prune_recovery_snapshots(&dir, &path)?;
     Ok(RecoverySnapshotMetadata {
         updated_at_ms: snapshot.updated_at_ms,
@@ -278,18 +368,27 @@ pub fn write_recovery_snapshot(
 pub fn read_recovery_snapshot(
     app: AppHandle,
     file_path: Option<String>,
+    document_id: Option<String>,
     latest: Option<bool>,
 ) -> Result<Option<RecoverySnapshot>, String> {
     let dir = diagnostics_dir(&app)?;
-    if latest.unwrap_or(file_path.is_none()) {
-        return read_recovery_snapshot_file(&dir.join(RECOVERY_SNAPSHOT_FILE));
+    if latest.unwrap_or(file_path.is_none() && document_id.is_none()) {
+        return read_recovery_snapshot_with_fallback(&dir, &dir.join(RECOVERY_SNAPSHOT_FILE));
     }
-    let path = recovery_snapshot_path(&dir, file_path.as_deref());
-    let keyed = read_recovery_snapshot_file(&path)?;
+    let path = recovery_snapshot_path(&dir, file_path.as_deref(), document_id.as_deref());
+    let keyed = read_recovery_snapshot_with_fallback(&dir, &path)?;
     if keyed.is_some() {
         return Ok(keyed);
     }
-    let legacy = read_recovery_snapshot_file(&dir.join(RECOVERY_SNAPSHOT_FILE))?;
+    if document_id.is_some() {
+        return Ok(None);
+    }
+    let legacy_path = legacy_recovery_snapshot_path(&dir, file_path.as_deref());
+    let legacy_keyed = read_recovery_snapshot_with_fallback(&dir, &legacy_path)?;
+    if legacy_keyed.is_some() {
+        return Ok(legacy_keyed);
+    }
+    let legacy = read_recovery_snapshot_with_fallback(&dir, &dir.join(RECOVERY_SNAPSHOT_FILE))?;
     Ok(legacy.filter(|snapshot| recovery_snapshot_matches(snapshot, file_path.as_deref())))
 }
 
@@ -297,21 +396,87 @@ pub fn read_recovery_snapshot(
 pub fn clear_recovery_snapshot(
     app: AppHandle,
     file_path: Option<String>,
+    document_id: Option<String>,
+    up_to_source_revision: Option<u64>,
     latest: Option<bool>,
 ) -> Result<(), String> {
     let dir = diagnostics_dir(&app)?;
     if latest.unwrap_or(false) {
-        return remove_recovery_snapshot_file(&dir.join(RECOVERY_SNAPSHOT_FILE));
+        let latest_path = dir.join(RECOVERY_SNAPSHOT_FILE);
+        remove_recovery_snapshot_file(&latest_path)?;
+        return remove_recovery_snapshot_file(&previous_recovery_snapshot_path(&latest_path));
     }
-    let path = recovery_snapshot_path(&dir, file_path.as_deref());
+    let path = recovery_snapshot_path(&dir, file_path.as_deref(), document_id.as_deref());
+    if let (Some(max_revision), Some(snapshot)) = (
+        up_to_source_revision,
+        read_recovery_snapshot_with_fallback(&dir, &path)?,
+    ) {
+        if snapshot
+            .source_revision
+            .is_some_and(|revision| revision > max_revision)
+        {
+            return Ok(());
+        }
+    }
     remove_recovery_snapshot_file(&path)?;
+    remove_recovery_snapshot_file(&previous_recovery_snapshot_path(&path))?;
+    if document_id.is_none() {
+        let legacy_path = legacy_recovery_snapshot_path(&dir, file_path.as_deref());
+        if legacy_path != path {
+            remove_recovery_snapshot_file(&legacy_path)?;
+            remove_recovery_snapshot_file(&previous_recovery_snapshot_path(&legacy_path))?;
+        }
+    }
     let latest_path = dir.join(RECOVERY_SNAPSHOT_FILE);
-    if let Some(snapshot) = read_recovery_snapshot_file(&latest_path)? {
-        if recovery_snapshot_matches(&snapshot, file_path.as_deref()) {
+    if let Some(snapshot) = read_recovery_snapshot_with_fallback(&dir, &latest_path)? {
+        let matches_target = document_id.as_ref().map_or_else(
+            || recovery_snapshot_matches(&snapshot, file_path.as_deref()),
+            |document_id| snapshot.document_id.as_deref() == Some(document_id.as_str()),
+        );
+        if matches_target {
             remove_recovery_snapshot_file(&latest_path)?;
+            remove_recovery_snapshot_file(&previous_recovery_snapshot_path(&latest_path))?;
         }
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn list_recovery_snapshots(app: AppHandle) -> Result<Vec<RecoverySnapshot>, String> {
+    let dir = diagnostics_dir(&app)?;
+    list_recovery_snapshots_in_dir(&dir)
+}
+
+fn list_recovery_snapshots_in_dir(diagnostics_dir: &Path) -> Result<Vec<RecoverySnapshot>, String> {
+    let directory = diagnostics_dir.join(RECOVERY_SNAPSHOT_DIR);
+    let Ok(entries) = fs::read_dir(&directory) else {
+        return Ok(Vec::new());
+    };
+    let mut snapshots = Vec::new();
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        if path.extension().and_then(|value| value.to_str()) != Some("json")
+            || name.ends_with(".previous")
+        {
+            continue;
+        }
+        match read_recovery_snapshot_with_fallback(diagnostics_dir, &path) {
+            Ok(Some(snapshot)) if snapshot.document_id.is_some() => snapshots.push(snapshot),
+            Ok(_) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    snapshots.sort_by(|left, right| {
+        right
+            .updated_at_ms
+            .cmp(&left.updated_at_ms)
+            .then_with(|| left.document_id.cmp(&right.document_id))
+    });
+    Ok(snapshots)
 }
 
 fn remove_recovery_snapshot_file(path: &Path) -> Result<(), String> {
@@ -328,28 +493,236 @@ fn read_recovery_snapshot_file(path: &Path) -> Result<Option<RecoverySnapshot>, 
     }
     let raw = fs::read_to_string(path)
         .map_err(|error| format!("Could not read recovery snapshot: {error}"))?;
-    let snapshot = serde_json::from_str(&raw)
+    let snapshot: RecoverySnapshot = serde_json::from_str(&raw)
         .map_err(|error| format!("Could not parse recovery snapshot: {error}"))?;
-    Ok(Some(snapshot))
+    Ok(Some(normalize_recovery_snapshot(snapshot)?))
 }
 
-fn recovery_snapshot_path(diagnostics_dir: &Path, file_path: Option<&str>) -> PathBuf {
+fn read_recovery_snapshot_with_fallback(
+    diagnostics_dir: &Path,
+    path: &Path,
+) -> Result<Option<RecoverySnapshot>, String> {
+    match read_recovery_snapshot_file(path) {
+        Ok(Some(snapshot)) => {
+            let _ = write_json_atomically(path, &snapshot);
+            Ok(Some(snapshot))
+        }
+        Ok(None) => {
+            let previous_path = previous_recovery_snapshot_path(path);
+            match read_recovery_snapshot_file(&previous_path) {
+                Ok(snapshot) => Ok(snapshot),
+                Err(previous_error) => {
+                    quarantine_recovery_snapshot(diagnostics_dir, &previous_path, &previous_error)?;
+                    Ok(None)
+                }
+            }
+        }
+        Err(error) => {
+            quarantine_recovery_snapshot(diagnostics_dir, path, &error)?;
+            let previous_path = previous_recovery_snapshot_path(path);
+            match read_recovery_snapshot_file(&previous_path) {
+                Ok(Some(snapshot)) => Ok(Some(snapshot)),
+                Ok(None) => Ok(None),
+                Err(previous_error) => {
+                    quarantine_recovery_snapshot(diagnostics_dir, &previous_path, &previous_error)?;
+                    Ok(None)
+                }
+            }
+        }
+    }
+}
+
+fn normalize_recovery_snapshot(mut snapshot: RecoverySnapshot) -> Result<RecoverySnapshot, String> {
+    if snapshot.schema_version == 0 {
+        return Err("Recovery schema version must be positive.".into());
+    }
+    if snapshot.schema_version > CURRENT_RECOVERY_SCHEMA_VERSION {
+        return Err(format!(
+            "Unsupported future recovery schema version: {}.",
+            snapshot.schema_version
+        ));
+    }
+    if snapshot.commit_state != "committed" {
+        return Err("Recovery publication is not committed.".into());
+    }
+    validate_recovery_catalog_metadata(
+        snapshot.document_id.as_deref(),
+        snapshot.source_revision,
+        snapshot.catalog_schema_version,
+        snapshot.media_type.as_deref(),
+    )?;
+    snapshot.markdown_bytes = snapshot.markdown.len();
+    if snapshot.schema_version < CURRENT_RECOVERY_SCHEMA_VERSION {
+        while snapshot.schema_version < CURRENT_RECOVERY_SCHEMA_VERSION {
+            snapshot.schema_version = match snapshot.schema_version {
+                1 => 2,
+                2 => 3,
+                version => {
+                    return Err(format!(
+                        "Missing recovery migration from schema version {version}."
+                    ))
+                }
+            };
+        }
+        snapshot.generation = snapshot.generation.max(1);
+        snapshot.checksum = recovery_snapshot_checksum(&snapshot);
+        return Ok(snapshot);
+    }
+    let expected = recovery_snapshot_checksum(&snapshot);
+    if snapshot.checksum != expected {
+        return Err("Recovery snapshot checksum mismatch.".into());
+    }
+    Ok(snapshot)
+}
+
+fn validate_recovery_catalog_metadata(
+    document_id: Option<&str>,
+    source_revision: Option<u64>,
+    catalog_schema_version: Option<u16>,
+    media_type: Option<&str>,
+) -> Result<(), String> {
+    match document_id {
+        None if source_revision.is_none()
+            && catalog_schema_version.is_none()
+            && media_type.is_none() =>
+        {
+            Ok(())
+        }
+        Some(document_id)
+            if !document_id.is_empty()
+                && source_revision.is_some()
+                && catalog_schema_version == Some(1)
+                && media_type.is_some_and(|value| !value.is_empty()) =>
+        {
+            Ok(())
+        }
+        _ => Err("Recovery catalog metadata is incomplete or uses an unsupported version.".into()),
+    }
+}
+
+fn recovery_snapshot_checksum(snapshot: &RecoverySnapshot) -> String {
+    let mut material = serde_json::json!({
+        "commitState": snapshot.commit_state,
+        "filePath": snapshot.file_path,
+        "format": snapshot.format,
+        "generation": snapshot.generation,
+        "markdown": snapshot.markdown,
+        "schemaVersion": snapshot.schema_version,
+        "updatedAtMs": snapshot.updated_at_ms,
+    });
+    let object = material
+        .as_object_mut()
+        .expect("recovery checksum material should be an object");
+    if let Some(document_id) = &snapshot.document_id {
+        object.insert("documentId".into(), serde_json::json!(document_id));
+    }
+    if let Some(source_revision) = snapshot.source_revision {
+        object.insert("sourceRevision".into(), serde_json::json!(source_revision));
+    }
+    if let Some(catalog_schema_version) = snapshot.catalog_schema_version {
+        object.insert(
+            "catalogSchemaVersion".into(),
+            serde_json::json!(catalog_schema_version),
+        );
+    }
+    if let Some(media_type) = &snapshot.media_type {
+        object.insert("mediaType".into(), serde_json::json!(media_type));
+    }
+    let bytes = serde_json::to_vec(&material).expect("recovery checksum material should serialize");
+    sha256_hex(&bytes)
+}
+
+fn previous_recovery_snapshot_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("recovery.json");
+    path.with_file_name(format!("{file_name}.previous"))
+}
+
+fn quarantine_recovery_snapshot(
+    diagnostics_dir: &Path,
+    path: &Path,
+    reason: &str,
+) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let raw = fs::read_to_string(path)
+        .map_err(|error| format!("Could not preserve invalid recovery snapshot: {error}"))?;
+    let digest = sha256_hex(raw.as_bytes());
+    let source_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("recovery.json");
+    let quarantine_path = diagnostics_dir
+        .join(RECOVERY_QUARANTINE_DIR)
+        .join(format!("{source_name}-{}.json", &digest[..16]));
+    let record = serde_json::json!({
+        "schemaVersion": 1,
+        "sourcePath": path.to_string_lossy(),
+        "reason": reason,
+        "raw": raw,
+    });
+    write_json_atomically(&quarantine_path, &record)?;
+    remove_recovery_snapshot_file(path)
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn recovery_snapshot_path(
+    diagnostics_dir: &Path,
+    file_path: Option<&str>,
+    document_id: Option<&str>,
+) -> PathBuf {
+    diagnostics_dir.join(RECOVERY_SNAPSHOT_DIR).join(format!(
+        "{}.json",
+        recovery_snapshot_key(file_path, document_id)
+    ))
+}
+
+fn legacy_recovery_snapshot_path(diagnostics_dir: &Path, file_path: Option<&str>) -> PathBuf {
     diagnostics_dir
         .join(RECOVERY_SNAPSHOT_DIR)
-        .join(format!("{}.json", recovery_snapshot_key(file_path)))
+        .join(format!("{}.json", legacy_recovery_snapshot_key(file_path)))
 }
 
-fn recovery_snapshot_key(file_path: Option<&str>) -> String {
+fn recovery_snapshot_key(file_path: Option<&str>, document_id: Option<&str>) -> String {
+    if let Some(document_id) = document_id {
+        return format!("document-{}", blake3::hash(document_id.as_bytes()).to_hex());
+    }
     let normalized = file_path
-        .map(normalize_recovery_path)
+        .map(canonical_comparison_key)
         .unwrap_or_else(|| "untitled".to_string());
-    let prefix = if file_path.is_some() { "file" } else { "untitled" };
+    let prefix = if file_path.is_some() {
+        "file"
+    } else {
+        "untitled"
+    };
     format!("{prefix}-{}", blake3::hash(normalized.as_bytes()).to_hex())
 }
 
-fn normalize_recovery_path(value: &str) -> String {
+fn legacy_recovery_snapshot_key(file_path: Option<&str>) -> String {
+    let normalized = file_path
+        .map(legacy_normalize_recovery_path)
+        .unwrap_or_else(|| "untitled".to_string());
+    let prefix = if file_path.is_some() {
+        "file"
+    } else {
+        "untitled"
+    };
+    format!("{prefix}-{}", blake3::hash(normalized.as_bytes()).to_hex())
+}
+
+fn legacy_normalize_recovery_path(value: &str) -> String {
     let normalized = value.replace('\\', "/");
-    if normalized.len() >= 3 && normalized.as_bytes()[1] == b':' && normalized.as_bytes()[2] == b'/' {
+    if normalized.len() >= 3 && normalized.as_bytes()[1] == b':' && normalized.as_bytes()[2] == b'/'
+    {
         return normalized.to_lowercase();
     }
     if normalized.starts_with("//") {
@@ -361,7 +734,9 @@ fn normalize_recovery_path(value: &str) -> String {
 fn recovery_snapshot_matches(snapshot: &RecoverySnapshot, file_path: Option<&str>) -> bool {
     match (snapshot.file_path.as_deref(), file_path) {
         (None, None) => true,
-        (Some(left), Some(right)) => normalize_recovery_path(left) == normalize_recovery_path(right),
+        (Some(left), Some(right)) => {
+            canonical_comparison_key(left) == canonical_comparison_key(right)
+        }
         _ => false,
     }
 }
@@ -375,17 +750,23 @@ fn prune_recovery_snapshots(diagnostics_dir: &Path, keep_path: &Path) -> Result<
         .filter_map(|entry| entry.ok())
         .filter_map(|entry| {
             let path = entry.path();
-            if path == keep_path || path.extension().and_then(|value| value.to_str()) != Some("json") {
+            if path == keep_path
+                || path.extension().and_then(|value| value.to_str()) != Some("json")
+            {
                 return None;
             }
             read_recovery_snapshot_file(&path)
                 .ok()
                 .flatten()
+                .filter(|snapshot| snapshot.document_id.is_none())
                 .map(|snapshot| (path, snapshot.updated_at_ms))
         })
         .collect::<Vec<_>>();
     snapshots.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
-    for (path, _) in snapshots.into_iter().skip(MAX_RECOVERY_SNAPSHOT_COUNT.saturating_sub(1)) {
+    for (path, _) in snapshots
+        .into_iter()
+        .skip(MAX_RECOVERY_SNAPSHOT_COUNT.saturating_sub(1))
+    {
         let _ = fs::remove_file(path);
     }
     Ok(())
@@ -475,6 +856,7 @@ fn read_recovery_snapshot_bundle(path: &Path) -> Result<Option<RecoverySnapshotB
     Ok(Some(RecoverySnapshotBundle {
         path: path.to_string_lossy().to_string(),
         schema_version: snapshot.schema_version,
+        generation: snapshot.generation,
         file_path: snapshot.file_path,
         format: snapshot.format,
         updated_at_ms: snapshot.updated_at_ms,
@@ -483,8 +865,16 @@ fn read_recovery_snapshot_bundle(path: &Path) -> Result<Option<RecoverySnapshotB
     }))
 }
 
-fn default_recovery_schema_version() -> u8 {
+fn default_recovery_schema_version() -> u16 {
     1
+}
+
+fn default_recovery_generation() -> u64 {
+    1
+}
+
+fn default_recovery_commit_state() -> String {
+    "committed".into()
 }
 
 fn read_text_tail(path: &Path, max_bytes: usize) -> Result<(String, u64, bool), String> {
@@ -670,11 +1060,46 @@ fn timestamp_ms() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_diagnostics_event_to_dir, export_diagnostics_bundle_to_dir, read_heartbeat,
+        append_diagnostics_event_to_dir, export_diagnostics_bundle_to_dir,
+        legacy_recovery_snapshot_key, list_recovery_snapshots_in_dir, normalize_recovery_snapshot,
+        previous_recovery_snapshot_path, prune_recovery_snapshots, read_heartbeat,
+        read_recovery_snapshot_with_fallback, recovery_snapshot_checksum, recovery_snapshot_key,
+        recovery_snapshot_matches, recovery_snapshot_path, remove_recovery_snapshot_file,
         write_json_atomically, DiagnosticsEventPayload, RecoverySnapshot, RendererHeartbeatPayload,
-        StoredHeartbeat,
+        StoredHeartbeat, MAX_RECOVERY_SNAPSHOT_COUNT,
     };
-    use std::{fs, path::Path};
+    use serde::Deserialize;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct PersistenceFixture {
+        fixture_version: u8,
+        catalog_cases: Vec<CatalogFixture>,
+        native_invalid_cases: Vec<NativeInvalidFixture>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CatalogFixture {
+        document_id: String,
+        source_revision: u64,
+        source_text: String,
+        file_path: Option<String>,
+        format: String,
+        media_type: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct NativeInvalidFixture {
+        name: String,
+        expected_reason: String,
+        snapshot: RecoverySnapshot,
+    }
 
     #[test]
     fn diagnostics_atomic_json_round_trips() {
@@ -693,6 +1118,163 @@ mod tests {
         assert_eq!(restored.session_id, "session-a");
         assert_eq!(restored.payload.markdown_bytes, 42);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn legacy_recovery_migration_is_sequential_and_idempotent() {
+        for schema_version in [1, 2] {
+            let legacy = RecoverySnapshot {
+                schema_version,
+                generation: 1,
+                checksum: String::new(),
+                commit_state: "committed".into(),
+                document_id: None,
+                source_revision: None,
+                catalog_schema_version: None,
+                media_type: None,
+                markdown: "".into(),
+                file_path: None,
+                format: Some("plainText".into()),
+                updated_at_ms: 1000,
+                markdown_bytes: 0,
+            };
+
+            let migrated = normalize_recovery_snapshot(legacy).unwrap();
+            let repeated = normalize_recovery_snapshot(migrated.clone()).unwrap();
+
+            assert_eq!(
+                migrated.schema_version,
+                super::CURRENT_RECOVERY_SCHEMA_VERSION
+            );
+            assert_eq!(migrated.checksum, repeated.checksum);
+            assert_eq!(migrated.markdown, "");
+        }
+    }
+
+    #[test]
+    fn future_and_interrupted_native_fixtures_fail_closed() {
+        let fixture: PersistenceFixture = serde_json::from_str(include_str!(
+            "../../../src/services/persistence/fixtures/recoveryPersistence.v1.json"
+        ))
+        .unwrap();
+        assert_eq!(fixture.fixture_version, 1);
+        for case in fixture.native_invalid_cases {
+            let error = normalize_recovery_snapshot(case.snapshot).unwrap_err();
+            assert!(
+                error.to_lowercase().contains(&case.expected_reason),
+                "fixture {} produced unexpected error: {}",
+                case.name,
+                error
+            );
+        }
+    }
+
+    #[test]
+    fn future_and_interrupted_native_files_are_preserved_in_quarantine() {
+        let fixture: PersistenceFixture = serde_json::from_str(include_str!(
+            "../../../src/services/persistence/fixtures/recoveryPersistence.v1.json"
+        ))
+        .unwrap();
+        let dir = test_dir("recovery-invalid-quarantine");
+        for case in fixture.native_invalid_cases {
+            let path = dir
+                .join(super::RECOVERY_SNAPSHOT_DIR)
+                .join(format!("{}.json", case.name));
+            write_json_atomically(&path, &case.snapshot).unwrap();
+            assert!(read_recovery_snapshot_with_fallback(&dir, &path)
+                .unwrap()
+                .is_none());
+            assert!(!path.exists());
+        }
+        let quarantine = fs::read_dir(dir.join(super::RECOVERY_QUARANTINE_DIR))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        assert_eq!(quarantine.len(), 2);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn corrupt_current_generation_is_quarantined_and_previous_generation_restores() {
+        let dir = test_dir("recovery-fallback");
+        let path = dir
+            .join(super::RECOVERY_SNAPSHOT_DIR)
+            .join("untitled-test.json");
+        let previous_path = previous_recovery_snapshot_path(&path);
+        let previous = current_snapshot("last valid", 1);
+        write_json_atomically(&previous_path, &previous).unwrap();
+        write_json_atomically(
+            &path,
+            &serde_json::json!({ "schemaVersion": 3, "checksum": "bad" }),
+        )
+        .unwrap();
+
+        let restored = read_recovery_snapshot_with_fallback(&dir, &path)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(restored.markdown, "last valid");
+        assert!(!path.exists());
+        let quarantine = fs::read_dir(dir.join(super::RECOVERY_QUARANTINE_DIR))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        assert_eq!(quarantine.len(), 1);
+        let preserved = fs::read_to_string(quarantine[0].path()).unwrap();
+        assert!(preserved.contains("checksum"));
+        assert!(preserved.contains("bad"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn recovery_tombstone_removal_is_idempotent() {
+        let dir = test_dir("recovery-tombstone");
+        let path = dir.join("entry.json");
+        let previous_path = previous_recovery_snapshot_path(&path);
+        fs::write(&path, "payload").unwrap();
+        fs::write(&previous_path, "previous").unwrap();
+
+        remove_recovery_snapshot_file(&path).unwrap();
+        remove_recovery_snapshot_file(&path).unwrap();
+        remove_recovery_snapshot_file(&previous_path).unwrap();
+        remove_recovery_snapshot_file(&previous_path).unwrap();
+
+        assert!(!path.exists());
+        assert!(!previous_path.exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn recovery_identity_converges_windows_verbatim_aliases_and_retains_legacy_key() {
+        let ordinary = Some(r"C:\Lab\Paper.md");
+        let verbatim = Some(r"\\?\c:\lab\PAPER.md");
+        assert_eq!(
+            recovery_snapshot_key(ordinary, None),
+            recovery_snapshot_key(verbatim, None)
+        );
+        assert_ne!(
+            recovery_snapshot_key(verbatim, None),
+            legacy_recovery_snapshot_key(verbatim)
+        );
+        assert!(recovery_snapshot_matches(
+            &RecoverySnapshot {
+                schema_version: 2,
+                generation: 1,
+                checksum: String::new(),
+                commit_state: "committed".into(),
+                document_id: None,
+                source_revision: None,
+                catalog_schema_version: None,
+                media_type: None,
+                markdown: "draft".into(),
+                file_path: ordinary.map(str::to_string),
+                format: Some("markdown".into()),
+                updated_at_ms: 1,
+                markdown_bytes: 5,
+            },
+            verbatim,
+        ));
     }
 
     #[test]
@@ -751,6 +1333,13 @@ mod tests {
             &dir.join(super::RECOVERY_SNAPSHOT_FILE),
             &RecoverySnapshot {
                 schema_version: 2,
+                generation: 1,
+                checksum: String::new(),
+                commit_state: "committed".into(),
+                document_id: None,
+                source_revision: None,
+                catalog_schema_version: None,
+                media_type: None,
                 markdown: "# private draft".into(),
                 file_path: Some("C:/lab/paper.md".into()),
                 format: Some("markdown".into()),
@@ -778,6 +1367,82 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    #[test]
+    fn native_catalog_keeps_multiple_untitled_documents_and_format_metadata() {
+        let dir = test_dir("multi-document-catalog");
+        fs::create_dir_all(dir.join(super::RECOVERY_SNAPSHOT_DIR)).unwrap();
+        let fixture: PersistenceFixture = serde_json::from_str(include_str!(
+            "../../../src/services/persistence/fixtures/recoveryPersistence.v1.json"
+        ))
+        .unwrap();
+        for case in &fixture.catalog_cases {
+            let mut snapshot = current_snapshot(&case.source_text, 1);
+            snapshot.document_id = Some(case.document_id.clone());
+            snapshot.source_revision = Some(case.source_revision);
+            snapshot.catalog_schema_version = Some(1);
+            snapshot.file_path = case.file_path.clone();
+            snapshot.format = Some(case.format.clone());
+            snapshot.media_type = Some(case.media_type.clone());
+            snapshot.checksum = recovery_snapshot_checksum(&snapshot);
+            let path = recovery_snapshot_path(&dir, None, Some(&case.document_id));
+            write_json_atomically(&path, &snapshot).unwrap();
+        }
+
+        let snapshots = list_recovery_snapshots_in_dir(&dir).unwrap();
+        assert_eq!(snapshots.len(), fixture.catalog_cases.len());
+        assert!(snapshots
+            .iter()
+            .any(
+                |snapshot| snapshot.document_id.as_deref() == Some("fixture-empty")
+                    && snapshot.markdown.is_empty()
+                    && snapshot.format.as_deref() == Some("plainText")
+                    && snapshot.media_type.as_deref() == Some("text/plain")
+            ));
+        assert_ne!(
+            recovery_snapshot_key(None, Some("fixture-json")),
+            recovery_snapshot_key(None, Some("fixture-empty"))
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn legacy_quota_pruning_never_removes_a_catalog_document() {
+        let dir = test_dir("catalog-pruning-fence");
+        let recovery_dir = dir.join(super::RECOVERY_SNAPSHOT_DIR);
+        fs::create_dir_all(&recovery_dir).unwrap();
+        let mut catalog_snapshot = current_snapshot("only dirty representation", 1);
+        catalog_snapshot.document_id = Some("current-dirty-document".into());
+        catalog_snapshot.source_revision = Some(3);
+        catalog_snapshot.catalog_schema_version = Some(1);
+        catalog_snapshot.media_type = Some("text/plain".into());
+        catalog_snapshot.checksum = recovery_snapshot_checksum(&catalog_snapshot);
+        let catalog_path = recovery_snapshot_path(&dir, None, Some("current-dirty-document"));
+        write_json_atomically(&catalog_path, &catalog_snapshot).unwrap();
+
+        let mut keep_path = PathBuf::new();
+        for index in 0..(MAX_RECOVERY_SNAPSHOT_COUNT + 5) {
+            let mut legacy = current_snapshot(&format!("legacy-{index}"), index as u64 + 2);
+            legacy.updated_at_ms = index as u128;
+            legacy.checksum = recovery_snapshot_checksum(&legacy);
+            let path = recovery_dir.join(format!("legacy-{index}.json"));
+            write_json_atomically(&path, &legacy).unwrap();
+            if index == MAX_RECOVERY_SNAPSHOT_COUNT + 4 {
+                keep_path = path;
+            }
+        }
+
+        prune_recovery_snapshots(&dir, &keep_path).unwrap();
+
+        assert!(catalog_path.exists());
+        assert_eq!(
+            list_recovery_snapshots_in_dir(&dir).unwrap()[0]
+                .document_id
+                .as_deref(),
+            Some("current-dirty-document")
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
     fn heartbeat_payload(session_id: &str) -> RendererHeartbeatPayload {
         RendererHeartbeatPayload {
             session_id: session_id.into(),
@@ -796,6 +1461,26 @@ mod tests {
             background_job_labels: vec!["Document parser".into()],
             stuck_background_job_labels: vec![],
         }
+    }
+
+    fn current_snapshot(markdown: &str, generation: u64) -> RecoverySnapshot {
+        let mut snapshot = RecoverySnapshot {
+            schema_version: super::CURRENT_RECOVERY_SCHEMA_VERSION,
+            generation,
+            checksum: String::new(),
+            commit_state: "committed".into(),
+            document_id: None,
+            source_revision: None,
+            catalog_schema_version: None,
+            media_type: None,
+            markdown: markdown.into(),
+            file_path: None,
+            format: Some("markdown".into()),
+            updated_at_ms: 1000,
+            markdown_bytes: markdown.len(),
+        };
+        snapshot.checksum = recovery_snapshot_checksum(&snapshot);
+        snapshot
     }
 
     fn test_dir(name: &str) -> std::path::PathBuf {

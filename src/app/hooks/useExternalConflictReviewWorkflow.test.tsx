@@ -9,6 +9,11 @@ import type { DocumentFormat } from '@sciemd/core';
 import { loadSettings } from '../../services/settingsService';
 import type { PersistedSettings } from '../../services/settingsService';
 import { useExternalConflictReviewWorkflow } from './useExternalConflictReviewWorkflow';
+import { createDocumentId, sourceRevision } from '../documentIdentity';
+import { createDocumentEffectCoordinator } from '../effects/documentEffectCoordinator';
+
+const reviewDocumentId = createDocumentId();
+const reviewEffects = createDocumentEffectCoordinator(() => sourceRevision(0));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -57,6 +62,16 @@ describe('useExternalConflictReviewWorkflow', () => {
       diskMetadata: disk.metadata,
     });
     expect(expectLineReview(controls?.externalConflictReview).hunks.length).toBeGreaterThan(0);
+  });
+
+  it('uses the workspace-targeted reader when the production coordinator provides one', async () => {
+    const disk = readResponse('Workspace disk.\n', metadata({ contentHash: 'workspace-disk' }));
+    const readExternalDocument = vi.fn(async () => disk);
+    renderWorkflow('C:\\docs\\a.md', { readExternalDocument });
+    await act(async () => controls?.openExternalConflictReview());
+    expect(readExternalDocument).toHaveBeenCalledWith(reviewDocumentId);
+    expect(host.file.readTextFile).not.toHaveBeenCalled();
+    expect(controls?.externalConflictReview).toMatchObject({ diskMarkdown: 'Workspace disk.\n' });
   });
 
   it('opens a structured source conflict for JSON without creating Markdown hunks', async () => {
@@ -391,6 +406,7 @@ describe('useExternalConflictReviewWorkflow', () => {
     format?: DocumentFormat;
     sourceText?: string;
     lastSavedSourceText?: string;
+    readExternalDocument?: (documentId: typeof reviewDocumentId) => Promise<ReadTextFileResponse | null>;
   } = {}) {
     act(() => {
       root.render(
@@ -403,6 +419,7 @@ describe('useExternalConflictReviewWorkflow', () => {
           documentEpochRef={documentEpochRef}
           adoptReviewedDiskMerge={adoptReviewedDiskMerge as never}
           pushToast={pushToast as never}
+          readExternalDocument={options.readExternalDocument}
           onControls={(nextControls) => {
             controls = nextControls;
           }}
@@ -421,6 +438,7 @@ function Harness({
   documentEpochRef,
   adoptReviewedDiskMerge,
   pushToast,
+  readExternalDocument,
   onControls,
 }: {
   host: DocumentHost;
@@ -431,9 +449,11 @@ function Harness({
   documentEpochRef: MutableRefObject<number>;
   adoptReviewedDiskMerge: (content: string, diskContent: string, diskMetadata: typeof DEFAULT_METADATA) => void;
   pushToast: (text: string, tone?: 'error' | 'warning' | 'info' | 'success') => void;
+  readExternalDocument?: (documentId: typeof reviewDocumentId) => Promise<ReadTextFileResponse | null>;
   onControls: (controls: ReturnType<typeof useExternalConflictReviewWorkflow>) => void;
 }) {
   const controls = useExternalConflictReviewWorkflow({
+    target: { documentId: reviewDocumentId, effects: reviewEffects },
     filePath,
     documentEpochRef,
     format,
@@ -443,6 +463,7 @@ function Harness({
     setAuthorshipMarks: (() => undefined) as never,
     pushToast,
     host,
+    readExternalDocument,
   });
   onControls(controls);
   return null;

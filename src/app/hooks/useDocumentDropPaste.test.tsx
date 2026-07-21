@@ -153,7 +153,43 @@ describe('useDocumentDropPaste', () => {
     expect(openDocumentPath).toHaveBeenCalledWith('C:\\lab\\data.json');
   });
 
-  it('opens dropped structured browser files with an inferred visual-mode format', async () => {
+  it('opens every dropped native document path in FIFO order', async () => {
+    let droppedPathsListener: ((paths: string[]) => void) | null = null;
+    vi.mocked(platformHost.dragDrop.listenDroppedPaths).mockImplementation(async (listener) => {
+      droppedPathsListener = listener;
+      return vi.fn<() => void>();
+    });
+    const opened: string[] = [];
+    const openDocumentPath = vi.fn(async (path: string) => { opened.push(path); });
+    renderHookHarness({ openDocumentPath });
+
+    await act(async () => {
+      droppedPathsListener?.(['C:\\lab\\first.md', 'C:\\lab\\data.json']);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(opened).toEqual(['C:\\lab\\first.md', 'C:\\lab\\data.json']);
+  });
+
+  it('opens dropped plain-text paths through the normal document opener', async () => {
+    let droppedPathsListener: ((paths: string[]) => void) | null = null;
+    vi.mocked(platformHost.dragDrop.listenDroppedPaths).mockImplementation(async (listener) => {
+      droppedPathsListener = listener;
+      return vi.fn<() => void>();
+    });
+    const openDocumentPath = vi.fn(async () => undefined);
+    renderHookHarness({ openDocumentPath });
+
+    await act(async () => {
+      droppedPathsListener?.(['C:\\lab\\notes.txt']);
+      await Promise.resolve();
+    });
+
+    expect(openDocumentPath).toHaveBeenCalledWith('C:\\lab\\notes.txt');
+  });
+
+  it('opens dropped structured browser files with the catalog default mode', async () => {
     renderHookHarness();
     const file = new File(['{"id":1}\n'], 'data.json', { type: 'application/json' });
     const event = fakeDropEvent([file]);
@@ -169,9 +205,53 @@ describe('useDocumentDropPaste', () => {
       null,
       '{"id":1}\n',
       expect.objectContaining({ encoding: 'utf8' }),
-      'visual',
+      'source',
       '{"id":1}\n',
       'json',
+      { ingressOrigin: 'drop' },
+    );
+  });
+
+  it('opens every browser-dropped document sequentially without collapsing the batch', async () => {
+    const committed: string[] = [];
+    commitOpenedDocument.mockImplementation((_path, content) => { committed.push(content); });
+    renderHookHarness();
+    const event = fakeDropEvent([
+      new File(['# First\n'], 'first.md', { type: 'text/markdown' }),
+      new File(['{"second":true}\n'], 'second.json', { type: 'application/json' }),
+    ]);
+
+    await act(async () => {
+      latestHandlers?.handleDropCapture(event);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(committed).toEqual(['# First\n', '{"second":true}\n']);
+    expect(commitOpenedDocument.mock.calls.map((call) => call[5])).toEqual(['markdown', 'json']);
+  });
+
+  it('opens dropped plain-text browser files as source-only documents', async () => {
+    renderHookHarness();
+    const file = new File(['plain notes\n'], 'notes.txt', { type: 'text/plain' });
+    const event = fakeDropEvent([file]);
+
+    await act(async () => {
+      latestHandlers?.handleDropCapture(event);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(commitOpenedDocument).toHaveBeenCalledWith(
+      null,
+      'plain notes\n',
+      expect.objectContaining({ encoding: 'utf8' }),
+      'source',
+      'plain notes\n',
+      'plainText',
+      { ingressOrigin: 'drop' },
     );
   });
 
@@ -190,9 +270,10 @@ describe('useDocumentDropPaste', () => {
       null,
       '{"id":1}\n',
       expect.objectContaining({ encoding: 'utf8' }),
-      'visual',
+      'source',
       '{"id":1}\n',
       'json',
+      { ingressOrigin: 'drop' },
     );
   });
 

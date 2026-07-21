@@ -4,11 +4,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_METADATA } from '../documentState';
 import type { FileMetadata, ReadTextFileResponse } from '../documentState';
 import type { DocumentHost } from '../host/documentHost';
+import { DocumentHostError } from '../host/documentHostError';
 import { loadSettings } from '../../services/settingsService';
 import type { PersistedSettings } from '../../services/settingsService';
 import type { AuthorshipMark } from '../../markdown/authorship';
 import type { ConfirmState } from './useDialogs';
 import { useDocumentSession } from './useDocumentSession';
+import { fallbackFileLocator } from '../documentIdentity';
+import { defaultManifestView } from '../../services/persistence';
+import { resetWorkspaceManifestForTests, saveWorkspaceManifest, WORKSPACE_MANIFEST_STORAGE_KEY } from '../../services/workspaceManifestService';
+import { resetRecoveryCatalogForTests } from '../../services/recoveryCatalog';
+import type { WorkspaceCapabilityState } from '../workspace/workspaceState';
+import { HIDDEN_WORKSPACE_ACTIVATION_SURFACE } from '../workspace/hiddenWorkspaceHarness';
+import { PRODUCTION_WORKSPACE_CAPABILITY } from '../workspace/workspaceTabs';
 
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
@@ -34,6 +42,8 @@ describe('useDocumentSession startup fallback', () => {
       value: {},
     });
     localStorage.clear();
+    resetWorkspaceManifestForTests();
+    resetRecoveryCatalogForTests();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -65,12 +75,91 @@ describe('useDocumentSession startup fallback', () => {
     }));
   });
 
+  it('restores the persisted workspace through the production startup consumer', async () => {
+    const path = 'C:\\Users\\amin_\\restored.md';
+    await saveWorkspaceManifest({
+      tabOrder: ['restored'],
+      activeDocumentId: 'restored',
+      recentlyActiveDocumentIds: ['restored'],
+      documents: [{
+        documentId: 'restored',
+        locator: { ...fallbackFileLocator(path), aliases: [] },
+        format: 'markdown',
+        view: { ...defaultManifestView(), mode: 'source' },
+        presentation: { visualStyle: 'academic', documentType: 'report' },
+        recoveryReference: null,
+      }],
+      recoveryReferences: [],
+      invalidEntries: [],
+      savedAt: 1,
+    });
+    const host = createHost();
+    host.launch.getInitialDocumentPath.mockResolvedValue(null);
+    host.file.readTextFileForEdit.mockResolvedValue(readResponse('# Restored workspace\n'));
+    renderSession(host);
+
+    await flushAsync();
+
+    expect(latestState?.markdown).toBe('# Restored workspace\n');
+    expect(latestState?.filePath).toBe(path);
+    expect(latestState?.mode).toBe('source');
+    expect(host.recovery.loadUntitledDraft).not.toHaveBeenCalled();
+  });
+
+  it('routes a production watcher event through the workspace into the current conflict projection', async () => {
+    const path = 'C:\\Users\\amin_\\watched.md';
+    await saveWorkspaceManifest({
+      tabOrder: ['watched'], activeDocumentId: 'watched', recentlyActiveDocumentIds: ['watched'],
+      documents: [{
+        documentId: 'watched', locator: { ...fallbackFileLocator(path), aliases: [] }, format: 'markdown',
+        view: defaultManifestView(), presentation: { visualStyle: null, documentType: null }, recoveryReference: null,
+      }],
+      recoveryReferences: [], invalidEntries: [], savedAt: 1,
+    });
+    const initialMetadata = { ...DEFAULT_METADATA, lastKnownMtimeMs: 1000, lastKnownSizeBytes: 5, contentHash: 'base' };
+    const diskMetadata = { ...initialMetadata, lastKnownMtimeMs: 2000, lastKnownSizeBytes: 9, contentHash: 'external' };
+    const host = createHost();
+    let emitWatch: ((event: { paths: string[]; kind: string; changedAtMs: number }) => void) | null = null;
+    host.file.readTextFileForEdit.mockResolvedValue(readResponse('base\n', initialMetadata));
+    host.file.statFile.mockResolvedValue(diskMetadata);
+    host.file.readTextFile.mockResolvedValue(readResponse('external\n', diskMetadata));
+    vi.mocked(host.watcher.listenFileWatchChanges).mockImplementation(async (handler) => {
+      emitWatch = handler;
+      return () => undefined;
+    });
+    renderSession(host);
+    await flushAsync();
+
+    await act(async () => {
+      emitWatch?.({ paths: [path], kind: 'Modify', changedAtMs: 2 });
+      await new Promise((resolve) => window.setTimeout(resolve, 60));
+    });
+    await flushAsync();
+
+    expect(latestState?.externalConflict).toBe(true);
+    expect(latestState?.documentRecord.observedExternal).toMatchObject({ contentHash: 'external' });
+    expect(host.watcher.listenFileWatchChanges).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces a quarantined future manifest without blanking startup', async () => {
+    localStorage.setItem(WORKSPACE_MANIFEST_STORAGE_KEY, JSON.stringify({
+      family: 'workspaceManifest', schemaVersion: 99, generation: 1, checksum: 'future', commitState: 'committed', payload: {},
+    }));
+    const host = createHost();
+    renderSession(host);
+    await flushAsync();
+    expect(latestState?.startupDocumentOpenPending).toBe(false);
+    expect(latestState?.workspaceRestoreOutcomes).toEqual([
+      expect.objectContaining({ status: 'corrupt-manifest-entry', detail: expect.stringContaining('future-version') }),
+    ]);
+  });
+
   it('keeps a durable startup failure, records diagnostics, and clears it after retry opens the document', async () => {
     const startupPath = 'C:\\Users\\amin_\\missing.md';
     const host = createHost();
     host.launch.getInitialDocumentPath.mockResolvedValue(startupPath);
     host.file.readTextFileForEdit
-      .mockRejectedValueOnce(new Error('File access denied'))
+      .mockRejectedValueOnce(new DocumentHostError('PERMISSION_DENIED', 'File access denied'))
       .mockResolvedValueOnce(readResponse('# Recovered\n'));
     renderSession(host);
 
@@ -205,6 +294,9 @@ describe('useDocumentSession startup fallback', () => {
     expect(latestState?.filePath).toBe(startupPath);
     expect(latestState?.format).toBe('json');
     expect(latestState?.mode).toBe('visual');
+    expect(latestState?.workspaceState.tabOrder).toEqual([latestState?.documentId]);
+    expect(latestState?.workspaceState.activeDocumentId).toBe(latestState?.documentId);
+    expect(latestState?.workspaceState.capability).toEqual({ multiDocumentWorkspaceEnabled: false, activationSurface: null });
     expect(latestState?.markdown).toBe('{"ok":true}\n');
   });
 
@@ -213,7 +305,7 @@ describe('useDocumentSession startup fallback', () => {
     const pendingPath = 'C:\\Users\\amin_\\pending.md';
     const host = createHost();
     host.launch.getInitialDocumentPath.mockReturnValue(startupPath.promise);
-    host.launch.peekPendingDocumentOpen
+    host.launch.takePendingDocumentOpen
       .mockResolvedValueOnce(pendingPath)
       .mockResolvedValue(null);
     host.file.readTextFileForEdit.mockResolvedValue(readResponse('# Pending launch\n'));
@@ -222,15 +314,15 @@ describe('useDocumentSession startup fallback', () => {
     await flushAsync();
 
     expect(host.launch.listenSingleInstanceOpen).toHaveBeenCalled();
-    expect(host.launch.peekPendingDocumentOpen).not.toHaveBeenCalled();
+    expect(host.launch.takePendingDocumentOpen).not.toHaveBeenCalled();
     expect(host.file.readTextFileForEdit).not.toHaveBeenCalled();
 
     startupPath.resolve(null);
     await flushAsync();
 
-    expect(host.launch.peekPendingDocumentOpen).toHaveBeenCalled();
+    expect(host.launch.takePendingDocumentOpen).toHaveBeenCalled();
     expect(host.file.readTextFileForEdit).toHaveBeenCalledWith(pendingPath);
-    expect(host.launch.clearPendingDocumentOpen).toHaveBeenCalledWith(pendingPath);
+    expect(host.launch.clearPendingDocumentOpen).not.toHaveBeenCalledWith(pendingPath);
     expect(latestState?.filePath).toBe(pendingPath);
     expect(latestState?.markdown).toBe('# Pending launch\n');
   });
@@ -320,15 +412,153 @@ describe('useDocumentSession startup fallback', () => {
     expect(latestState?.format).toBe('markdown');
     expect(latestState?.mode).toBe('visual');
     expect(latestState?.markdown).toBe('# Header\n\nMain text\n');
+    expect(latestState?.workspaceState.tabOrder).toEqual([latestState?.documentId]);
+    expect(latestState?.workspaceState.activeDocumentId).toBe(latestState?.documentId);
+    expect(latestState?.workspaceState.capability).toEqual({ multiDocumentWorkspaceEnabled: false, activationSurface: null });
   });
 
-  function renderSession(host: MockDocumentHost) {
+  it('routes a multi-select picker additively through the hidden activation surface', async () => {
+    const host = createHost();
+    host.launch.getInitialDocumentPath.mockResolvedValue(null);
+    host.dialog.pickDocumentFiles = vi.fn().mockResolvedValue([
+      'C:\\Users\\amin_\\paper.md',
+      'C:\\Users\\amin_\\data.json',
+    ]);
+    host.file.readTextFileForEdit.mockImplementation(async (path) => readResponse(path.endsWith('.json') ? '{"ok":true}' : '# Paper'));
+    renderSession(host, { multiDocumentWorkspaceEnabled: true, activationSurface: HIDDEN_WORKSPACE_ACTIVATION_SURFACE });
+    await flushAsync();
+
+    await act(async () => { await latestState?.handleOpen(); });
+    await flushAsync();
+
+    expect(latestState?.workspaceState.tabOrder).toHaveLength(3);
+    expect(Object.values(latestState!.workspaceState.documentsById).map((record) => record.format)).toEqual(['markdown', 'markdown', 'json']);
+    expect(latestState?.filePath).toBe('C:\\Users\\amin_\\data.json');
+    expect(confirmText).not.toHaveBeenCalled();
+  });
+
+  it('uses the production tab capability for additive heterogeneous ingress and activation', async () => {
+    const host = createHost();
+    host.launch.getInitialDocumentPath.mockResolvedValue(null);
+    host.file.readTextFileForEdit.mockImplementation(async (path) => readResponse(path.endsWith('.json') ? '{"ok":true}' : '# Paper'));
+    renderSession(host, PRODUCTION_WORKSPACE_CAPABILITY);
+    await flushAsync();
+    await act(async () => { await latestState?.handleOpen('C:\\docs\\paper.md', { draftRestore: 'skip' }); });
+    await act(async () => { await latestState?.handleOpen('C:\\docs\\data.json', { draftRestore: 'skip' }); });
+
+    const [initialId, markdownId, jsonId] = latestState!.workspaceState.tabOrder;
+    expect(latestState?.workspaceState.capability).toEqual(PRODUCTION_WORKSPACE_CAPABILITY);
+    expect(latestState?.workspaceState.documentsById[markdownId].format).toBe('markdown');
+    expect(latestState?.workspaceState.documentsById[jsonId].format).toBe('json');
+    act(() => { latestState?.activateWorkspaceDocument(initialId); });
+    expect(latestState?.workspaceState.activeDocumentId).toBe(initialId);
+  });
+
+  it('focuses an alias duplicate without rereading or duplicating its record', async () => {
+    const host = createHost();
+    host.launch.getInitialDocumentPath.mockResolvedValue(null);
+    renderSession(host, { multiDocumentWorkspaceEnabled: true, activationSurface: HIDDEN_WORKSPACE_ACTIVATION_SURFACE });
+    await flushAsync();
+    await act(async () => { await latestState?.handleOpen('C:\\Docs\\Paper.md', { draftRestore: 'skip' }); });
+    await act(async () => { await latestState?.handleOpen('c:/docs/paper.md', { draftRestore: 'skip' }); });
+
+    expect(latestState?.workspaceState.tabOrder).toHaveLength(2);
+    expect(host.file.readTextFileForEdit).toHaveBeenCalledTimes(1);
+  });
+
+  it('drains every queued native path in FIFO order under the hidden surface', async () => {
+    const host = createHost();
+    host.launch.getInitialDocumentPath.mockResolvedValue(null);
+    host.launch.takePendingDocumentOpen
+      .mockResolvedValueOnce('C:\\queue\\one.md')
+      .mockResolvedValueOnce('C:\\queue\\two.json')
+      .mockResolvedValueOnce('C:\\queue\\three.txt')
+      .mockResolvedValue(null);
+    host.file.readTextFileForEdit.mockImplementation(async (path) => readResponse(path));
+    renderSession(host, { multiDocumentWorkspaceEnabled: true, activationSurface: HIDDEN_WORKSPACE_ACTIVATION_SURFACE });
+    await flushAsync();
+
+    expect(host.file.readTextFileForEdit.mock.calls.map(([path]) => path)).toEqual([
+      'C:\\queue\\one.md', 'C:\\queue\\two.json', 'C:\\queue\\three.txt',
+    ]);
+    expect(latestState?.workspaceState.tabOrder).toHaveLength(4);
+    expect(latestState?.filePath).toBe('C:\\queue\\three.txt');
+  });
+
+  it('keeps a dirty document intact when a warm single-instance path arrives', async () => {
+    let listener: ((path: string) => void) | null = null;
+    const host = createHost();
+    host.launch.getInitialDocumentPath.mockResolvedValue(null);
+    host.launch.listenSingleInstanceOpen.mockImplementation(async (callback) => { listener = callback; return vi.fn<() => void>(); });
+    host.launch.takePendingDocumentOpen
+      .mockResolvedValueOnce('C:\\warm\\second.json')
+      .mockResolvedValue(null);
+    host.file.readTextFileForEdit.mockResolvedValue(readResponse('{"second":true}'));
+    renderSession(host, { multiDocumentWorkspaceEnabled: true, activationSurface: HIDDEN_WORKSPACE_ACTIVATION_SURFACE });
+    await flushAsync();
+    act(() => latestState?.setSourceText('dirty first'));
+    act(() => listener?.('C:\\warm\\second.json'));
+    await flushAsync();
+
+    const records = Object.values(latestState!.workspaceState.documentsById);
+    expect(records.some((record) => record.source.sourceText === 'dirty first' && record.lifecycle.content === 'dirty')).toBe(true);
+    expect(latestState?.filePath).toBe('C:\\warm\\second.json');
+    expect(confirmText).not.toHaveBeenCalled();
+  });
+
+  it('isolates unsupported and failed picker entries while opening healthy siblings', async () => {
+    const host = createHost();
+    host.launch.getInitialDocumentPath.mockResolvedValue(null);
+    host.dialog.pickDocumentFiles = vi.fn().mockResolvedValue([
+      'C:\\batch\\unsupported.pdf',
+      'C:\\batch\\bad.md',
+      'C:\\batch\\good.json',
+    ]);
+    host.file.readTextFileForEdit.mockImplementation(async (path) => {
+      if (path.endsWith('bad.md')) throw new Error('read failed');
+      return readResponse('{"good":true}');
+    });
+    renderSession(host, { multiDocumentWorkspaceEnabled: true, activationSurface: HIDDEN_WORKSPACE_ACTIVATION_SURFACE });
+    await flushAsync();
+    await act(async () => { await latestState?.handleOpen(); });
+    await flushAsync();
+
+    expect(host.file.readTextFileForEdit).not.toHaveBeenCalledWith('C:\\batch\\unsupported.pdf');
+    expect(latestState?.filePath).toBe('C:\\batch\\good.json');
+    expect(latestState?.workspaceState.tabOrder).toHaveLength(2);
+  });
+
+  it('preserves a second ingress request when the enabled capability has no activation surface', async () => {
+    const host = createHost();
+    host.launch.getInitialDocumentPath.mockResolvedValue(null);
+    renderSession(host, { multiDocumentWorkspaceEnabled: true, activationSurface: null });
+    await flushAsync();
+    let opened: boolean | undefined;
+    await act(async () => { opened = await latestState?.handleOpen('C:\\docs\\deferred.md', { draftRestore: 'skip' }); });
+    expect(opened).toBe(false);
+    expect(latestState?.workspaceState.tabOrder).toHaveLength(1);
+    expect(latestState?.filePath).toBeNull();
+  });
+
+  it('creates unique additive New and template documents', async () => {
+    const host = createHost();
+    host.launch.getInitialDocumentPath.mockResolvedValue(null);
+    renderSession(host, { multiDocumentWorkspaceEnabled: true, activationSurface: HIDDEN_WORKSPACE_ACTIVATION_SURFACE });
+    await flushAsync();
+    await act(async () => { await latestState?.handleNew(); });
+    await act(async () => { await latestState?.handleNewFromTemplate('json'); });
+    expect(latestState?.workspaceState.tabOrder).toHaveLength(3);
+    expect(new Set(latestState?.workspaceState.tabOrder).size).toBe(3);
+  });
+
+  function renderSession(host: MockDocumentHost, workspaceCapability?: Partial<WorkspaceCapabilityState>) {
     act(() => {
       root.render(
         <Harness
           host={host}
           confirmText={confirmText}
           pushToast={pushToast}
+          workspaceCapability={workspaceCapability}
           onState={(state) => {
             latestState = state;
           }}
@@ -368,21 +598,23 @@ function Harness({
   confirmText,
   pushToast,
   onState,
+  workspaceCapability,
 }: {
   host: DocumentHost;
   confirmText: (state: ConfirmState) => Promise<boolean>;
   pushToast: (text: string, tone?: 'info' | 'success' | 'warning' | 'error') => void;
   onState: (state: SessionState) => void;
+  workspaceCapability?: Partial<WorkspaceCapabilityState>;
 }) {
   const [settings, setSettings] = useState<PersistedSettings>(() => loadSettings());
   const [_authorshipMarks, setAuthorshipMarks] = useState<AuthorshipMark[]>([]);
   const state = useDocumentSession({
     initialMarkdown: '',
     setSettings,
-    setAuthorshipMarks,
     confirmText,
     pushToast,
     host,
+    workspaceCapability,
   });
   void settings;
   onState(state);
@@ -402,6 +634,7 @@ function createHost(): MockDocumentHost {
     dialog: {
       pickMarkdownFile: vi.fn().mockResolvedValue(null),
       pickDocumentFile: vi.fn().mockResolvedValue(null),
+      pickDocumentFiles: vi.fn().mockResolvedValue([]),
       pickJsonSchemaFile: vi.fn().mockResolvedValue(null),
       pickSavePath: vi.fn().mockResolvedValue(null),
     },
@@ -459,13 +692,14 @@ function createHost(): MockDocumentHost {
   };
 }
 
-function readResponse(content: string): ReadTextFileResponse {
+function readResponse(content: string, metadataPatch: Partial<FileMetadata> = {}): ReadTextFileResponse {
   return {
     content,
     metadata: {
       ...DEFAULT_METADATA,
       lastKnownSizeBytes: content.length,
       contentHash: `hash:${content.length}`,
+      ...metadataPatch,
     },
   };
 }

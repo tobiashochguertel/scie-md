@@ -31,7 +31,7 @@ describe('documentState', () => {
 
   it('creates a dirty title for a document path', () => {
     expect(basename('C:\\tmp\\document.md')).toBe('document.md');
-    expect(createWindowTitle('/tmp/document.md', true)).toBe('* document.md - ScieMD');
+    expect(createWindowTitle({ filePath: '/tmp/document.md', activeDirty: true, unsavedCount: 1 })).toBe('* document.md · 1 unsaved - ScieMD');
   });
 
   it('uses format-aware display names for unsaved documents', () => {
@@ -40,7 +40,16 @@ describe('documentState', () => {
     expect(untitledNameForFormat('json')).toBe('Untitled.json');
     expect(displayNameForPath(null, 'plainText')).toBe('Untitled.txt');
     expect(displayNameForPath(null, 'yaml')).toBe('Untitled.yaml');
-    expect(createWindowTitle(null, false, 'plainText')).toBe('Untitled.txt - ScieMD');
-    expect(createWindowTitle(null, true, 'json')).toBe('* Untitled.json - ScieMD');
+    expect(createWindowTitle({ filePath: null, format: 'plainText', activeDirty: false, unsavedCount: 0 })).toBe('Untitled.txt - ScieMD');
+    expect(createWindowTitle({ filePath: null, format: 'json', activeDirty: true, unsavedCount: 2 })).toBe('* Untitled.json · 2 unsaved - ScieMD');
+  });
+
+  it('keeps background unsaved work visible when the active document is clean', () => {
+    expect(createWindowTitle({
+      filePath: 'C:\\docs\\clean.json',
+      format: 'json',
+      activeDirty: false,
+      unsavedCount: 2,
+    })).toBe('clean.json · 2 unsaved - ScieMD');
   });
 });

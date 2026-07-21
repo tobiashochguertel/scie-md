@@ -2,9 +2,45 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, vi } from 'vitest';
 import { describe, expect, it } from 'vitest';
-import { SourceTextEditor, formatDiagnosticsForCodeMirror, type SourceTextContextMenuRequest, type SourceTextEditorProps, type SourceTextFind, type SourceTextSelection } from './SourceTextEditor';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { highlightingFor, syntaxTree } from '@codemirror/language';
+import { EditorState } from '@codemirror/state';
+import { tags } from '@lezer/highlight';
+import { formatByteLengthUtf8, sourceEditorCapabilitiesFor, sourceSemanticPresentationMode } from '@sciemd/core';
+import { SourceTextEditor, createLanguageExtension, formatDiagnosticsForCodeMirror, type SourceTextContextMenuRequest, type SourceTextEditorProps, type SourceTextFind, type SourceTextSelection } from './SourceTextEditor';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+describe('semantic source presentation contract', () => {
+  it('styles Markdown and structured grammar tags without changing source, selection, or parse tree', () => {
+    const fixtureBytes = readFileSync(join(process.cwd(), 'src/app/host/fixtures/source-semantic-invariance.md'));
+    const source = fixtureBytes.toString('utf8');
+    expect(fixtureBytes.equals(Buffer.from(source, 'utf8'))).toBe(true);
+    expect(source).not.toContain('\r');
+
+    for (const format of ['markdown', 'json', 'yaml', 'xml'] as const) {
+      const profile = sourceEditorCapabilitiesFor(format);
+      const doc = format === 'markdown' ? source : format === 'json' ? '{"key": true}' : format === 'yaml' ? 'key: true\n' : '<root key="value" />';
+      const baseline = EditorState.create({ doc, selection: { anchor: Math.min(2, doc.length) }, extensions: createLanguageExtension(profile, 'enabled') });
+      const tree = syntaxTree(baseline).toString();
+      expect(baseline.doc.toString()).toBe(doc);
+      expect(baseline.selection.main.anchor).toBe(Math.min(2, doc.length));
+      expect(syntaxTree(baseline).toString()).toBe(tree);
+      expect(highlightingFor(baseline, [tags.string, tags.propertyName, tags.heading, tags.tagName])).toBeTruthy();
+    }
+    expect(source).toContain('**Strong**');
+    expect(source).toContain('[@smith2026]');
+  });
+
+  it('uses conservative plain fallback for unsupported grammars and over-threshold files', () => {
+    expect(sourceSemanticPresentationMode({ byteLength: 11, sourceOnlyThresholdBytes: 10, languageAvailable: true })).toBe('large-file-fallback');
+    expect(sourceSemanticPresentationMode({ byteLength: 1, sourceOnlyThresholdBytes: 10, languageAvailable: false })).toBe('unsupported-plain');
+    const fallback = EditorState.create({ doc: 'key = "value"', extensions: createLanguageExtension(sourceEditorCapabilitiesFor('toml'), 'unsupported-plain') });
+    expect(syntaxTree(fallback).toString()).toBe('');
+    expect(formatByteLengthUtf8(fallback.doc.toString())).toBe(Buffer.byteLength('key = "value"', 'utf8'));
+  });
+});
 
 describe('SourceTextEditor diagnostics', () => {
   it('maps format diagnostic offsets into CodeMirror diagnostics', () => {

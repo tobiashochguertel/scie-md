@@ -5,9 +5,15 @@ import type { DocumentFormat, FormatParseResult, JsonSchemaSource } from '@sciem
 import { formatParseBudgetBytes } from '@sciemd/core';
 import { parseSourceFormatDiagnostics } from '../formatDiagnostics';
 import { useSourceFormatDiagnostics } from './useSourceFormatDiagnostics';
+import { createDocumentId, sourceRevision } from '../documentIdentity';
+import { createDocumentEffectCoordinator } from '../effects/documentEffectCoordinator';
+
+const diagnosticDocumentId = createDocumentId();
+const diagnosticEffects = createDocumentEffectCoordinator(() => sourceRevision(0));
 
 const formatWorkerMock = vi.hoisted(() => ({
   parseFormatDocumentAsync: vi.fn(),
+  cancelFormatDocumentParse: vi.fn(),
   isTransientFormatParserWorkerFailure: vi.fn((error: unknown) => (
     error instanceof Error && /timed out|queue limit|worker failed/i.test(error.message)
   )),
@@ -49,7 +55,7 @@ describe('useSourceFormatDiagnostics', () => {
     const second = deferred<FormatParseResult>();
     formatWorkerMock.parseFormatDocumentAsync
       .mockReturnValueOnce(first.promise)
-      .mockReturnValueOnce(second.promise);
+      .mockReturnValue(second.promise);
 
     renderHook({ text: '{"version":1}' });
     await flushAsync();
@@ -72,6 +78,30 @@ describe('useSourceFormatDiagnostics', () => {
       canRenderVisualSurface: true,
     });
     expect(latestState?.jsonAnalysis?.parseResult.parsed?.value).toEqual({ version: 2 });
+  });
+
+  it('does not project a late result across two untitled document identities', async () => {
+    const firstDocument = createDocumentId();
+    const secondDocument = createDocumentId();
+    const first = deferred<FormatParseResult>();
+    const second = deferred<FormatParseResult>();
+    formatWorkerMock.parseFormatDocumentAsync
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValue(second.promise);
+
+    renderHook({ documentId: firstDocument, text: '{"owner":"first"}', path: null });
+    await flushAsync();
+    renderHook({ documentId: secondDocument, text: '{"owner":"second"}', path: null });
+    await flushAsync();
+    first.resolve(jsonParseResult('{"owner":"first"}'));
+    await flushAsync();
+
+    expect(latestState?.jsonAnalysis).toBeNull();
+    expect(latestState?.parsingPending).toBe(true);
+
+    second.resolve(jsonParseResult('{"owner":"second"}'));
+    await flushAsync();
+    expect(latestState?.jsonAnalysis?.parseResult.parsed?.value).toEqual({ owner: 'second' });
   });
 
   it('keeps the previous same-document analysis visible while reparsing changed source', async () => {
@@ -190,6 +220,8 @@ describe('useSourceFormatDiagnostics', () => {
       'jsonl',
       '{"id":1}\n\n{"id":2}\n',
       'C:\\Lab\\records.jsonl',
+      {},
+      expect.objectContaining({ documentId: diagnosticDocumentId, sourceRevision: 0 }),
     );
     expect(latestState?.parsingPending).toBe(false);
     expect(latestState?.jsonAnalysis).toBeNull();
@@ -219,10 +251,12 @@ describe('useSourceFormatDiagnostics', () => {
       '{"id":"A"}',
       'C:\\Lab\\result.json',
       { schema },
+      expect.objectContaining({ documentId: diagnosticDocumentId, sourceRevision: 0 }),
     );
   });
 
   function renderHook(options: {
+    documentId?: ReturnType<typeof createDocumentId>;
     format?: DocumentFormat;
     text: string;
     path?: string | null;
@@ -231,6 +265,7 @@ describe('useSourceFormatDiagnostics', () => {
     act(() => {
       root.render(
         <Harness
+          documentId={options.documentId ?? diagnosticDocumentId}
           format={options.format ?? 'json'}
           text={options.text}
           path={options.path ?? 'C:\\Lab\\result.json'}
@@ -245,19 +280,27 @@ describe('useSourceFormatDiagnostics', () => {
 });
 
 function Harness({
+  documentId,
   format,
   text,
   path,
   jsonSchema,
   onState,
 }: {
+  documentId: ReturnType<typeof createDocumentId>;
   format: DocumentFormat;
   text: string;
   path: string | null;
   jsonSchema: JsonSchemaSource | null;
   onState: (state: HookState) => void;
 }) {
-  const state = useSourceFormatDiagnostics(format, text, path, { jsonSchema });
+  const state = useSourceFormatDiagnostics(
+    { documentId, effects: diagnosticEffects },
+    format,
+    text,
+    path,
+    { jsonSchema },
+  );
   onState(state);
   return null;
 }

@@ -9,6 +9,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use super::host_error::{HostError, HostErrorCode, HostResult};
 use super::path_grants::{
     assert_directory_read_allowed, assert_file_read_allowed, assert_file_write_allowed,
     clear_document_image_grants_for_document, grant_file, grant_file_and_parent,
@@ -19,7 +20,7 @@ mod text_encoding;
 
 use text_encoding::{
     content_hash, decode_text_bytes, decode_text_bytes_lossy, detect_line_endings,
-    markdown_to_bytes, metadata_mtime_ms, normalize_to_lf, readable_file_kind,
+    metadata_mtime_ms, normalize_to_lf, readable_file_kind, source_text_to_bytes,
     unix_timestamp_for_file_name,
 };
 
@@ -35,15 +36,23 @@ pub struct FileMetadata {
     pub encoding: String,
     pub has_bom: bool,
     pub has_mixed_line_endings: bool,
+    pub line_endings: String,
+    pub decode_lossy: bool,
+    pub lossless_write: String,
+    pub loss_reasons: Vec<String>,
+    pub original_byte_hash: Option<String>,
     pub last_known_mtime_ms: u64,
     pub last_known_size_bytes: u64,
     pub content_hash: Option<String>,
     pub cloud_state: String,
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadTextFileResponse {
+    pub source_text: String,
     pub content: String,
     pub metadata: FileMetadata,
 }
@@ -73,18 +82,20 @@ pub struct FileExplorerEntry {
 }
 
 #[tauri::command]
-pub fn read_text_file(path: String) -> Result<ReadTextFileResponse, String> {
+pub fn read_text_file(path: String) -> HostResult<ReadTextFileResponse> {
     let path = PathBuf::from(path);
     assert_file_read_allowed(&path)?;
-    read_text_file_checked(&path)
+    ensure_cloud_file_available(&path)?;
+    Ok(read_text_file_checked(&path)?)
 }
 
 #[tauri::command]
-pub fn read_text_file_for_edit(path: String) -> Result<ReadTextFileResponse, String> {
+pub fn read_text_file_for_edit(path: String) -> HostResult<ReadTextFileResponse> {
     let path = PathBuf::from(path);
     assert_file_read_allowed(&path)?;
+    ensure_cloud_file_available(&path)?;
     grant_file(&path)?;
-    read_text_file_checked(&path)
+    Ok(read_text_file_checked(&path)?)
 }
 
 fn read_text_file_checked(path: &Path) -> Result<ReadTextFileResponse, String> {
@@ -101,14 +112,22 @@ fn read_text_file_checked(path: &Path) -> Result<ReadTextFileResponse, String> {
     let metadata = metadata_from_file_metadata(
         path,
         &file_metadata,
-        line_endings.line_ending,
-        decoded.encoding,
-        decoded.has_bom,
-        line_endings.has_mixed_line_endings,
+        TextFidelityMetadata {
+            line_ending: line_endings.line_ending,
+            encoding: decoded.encoding,
+            has_bom: decoded.has_bom,
+            has_mixed_line_endings: line_endings.has_mixed_line_endings,
+            decode_lossy: decoded.decode_lossy,
+            fidelity_known: true,
+        },
         Some(content_hash(&bytes)),
     );
 
-    Ok(ReadTextFileResponse { content, metadata })
+    Ok(ReadTextFileResponse {
+        source_text: content.clone(),
+        content,
+        metadata,
+    })
 }
 
 #[tauri::command]
@@ -138,43 +157,42 @@ pub fn read_text_file_preview(
 }
 
 #[tauri::command]
-pub fn stat_file(path: String, include_content_hash: Option<bool>) -> Result<FileMetadata, String> {
+pub fn stat_file(path: String, include_content_hash: Option<bool>) -> HostResult<FileMetadata> {
     let path = PathBuf::from(path);
     assert_file_read_allowed(&path)?;
+    ensure_cloud_file_available(&path)?;
     let include_hash = include_content_hash.unwrap_or(false);
     let metadata =
         fs::metadata(&path).map_err(|error| format!("Could not read file metadata: {error}"))?;
     if !include_hash {
-        return metadata_from_path(
+        return Ok(metadata_from_path(
             &path,
-            "lf".to_string(),
-            "utf8".to_string(),
+            TextFidelityMetadata::unknown(),
             false,
-            false,
-            false,
-        );
+        )?);
     }
     if metadata.len() > MAX_TEXT_HASH_BYTES {
-        return metadata_from_path(
+        return Ok(metadata_from_path(
             &path,
-            "lf".to_string(),
-            "utf8".to_string(),
+            TextFidelityMetadata::unknown(),
             false,
-            false,
-            false,
-        );
+        )?);
     }
     let bytes = fs::read(&path).map_err(|error| format!("Could not stat file: {error}"))?;
     let decoded = decode_text_bytes_lossy(&bytes);
     let line_endings = detect_line_endings(&decoded.raw);
-    metadata_from_path(
+    Ok(metadata_from_path(
         &path,
-        line_endings.line_ending,
-        decoded.encoding,
-        decoded.has_bom,
-        line_endings.has_mixed_line_endings,
+        TextFidelityMetadata {
+            line_ending: line_endings.line_ending,
+            encoding: decoded.encoding,
+            has_bom: decoded.has_bom,
+            has_mixed_line_endings: line_endings.has_mixed_line_endings,
+            decode_lossy: decoded.decode_lossy,
+            fidelity_known: true,
+        },
         true,
-    )
+    )?)
 }
 
 #[tauri::command]
@@ -242,16 +260,19 @@ pub fn list_readable_files(path: String) -> Result<Vec<FileExplorerEntry>, Strin
 #[tauri::command]
 pub fn write_text_file_atomic(
     path: String,
-    markdown: String,
+    source_text: String,
     line_ending: String,
     encoding: String,
     has_bom: bool,
     expected_mtime_ms: Option<u64>,
     expected_size_bytes: Option<u64>,
     expected_content_hash: Option<String>,
-) -> Result<FileMetadata, String> {
+) -> HostResult<FileMetadata> {
     let path = PathBuf::from(path);
     assert_file_write_allowed(&path)?;
+    if path.exists() {
+        ensure_cloud_file_available(&path)?;
+    }
     let parent = path
         .parent()
         .ok_or_else(|| "Target file has no parent directory.".to_string())?;
@@ -271,7 +292,7 @@ pub fn write_text_file_atomic(
     )?;
 
     let temp_path = temp_path_for(&path);
-    let bytes = markdown_to_bytes(&markdown, &line_ending, &encoding, has_bom)?;
+    let bytes = source_text_to_bytes(&source_text, &line_ending, &encoding, has_bom)?;
 
     let mut file = OpenOptions::new()
         .write(true)
@@ -282,7 +303,9 @@ pub fn write_text_file_atomic(
     if let Err(error) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
         drop(file);
         let _ = fs::remove_file(&temp_path);
-        return Err(format!("Could not write temporary file: {error}"));
+        return Err(HostError::from(format!(
+            "Could not write temporary file: {error}"
+        )));
     }
 
     drop(file);
@@ -294,32 +317,36 @@ pub fn write_text_file_atomic(
         expected_content_hash.as_deref(),
     ) {
         let _ = fs::remove_file(&temp_path);
-        return Err(error);
+        return Err(error.into());
     }
 
     if let Err(error) = atomic_replace(&temp_path, &path) {
         let _ = fs::remove_file(&temp_path);
-        return Err(error);
+        return Err(error.into());
     }
 
     sync_file(&path)?;
     sync_parent_dir(parent)?;
-    sync_markdown_image_grants_if_markdown(&path, &markdown)?;
-    metadata_from_path(&path, line_ending, encoding, has_bom, false, true)
+    sync_markdown_image_grants_if_markdown(&path, &source_text)?;
+    Ok(metadata_from_path(
+        &path,
+        TextFidelityMetadata::known(line_ending, encoding, has_bom),
+        true,
+    )?)
 }
 
 #[tauri::command]
 pub fn write_text_file_create_new(
     path: String,
-    markdown: String,
+    source_text: String,
     line_ending: String,
     encoding: String,
     has_bom: bool,
 ) -> Result<FileMetadata, String> {
     let path = PathBuf::from(path);
     assert_file_write_allowed(&path)?;
-    let metadata = create_new_text_file(&path, &markdown, &line_ending, &encoding, has_bom)?;
-    sync_markdown_image_grants_if_markdown(&path, &markdown)?;
+    let metadata = create_new_text_file(&path, &source_text, &line_ending, &encoding, has_bom)?;
+    sync_markdown_image_grants_if_markdown(&path, &source_text)?;
     Ok(metadata)
 }
 
@@ -355,7 +382,7 @@ pub fn create_generated_sibling_artifact(
 
 fn create_new_text_file(
     path: &Path,
-    markdown: &str,
+    source_text: &str,
     line_ending: &str,
     encoding: &str,
     has_bom: bool,
@@ -366,7 +393,7 @@ fn create_new_text_file(
     fs::create_dir_all(parent)
         .map_err(|error| format!("Could not create parent directory: {error}"))?;
 
-    let bytes = markdown_to_bytes(markdown, line_ending, encoding, has_bom)?;
+    let bytes = source_text_to_bytes(source_text, line_ending, encoding, has_bom)?;
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -380,10 +407,7 @@ fn create_new_text_file(
     sync_parent_dir(parent)?;
     metadata_from_path(
         path,
-        line_ending.to_string(),
-        encoding.to_string(),
-        has_bom,
-        false,
+        TextFidelityMetadata::known(line_ending.to_string(), encoding.to_string(), has_bom),
         true,
     )
 }
@@ -480,12 +504,42 @@ pub fn cleanup_stale_temp_files_for_paths(paths: Vec<String>) -> Result<(), Stri
     Ok(())
 }
 
-pub fn metadata_from_path(
-    path: &Path,
+struct TextFidelityMetadata {
     line_ending: String,
     encoding: String,
     has_bom: bool,
     has_mixed_line_endings: bool,
+    decode_lossy: bool,
+    fidelity_known: bool,
+}
+
+impl TextFidelityMetadata {
+    fn known(line_ending: String, encoding: String, has_bom: bool) -> Self {
+        Self {
+            line_ending,
+            encoding,
+            has_bom,
+            has_mixed_line_endings: false,
+            decode_lossy: false,
+            fidelity_known: true,
+        }
+    }
+
+    fn unknown() -> Self {
+        Self {
+            line_ending: "lf".to_string(),
+            encoding: "utf8".to_string(),
+            has_bom: false,
+            has_mixed_line_endings: false,
+            decode_lossy: false,
+            fidelity_known: false,
+        }
+    }
+}
+
+fn metadata_from_path(
+    path: &Path,
+    fidelity: TextFidelityMetadata,
     include_content_hash: bool,
 ) -> Result<FileMetadata, String> {
     let metadata =
@@ -499,10 +553,7 @@ pub fn metadata_from_path(
     Ok(metadata_from_file_metadata(
         path,
         &metadata,
-        line_ending,
-        encoding,
-        has_bom,
-        has_mixed_line_endings,
+        fidelity,
         content_hash,
     ))
 }
@@ -510,12 +561,17 @@ pub fn metadata_from_path(
 fn metadata_from_file_metadata(
     path: &Path,
     metadata: &fs::Metadata,
-    line_ending: String,
-    encoding: String,
-    has_bom: bool,
-    has_mixed_line_endings: bool,
+    fidelity: TextFidelityMetadata,
     content_hash: Option<String>,
 ) -> FileMetadata {
+    let TextFidelityMetadata {
+        line_ending,
+        encoding,
+        has_bom,
+        has_mixed_line_endings,
+        decode_lossy,
+        fidelity_known,
+    } = fidelity;
     let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
     let last_known_mtime_ms = modified
         .duration_since(UNIX_EPOCH)
@@ -523,15 +579,42 @@ fn metadata_from_file_metadata(
         .as_millis()
         .min(u128::from(u64::MAX)) as u64;
 
+    let mut loss_reasons = Vec::new();
+    if has_mixed_line_endings {
+        loss_reasons.push("mixed-line-endings-without-map".to_string());
+    }
+    if decode_lossy {
+        loss_reasons.push("decode-replacement".to_string());
+    }
+    let lossless_write = if !fidelity_known {
+        "unknown"
+    } else if loss_reasons.is_empty() {
+        "yes"
+    } else {
+        "no"
+    };
+    let line_endings = if has_mixed_line_endings {
+        "mixed".to_string()
+    } else {
+        line_ending.clone()
+    };
+    let original_byte_hash = content_hash.clone();
+
     FileMetadata {
         line_ending,
         encoding,
         has_bom,
         has_mixed_line_endings,
+        line_endings,
+        decode_lossy,
+        lossless_write: lossless_write.to_string(),
+        loss_reasons,
+        original_byte_hash,
         last_known_mtime_ms,
         last_known_size_bytes: metadata.len(),
         content_hash,
         cloud_state: cloud_file_state(path),
+        read_only: metadata.permissions().readonly(),
     }
 }
 
@@ -558,6 +641,16 @@ fn cloud_file_state(path: &Path) -> String {
 #[cfg(not(windows))]
 fn cloud_file_state(_path: &Path) -> String {
     "local".to_string()
+}
+
+fn ensure_cloud_file_available(path: &Path) -> HostResult<()> {
+    match cloud_file_state(path).as_str() {
+        "cloud-placeholder" | "cloud-recall-on-open" => Err(HostError::new(
+            HostErrorCode::CloudUnavailable,
+            "Cloud document is not available locally. Download or pin it before continuing.",
+        )),
+        _ => Ok(()),
+    }
 }
 
 #[cfg(windows)]
@@ -887,7 +980,7 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error.contains("changed on disk"));
+        assert_eq!(error.code, HostErrorCode::FileChanged);
         assert_eq!(fs::read_to_string(&path).unwrap(), "old");
 
         let _ = fs::remove_dir_all(dir);
@@ -914,10 +1007,123 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error.contains("target file appeared"));
+        assert_eq!(error.code, HostErrorCode::FileChanged);
         assert_eq!(fs::read_to_string(&path).unwrap(), "appeared");
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn atomic_write_vetoes_lossy_windows_1252_output_before_creating_a_file() {
+        let _grants = isolate_test_path_grants();
+        let dir = env::temp_dir().join(format!("scie-md-lossy-{}", temp_suffix()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("document.md");
+        grant_file_and_parent(&path).unwrap();
+
+        let error = write_text_file_atomic(
+            path.to_string_lossy().to_string(),
+            "cannot encode: 🧪\n".to_string(),
+            "lf".to_string(),
+            "windows1252".to_string(),
+            false,
+            None,
+            None,
+            None,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, HostErrorCode::LossyWriteRequired);
+        assert!(!path.exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct FidelityCorpusCase {
+        id: String,
+        bytes_hex: String,
+        source_text: String,
+        encoding: String,
+        bom: bool,
+        dominant_line_ending: String,
+        line_endings: String,
+        lossless_write: String,
+    }
+
+    #[test]
+    fn fidelity_corpus_reports_and_round_trips_only_declared_lossless_cases() {
+        let _grants = isolate_test_path_grants();
+        let dir = env::temp_dir().join(format!("scie-md-fidelity-{}", temp_suffix()));
+        fs::create_dir_all(&dir).unwrap();
+        let corpus: Vec<FidelityCorpusCase> = serde_json::from_str(include_str!(
+            "../../../docs/refactor/file_fidelity_corpus.v1.json"
+        ))
+        .unwrap();
+
+        for case in corpus {
+            let path = dir.join(format!("{}.md", case.id));
+            let original_bytes = hex_bytes(&case.bytes_hex);
+            fs::write(&path, &original_bytes).unwrap();
+            grant_file_and_parent(&path).unwrap();
+
+            let read = read_text_file_for_edit(path.to_string_lossy().to_string()).unwrap();
+            assert_eq!(read.source_text, case.source_text, "{} source", case.id);
+            assert_eq!(read.content, case.source_text, "{} compatibility", case.id);
+            assert_eq!(
+                read.metadata.encoding, case.encoding,
+                "{} encoding",
+                case.id
+            );
+            assert_eq!(read.metadata.has_bom, case.bom, "{} BOM", case.id);
+            assert_eq!(
+                read.metadata.line_ending, case.dominant_line_ending,
+                "{} dominant ending",
+                case.id
+            );
+            assert_eq!(
+                read.metadata.line_endings, case.line_endings,
+                "{} endings",
+                case.id
+            );
+            assert_eq!(
+                read.metadata.lossless_write, case.lossless_write,
+                "{} lossless policy",
+                case.id
+            );
+
+            if case.lossless_write == "yes" {
+                let metadata = read.metadata;
+                write_text_file_atomic(
+                    path.to_string_lossy().to_string(),
+                    case.source_text,
+                    metadata.line_ending.clone(),
+                    metadata.encoding.clone(),
+                    metadata.has_bom,
+                    Some(metadata.last_known_mtime_ms),
+                    Some(metadata.last_known_size_bytes),
+                    metadata.content_hash,
+                )
+                .unwrap();
+                assert_eq!(
+                    fs::read(&path).unwrap(),
+                    original_bytes,
+                    "{} bytes",
+                    case.id
+                );
+            }
+        }
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn hex_bytes(value: &str) -> Vec<u8> {
+        value
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect()
     }
 
     #[test]
@@ -1031,7 +1237,7 @@ mod tests {
 
         let error = read_text_file(path.to_string_lossy().to_string()).unwrap_err();
 
-        assert!(error.contains("File access denied"));
+        assert_eq!(error.code, HostErrorCode::PermissionDenied);
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -1212,6 +1418,29 @@ mod tests {
     }
 
     #[test]
+    fn stat_file_reports_filesystem_read_only_state() {
+        let _grants = isolate_test_path_grants();
+        let dir = env::temp_dir().join(format!("scie-md-readonly-metadata-{}", temp_suffix()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("readonly.md");
+        fs::write(&path, b"readonly").unwrap();
+        grant_file(&path).unwrap();
+        let writable_permissions = fs::metadata(&path).unwrap().permissions();
+        let mut permissions = writable_permissions.clone();
+        permissions.set_readonly(true);
+        fs::set_permissions(&path, permissions).unwrap();
+
+        let observed = stat_file(path.to_string_lossy().to_string(), Some(false)).unwrap();
+        assert!(observed.read_only);
+
+        #[cfg(windows)]
+        {
+            fs::set_permissions(&path, writable_permissions).unwrap();
+        }
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn read_text_file_preview_reads_only_a_bounded_prefix() {
         let _grants = isolate_test_path_grants();
         let dir = env::temp_dir().join(format!("scie-md-preview-{}", temp_suffix()));
@@ -1332,7 +1561,7 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error.contains("Could not replace target file atomically"));
+        assert_eq!(error.code, HostErrorCode::UnknownHostError);
         drop(_lock);
         assert_eq!(fs::read_to_string(&path).unwrap(), "original");
         assert_eq!(

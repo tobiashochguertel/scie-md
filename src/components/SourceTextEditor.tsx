@@ -10,11 +10,12 @@ import type { Diagnostic as CodeMirrorDiagnostic } from '@codemirror/lint';
 import { Compartment, EditorState, Transaction } from '@codemirror/state';
 import type { Extension, TransactionSpec } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
-import type { DocumentFormat, FormatDiagnostic, SourceEditorCapabilities } from '@sciemd/core';
-import { formatByteLengthUtf8, formatBytes, formatDefinitionFor, quoteAnchorPrefix, quoteAnchorSuffix, sourceEditorCapabilitiesFor } from '@sciemd/core';
+import type { DocumentFormat, FormatDiagnostic, SourceEditorCapabilities, SourceSemanticPresentationMode } from '@sciemd/core';
+import { formatByteLengthUtf8, formatBytes, formatDefinitionFor, quoteAnchorPrefix, quoteAnchorSuffix, sourceEditorCapabilitiesFor, sourceSemanticPresentationMode } from '@sciemd/core';
 import type { EditorHistoryControls } from './editorControls';
 import type { EditorSelectionGetter } from './editorSelection';
 import type { EditorAdapter, EditorAdapterReady, EditorSelectionAnchor } from './editorAdapter';
+import { createScieMdSemanticHighlighting } from './sourceSemanticHighlighting';
 
 export type SourceTextLanguage = DocumentFormat;
 export type SourceTextInsert = (text: string) => void;
@@ -95,6 +96,14 @@ export function SourceTextEditor({
   onViewportLineChange,
 }: SourceTextEditorProps) {
   const sourceEditorProfile = useMemo(() => sourceEditorCapabilitiesFor(language), [language]);
+  const semanticPresentationMode = useMemo(() => {
+    const threshold = formatDefinitionFor(language)?.runtimePolicy.sourceOnlyFileBytes ?? Number.POSITIVE_INFINITY;
+    return sourceSemanticPresentationMode({
+      byteLength: formatByteLengthUtf8(value),
+      sourceOnlyThresholdBytes: threshold,
+      languageAvailable: sourceEditorProfile.codeMirrorLanguage !== 'plainText',
+    });
+  }, [language, sourceEditorProfile.codeMirrorLanguage, value]);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const valueRef = useRef(value);
@@ -210,7 +219,7 @@ export function SourceTextEditor({
       state: EditorState.create({
         doc: value,
         extensions: [
-          languageCompartmentRef.current.of(createLanguageExtension(sourceEditorProfile)),
+          languageCompartmentRef.current.of(createLanguageExtension(sourceEditorProfile, semanticPresentationMode)),
           diagnosticsCompartmentRef.current.of(createDiagnosticsExtension(diagnostics, sourceEditorProfile)),
           EditorState.tabSize.of(2),
           EditorState.allowMultipleSelections.of(true),
@@ -354,6 +363,22 @@ export function SourceTextEditor({
         currentView.focus();
         return true;
       },
+      captureView: () => {
+        const currentView = viewRef.current;
+        const selection = currentView?.state.selection.main;
+        return {
+          surface: 'source',
+          selection: selection ? { from: selection.from, to: selection.to } : null,
+          scrollTop: currentView?.scrollDOM.scrollTop ?? 0,
+        };
+      },
+      restoreView: (snapshot) => {
+        const currentView = viewRef.current;
+        if (!currentView || snapshot.surface !== 'source') return false;
+        if (snapshot.selection) adapter.restoreSelectionAnchor?.(snapshot.selection);
+        currentView.scrollDOM.scrollTop = Math.max(0, snapshot.scrollTop);
+        return true;
+      },
       flushPendingEdits: () => adapter.read(),
     };
     onAdapterReadyRef.current?.(adapter);
@@ -364,7 +389,7 @@ export function SourceTextEditor({
       onFindReadyRef.current?.(undefined);
       onHistoryReadyRef.current?.(undefined);
       onSelectionTextReadyRef.current?.(undefined);
-      onAdapterReadyRef.current?.(undefined);
+      onAdapterReadyRef.current?.(undefined, adapter);
       scrollElement.removeEventListener('scroll', scheduleViewportLine);
       window.removeEventListener('resize', scheduleViewportLine);
       if (viewportAnimationFrame !== null) window.cancelAnimationFrame(viewportAnimationFrame);
@@ -377,9 +402,9 @@ export function SourceTextEditor({
     const view = viewRef.current;
     if (!view) return;
     view.dispatch({
-      effects: languageCompartmentRef.current.reconfigure(createLanguageExtension(sourceEditorProfile)),
+      effects: languageCompartmentRef.current.reconfigure(createLanguageExtension(sourceEditorProfile, semanticPresentationMode)),
     });
-  }, [sourceEditorProfile]);
+  }, [semanticPresentationMode, sourceEditorProfile]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -419,6 +444,7 @@ export function SourceTextEditor({
       data-source-editor-language={sourceEditorProfile.languageId}
       data-source-editor-codemirror={sourceEditorProfile.codeMirrorLanguage}
       data-source-editor-lint={sourceEditorProfile.lintProfile}
+      data-source-semantic-highlighting={semanticPresentationMode}
     >
       <SourceEditorStatusStrip
         value={value}
@@ -804,11 +830,12 @@ function viewportTopLine(view: EditorView): number {
   return view.state.doc.lineAt(block.from).number;
 }
 
-function createLanguageExtension(profile: SourceEditorCapabilities): Extension {
-  if (profile.codeMirrorLanguage === 'markdown') return markdownLanguage();
-  if (profile.codeMirrorLanguage === 'json') return jsonLanguage();
-  if (profile.codeMirrorLanguage === 'yaml') return yamlLanguage();
-  if (profile.codeMirrorLanguage === 'xml') return xmlLanguage();
+export function createLanguageExtension(profile: SourceEditorCapabilities, mode: SourceSemanticPresentationMode = 'enabled'): Extension {
+  if (mode !== 'enabled') return [];
+  if (profile.codeMirrorLanguage === 'markdown') return [markdownLanguage(), createScieMdSemanticHighlighting()];
+  if (profile.codeMirrorLanguage === 'json') return [jsonLanguage(), createScieMdSemanticHighlighting()];
+  if (profile.codeMirrorLanguage === 'yaml') return [yamlLanguage(), createScieMdSemanticHighlighting()];
+  if (profile.codeMirrorLanguage === 'xml') return [xmlLanguage(), createScieMdSemanticHighlighting()];
   return [];
 }
 

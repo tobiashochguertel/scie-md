@@ -1,14 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { AutosaveStatus, FileMetadata } from '../documentState';
-import { DEFAULT_METADATA, metadataChanged, untitledNameForFormat } from '../documentState';
+import type { AutosaveStatus, FileMetadata, SourceFidelityLossReason } from '../documentState';
+import {
+  assessSourceWriteFidelity,
+  DEFAULT_METADATA,
+  metadataChanged,
+  metadataForUtf8Conversion,
+  untitledNameForFormat,
+} from '../documentState';
 import { BACKUP_INTERVAL_MS, markAutosaveBackupCreated, shouldCreateAutosaveBackup } from '../../services/autosaveService';
 import type { PersistedSettings } from '../../services/settingsService';
 import type { ConfirmState } from './useDialogs';
 import { parseFrontmatter } from '@sciemd/core';
 import type { DocumentFormat } from '@sciemd/core';
-import { commitVisualEditorReadResult, readVisualEditorState } from '../../components/visualEditorStateSync';
+import { commitVisualEditorReadResult, documentEditorGateway } from '../documentEditorGateway';
+import { canonicalComparisonKey, createDocumentId } from '../documentIdentity';
+import type { DocumentId, FileDocumentLocator } from '../documentIdentity';
 import type { DocumentHost } from '../host/documentHost';
+import type { WorkspaceStore } from '../workspace/workspaceStore';
+import type { WorkspaceRecoveryCoordinator } from '../workspace/workspaceRecoveryCoordinator';
+import { filePathForDocumentRecord } from '../documentRecord';
+import type { DocumentRecordAction } from '../documentRecord';
+import { normalizeDocumentHostError } from '../host/documentHost';
 import { inferDocumentFormat } from '../documentSession/controller';
 import {
   DEFAULT_STRUCTURED_SAVE_POLICY,
@@ -23,14 +36,27 @@ export interface VisualRoundTripWriteContext {
   reason: 'save';
 }
 
+export interface SaveCurrentOptions {
+  autosave?: boolean;
+  forceSaveAs?: boolean;
+  forceOverwrite?: boolean;
+  structuredSavePolicyOverride?: StructuredSavePolicy;
+}
+
 interface SaveOperationsParams {
+  documentId?: DocumentId;
+  workspaceStore?: WorkspaceStore;
+  recoveryCoordinator?: WorkspaceRecoveryCoordinator;
+  reserveSaveLocator?: (path: string, documentId?: DocumentId) => Promise<FileDocumentLocator | null>;
+  commitSavedLocator?: (path: string, documentId?: DocumentId) => Promise<boolean>;
   filePath: string | null;
   fileMetadata: FileMetadata;
   format: DocumentFormat;
   sourceText: string;
   /** @deprecated Use sourceText at generic save boundaries. */
   markdown?: string;
-  getDocumentIdentityVersion: () => number;
+  /** @deprecated Round 10 save ownership is document/revision/locator based. */
+  getDocumentIdentityVersion?: () => number;
   setFilePath: (path: string) => void;
   setFormat: (format: DocumentFormat) => void;
   setFileMetadata: (metadata: FileMetadata) => void;
@@ -52,12 +78,16 @@ interface SaveOperationsParams {
 }
 
 export function useSaveOperations({
+  documentId,
+  workspaceStore,
+  recoveryCoordinator,
+  reserveSaveLocator,
+  commitSavedLocator,
   filePath,
   fileMetadata,
   format,
   sourceText,
   markdown,
-  getDocumentIdentityVersion,
   setFilePath,
   setFormat,
   setFileMetadata,
@@ -75,10 +105,12 @@ export function useSaveOperations({
   pushToast,
   host,
 }: SaveOperationsParams) {
+  const fallbackDocumentIdRef = useRef<DocumentId>(documentId ?? createDocumentId());
+  const effectiveDocumentId = documentId ?? fallbackDocumentIdRef.current;
   const canonicalSourceText = sourceText ?? markdown ?? '';
   const commitCanonicalSourceTextEdit = commitSourceTextEdit ?? commitMarkdownEdit ?? (() => undefined);
   const setLastSavedCanonicalSourceText = setLastSavedSourceText ?? setLastSavedMarkdown ?? (() => undefined);
-  const backupScheduleRef = useRef({ sessionBackupDone: false, lastBackupAtMs: 0 });
+  const backupSchedulesRef = useRef(new Map<DocumentId, { sessionBackupDone: boolean; lastBackupAtMs: number }>());
   const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const saveQueueDepthRef = useRef(0);
   const filePathRef = useRef(filePath);
@@ -103,23 +135,33 @@ export function useSaveOperations({
     sourceTextRef.current = canonicalSourceText;
   }, [canonicalSourceText]);
 
+  useEffect(() => {
+    if (!workspaceStore) return undefined;
+    const syncDepth = () => setSaveQueueDepth(workspaceStore.saves.queuedFor(effectiveDocumentId));
+    syncDepth();
+    return workspaceStore.saves.subscribe(syncDepth);
+  }, [effectiveDocumentId, workspaceStore]);
+
   const updateSaveQueueDepth = useCallback((delta: number) => {
     saveQueueDepthRef.current = Math.max(0, saveQueueDepthRef.current + delta);
     setSaveQueueDepth(saveQueueDepthRef.current);
   }, []);
 
   const resetBackupSession = useCallback(() => {
-    backupScheduleRef.current = { sessionBackupDone: false, lastBackupAtMs: 0 };
-  }, []);
+    backupSchedulesRef.current.set(effectiveDocumentId, { sessionBackupDone: false, lastBackupAtMs: 0 });
+  }, [effectiveDocumentId]);
 
-  const saveCurrent = useCallback(async (options: { autosave?: boolean; forceSaveAs?: boolean; forceOverwrite?: boolean } = {}) => {
+  const saveCurrent = useCallback(async (options: SaveCurrentOptions = {}) => {
     const requestedOptions = {
       autosave: options.autosave ?? false,
       forceSaveAs: options.forceSaveAs ?? false,
       forceOverwrite: options.forceOverwrite ?? false,
     };
-    const visualState = formatRef.current === 'markdown' ? readVisualEditorState() : null;
-    const outputSourceText = visualState?.markdown ?? sourceTextRef.current;
+    const workspaceDocument = workspaceStore?.getState().documentsById[effectiveDocumentId] ?? null;
+    if (workspaceStore && !workspaceDocument) return false;
+    const liveFormat = workspaceDocument?.format ?? formatRef.current;
+    const visualState = liveFormat === 'markdown' ? documentEditorGateway.flush(effectiveDocumentId) : null;
+    const outputSourceText = visualState?.markdown ?? workspaceDocument?.source.sourceText ?? sourceTextRef.current;
     const visualWriteAllowed = visualState
       ? await confirmVisualRoundTripWrite?.(outputSourceText, {
         ...requestedOptions,
@@ -127,20 +169,56 @@ export function useSaveOperations({
       })
       : true;
     if (visualWriteAllowed === false) return false;
-    const flushedSourceText = commitVisualEditorReadResult(visualState, commitCanonicalSourceTextEdit);
+    const flushedSourceText = commitVisualEditorReadResult(visualState, (nextSourceText) => {
+      if (workspaceStore) {
+        workspaceStore.dispatch({ type: 'updateDocument', documentId: effectiveDocumentId, action: { type: 'sourceChanged', sourceText: nextSourceText } });
+      } else {
+        commitCanonicalSourceTextEdit(nextSourceText);
+      }
+    });
     sourceTextRef.current = flushedSourceText ?? outputSourceText;
+    const origin = workspaceStore?.getState().documentsById[effectiveDocumentId] ?? null;
+    const saveToken = workspaceStore?.saves.begin(effectiveDocumentId, requestedOptions.autosave ? 'autosave' : 'manual') ?? null;
     const snapshot = {
       ...requestedOptions,
-      sourceDocumentIdentityVersion: getDocumentIdentityVersion(),
-      sourcePath: filePathRef.current,
-      sourceMetadata: fileMetadataRef.current,
-      sourceFormat: formatRef.current,
-      sourceText: sourceTextRef.current,
+      sourcePath: origin ? filePathForDocumentRecord(origin) : filePathRef.current,
+      sourceMetadata: origin?.fileBaseline ?? fileMetadataRef.current,
+      sourceFormat: origin?.format ?? formatRef.current,
+      sourceText: origin?.source.sourceText ?? sourceTextRef.current,
+      sourceRevision: origin?.source.revision ?? null,
+      sourceLocator: origin?.locator ?? null,
     };
+    const backupSchedule = backupSchedulesRef.current.get(effectiveDocumentId) ?? { sessionBackupDone: false, lastBackupAtMs: 0 };
+    backupSchedulesRef.current.set(effectiveDocumentId, backupSchedule);
     const isSnapshotCurrent = () => (
-      getDocumentIdentityVersion() === snapshot.sourceDocumentIdentityVersion
-      && filePathRef.current === snapshot.sourcePath
+      workspaceStore && saveToken
+        ? workspaceStore.saves.isOriginCurrent(saveToken)
+        : filePathRef.current === snapshot.sourcePath
     );
+    const isDecisionCurrent = () => {
+      if (!isSnapshotCurrent()) return false;
+      if (!workspaceStore || !saveToken) return sourceTextRef.current === snapshot.sourceText;
+      const current = workspaceStore.getState().documentsById[saveToken.documentId];
+      return current?.source.revision === saveToken.sourceRevision && current.source.sourceText === snapshot.sourceText;
+    };
+    const updateOrigin = (action: DocumentRecordAction) => {
+      if (workspaceStore) {
+        workspaceStore.dispatch({ type: 'updateDocument', documentId: effectiveDocumentId, action });
+        return;
+      }
+      switch (action.type) {
+        case 'filePathChanged': setFilePath(typeof action.filePath === 'function' ? action.filePath(filePathRef.current) ?? '' : action.filePath ?? ''); break;
+        case 'formatChanged': setFormat(action.format); break;
+        case 'fileBaselineChanged': setFileMetadata(typeof action.fileBaseline === 'function' ? action.fileBaseline(fileMetadataRef.current) : action.fileBaseline); break;
+        case 'savedBaselineChanged': setLastSavedCanonicalSourceText(typeof action.savedSourceText === 'function' ? action.savedSourceText('') : action.savedSourceText); break;
+        case 'autosaveStatusChanged': setAutosaveStatus(typeof action.autosaveStatus === 'function' ? action.autosaveStatus('idle') : action.autosaveStatus); break;
+        case 'lastAutosavedAtChanged': setLastAutosavedAt(typeof action.lastAutosavedAt === 'function' ? action.lastAutosavedAt(null) : action.lastAutosavedAt); break;
+        case 'externalConflictChanged': setExternalConflict(typeof action.externalConflict === 'function' ? action.externalConflict(false) : action.externalConflict); break;
+        default: break;
+      }
+    };
+    const setOriginAutosaveStatus = (status: AutosaveStatus) => updateOrigin({ type: 'autosaveStatusChanged', autosaveStatus: status });
+    const setOriginExternalConflict = (conflict: boolean) => updateOrigin({ type: 'externalConflictChanged', externalConflict: conflict });
     const recordSaveDiagnostic = (eventType: string, message: string, documentPath = snapshot.sourcePath) => {
       void host.recovery.appendDiagnosticsEvent({
         eventType,
@@ -149,25 +227,28 @@ export function useSaveOperations({
         sourceTextBytes: byteLength(snapshot.sourceText),
       });
     };
-    const structuredSavePolicy = structuredSavePolicyRef?.current ?? DEFAULT_STRUCTURED_SAVE_POLICY;
-    if (structuredSavePolicy.autosaveBlocked && snapshot.autosave) {
-      if (snapshot.sourcePath) {
-        host.recovery.saveFileDraft(snapshot.sourcePath, snapshot.sourceText, Date.now(), snapshot.sourceMetadata, snapshot.sourceFormat);
+    const preserveRecovery = (fallbackPath = snapshot.sourcePath, metadata = snapshot.sourceMetadata) => {
+      if (recoveryCoordinator) {
+        recoveryCoordinator.checkpointSync(effectiveDocumentId, 'destructive-barrier');
+      } else if (fallbackPath) {
+        host.recovery.saveFileDraft(fallbackPath, snapshot.sourceText, Date.now(), metadata, snapshot.sourceFormat);
       }
+    };
+    const structuredSavePolicy = options.structuredSavePolicyOverride ?? structuredSavePolicyRef?.current ?? DEFAULT_STRUCTURED_SAVE_POLICY;
+    if (structuredSavePolicy.autosaveBlocked && snapshot.autosave) {
+      preserveRecovery();
       recordSaveDiagnostic(
         'autosave-structured-parser-invalid',
         structuredSavePolicy.reason ?? 'Autosave paused because the structured source has parser errors.',
       );
-      if (isSnapshotCurrent()) setAutosaveStatus('paused');
+      if (isSnapshotCurrent()) setOriginAutosaveStatus('paused');
       return false;
     }
     if (structuredSavePolicy.manualSaveRequiresConfirmation && !snapshot.autosave) {
       const shouldSaveInvalidSource = await confirmText(formatStructuredSaveConfirmation(structuredSavePolicy));
       if (!shouldSaveInvalidSource) {
-        if (snapshot.sourcePath) {
-          host.recovery.saveFileDraft(snapshot.sourcePath, snapshot.sourceText, Date.now(), snapshot.sourceMetadata, snapshot.sourceFormat);
-        }
-        if (isSnapshotCurrent()) setAutosaveStatus('paused');
+        preserveRecovery();
+        if (isSnapshotCurrent()) setOriginAutosaveStatus('paused');
         return false;
       }
     }
@@ -187,7 +268,7 @@ export function useSaveOperations({
         recordSaveDiagnostic('save-dialog-failed', saveErrorMessage(error, 'Could not open the Save As dialog.'), targetPath);
         if (isSnapshotCurrent()) {
           console.error(error);
-          setAutosaveStatus('error');
+          setOriginAutosaveStatus('error');
           pushToast(error instanceof Error ? error.message : 'Could not open the Save As dialog.', 'error');
         }
         return false;
@@ -195,17 +276,26 @@ export function useSaveOperations({
       if (!targetPath) return false;
       if (!isSnapshotCurrent()) return false;
 
-      setAutosaveStatus('saving');
+      if (reserveSaveLocator && !(await reserveSaveLocator(targetPath, effectiveDocumentId))) {
+        preserveRecovery(targetPath);
+        setOriginAutosaveStatus('error');
+        return false;
+      }
+
+      setOriginAutosaveStatus('saving');
 
       const latestSourceMetadata = () => (
-        targetPath === snapshot.sourcePath && filePathRef.current === snapshot.sourcePath
-          ? fileMetadataRef.current
-          : snapshot.sourceMetadata
+        workspaceStore
+          ? workspaceStore.getState().documentsById[effectiveDocumentId]?.fileBaseline ?? snapshot.sourceMetadata
+          : targetPath === snapshot.sourcePath && filePathRef.current === snapshot.sourcePath
+            ? fileMetadataRef.current
+            : snapshot.sourceMetadata
       );
       let metadataForWrite = targetPath === snapshot.sourcePath ? latestSourceMetadata() : DEFAULT_METADATA;
       let existingMetadata: FileMetadata | null = null;
       let externalBackupCreated = false;
       let forceOverwriteConfirmed = false;
+      let promisedBackupRequired = false;
       let backupWarning = false;
       let sourceTargetWasMissing = false;
       const tryCreateBackupSnapshot = async (label: string): Promise<boolean> => {
@@ -227,15 +317,77 @@ export function useSaveOperations({
           cancelLabel: 'Cancel',
         });
         forceOverwriteConfirmed = overwrite;
+        promisedBackupRequired = overwrite;
         return overwrite;
+      };
+      const failClosedForPromisedBackup = () => {
+        preserveRecovery(targetPath);
+        recordSaveDiagnostic(
+          'save-required-backup-failed',
+          'The overwrite was canceled because the promised backup could not be created.',
+          targetPath,
+        );
+        if (isSnapshotCurrent()) {
+          setOriginAutosaveStatus('error');
+          pushToast('Overwrite canceled because ScieMD could not create the promised backup. Your recovery draft was preserved.', 'error');
+        }
+        return false as const;
+      };
+      const fidelityApprovalStillCurrent = () => (
+        isDecisionCurrent()
+        && (workspaceStore || targetPath !== snapshot.sourcePath || filePathRef.current === snapshot.sourcePath)
+      );
+      const preserveFidelityBlockedDraft = (eventType: string, message: string, status: AutosaveStatus = 'paused') => {
+        preserveRecovery(targetPath);
+        recordSaveDiagnostic(eventType, message, targetPath);
+        if (isSnapshotCurrent()) setOriginAutosaveStatus(status);
+      };
+      const reviewFidelity = async (
+        proposedMetadata: FileMetadata,
+        nativeMessage?: string,
+      ): Promise<FileMetadata | null> => {
+        const assessment = assessSourceWriteFidelity(snapshot.sourceText, proposedMetadata);
+        const reasons = assessment.lossReasons;
+        if (reasons.length === 0 && !nativeMessage) return proposedMetadata;
+
+        const message = fidelityReviewMessage(reasons, nativeMessage);
+        if (snapshot.autosave) {
+          preserveFidelityBlockedDraft('autosave-fidelity-review-required', message);
+          if (isSnapshotCurrent()) {
+            pushToast('Autosave paused because this file requires a fidelity decision. Your draft was preserved.', 'warning');
+          }
+          return null;
+        }
+
+        const approved = await confirmText({
+          title: 'Review file fidelity before saving',
+          message,
+          okLabel: reasons.includes('encoding-unrepresentable') || nativeMessage ? 'Save as UTF-8' : 'Save with normalized endings',
+          cancelLabel: 'Cancel',
+        });
+        if (!approved) {
+          preserveFidelityBlockedDraft('save-fidelity-review-declined', message);
+          return null;
+        }
+        if (!fidelityApprovalStillCurrent()) {
+          preserveFidelityBlockedDraft(
+            'save-fidelity-approval-stale',
+            'The fidelity approval was discarded because the document, source revision, or locator changed.',
+          );
+          return null;
+        }
+        recordSaveDiagnostic('save-fidelity-review-approved', message, targetPath);
+        return reasons.includes('encoding-unrepresentable') || nativeMessage
+          ? metadataForUtf8Conversion(proposedMetadata)
+          : proposedMetadata;
       };
 
       try {
         const preliminaryMetadata = await host.file.statFile(targetPath, { contentHash: false });
         if (isCloudPlaceholderMetadata(preliminaryMetadata)) {
-          host.recovery.saveFileDraft(targetPath, snapshot.sourceText, Date.now(), snapshot.sourceMetadata, snapshot.sourceFormat);
+          preserveRecovery(targetPath);
           if (isSnapshotCurrent()) {
-            setAutosaveStatus('error');
+            setOriginAutosaveStatus('error');
             pushToast(
               snapshot.autosave
                 ? 'Autosave paused: this file is cloud-only. Download or pin it locally, then save again.'
@@ -248,9 +400,10 @@ export function useSaveOperations({
         existingMetadata = await host.file.statFile(targetPath, { contentHash: true });
         if (targetPath !== snapshot.sourcePath) metadataForWrite = existingMetadata;
       } catch (error) {
-        if (targetPath !== snapshot.sourcePath && isMissingFileStatError(error)) {
+        const hostError = normalizeDocumentHostError(error);
+        if (targetPath !== snapshot.sourcePath && hostError.code === 'NOT_FOUND') {
           existingMetadata = null;
-        } else if (targetPath === snapshot.sourcePath && snapshot.forceOverwrite && isMissingFileStatError(error)) {
+        } else if (targetPath === snapshot.sourcePath && snapshot.forceOverwrite && hostError.code === 'NOT_FOUND') {
           existingMetadata = null;
           metadataForWrite = latestSourceMetadata();
           sourceTargetWasMissing = true;
@@ -260,9 +413,9 @@ export function useSaveOperations({
             saveErrorMessage(error, 'Could not verify the disk file before saving.'),
             targetPath,
           );
-          host.recovery.saveFileDraft(targetPath, snapshot.sourceText, Date.now(), snapshot.sourceMetadata, snapshot.sourceFormat);
+          preserveRecovery(targetPath);
           if (isSnapshotCurrent()) {
-            setAutosaveStatus('error');
+            setOriginAutosaveStatus('error');
             pushToast(
               snapshot.autosave
                 ? 'Autosave paused: ScieMD could not verify the disk file before saving. Your in-memory draft was preserved.'
@@ -283,9 +436,10 @@ export function useSaveOperations({
           cancelLabel: 'Cancel',
         });
         if (!replace) {
-          if (isSnapshotCurrent()) setAutosaveStatus(filePathRef.current ? 'pending' : 'idle');
+          if (isSnapshotCurrent()) setOriginAutosaveStatus(snapshot.sourcePath ? 'pending' : 'idle');
           return false;
         }
+        promisedBackupRequired = true;
       }
 
       if (targetPath === snapshot.sourcePath && existingMetadata && metadataChanged(snapshot.sourceMetadata, existingMetadata)) {
@@ -294,10 +448,10 @@ export function useSaveOperations({
           'The disk file changed before ScieMD could save the current document.',
           targetPath,
         );
-        host.recovery.saveFileDraft(targetPath, snapshot.sourceText, Date.now(), snapshot.sourceMetadata, snapshot.sourceFormat);
+        preserveRecovery(targetPath);
         if (isSnapshotCurrent()) {
-          setAutosaveStatus('conflict');
-          setExternalConflict(true);
+          setOriginAutosaveStatus('conflict');
+          setOriginExternalConflict(true);
         }
         if (snapshot.autosave) return false;
         if (snapshot.forceOverwrite) {
@@ -310,8 +464,10 @@ export function useSaveOperations({
             cancelLabel: 'Cancel',
           });
           if (!overwrite) return false;
+          promisedBackupRequired = true;
         }
         externalBackupCreated = await tryCreateBackupSnapshot('external');
+        if (!externalBackupCreated) return failClosedForPromisedBackup();
         metadataForWrite = existingMetadata;
       }
 
@@ -328,10 +484,10 @@ export function useSaveOperations({
                 'The disk file changed just before ScieMD could write the current document.',
                 targetPath,
               );
-              host.recovery.saveFileDraft(targetPath, snapshot.sourceText, Date.now(), snapshot.sourceMetadata, snapshot.sourceFormat);
+              preserveRecovery(targetPath);
               if (isSnapshotCurrent()) {
-                setAutosaveStatus('conflict');
-                setExternalConflict(true);
+                setOriginAutosaveStatus('conflict');
+                setOriginExternalConflict(true);
                 pushToast(
                   snapshot.autosave
                     ? 'Autosave paused: the file changed on disk just before saving. Your in-memory draft was preserved.'
@@ -346,12 +502,24 @@ export function useSaveOperations({
         }
         if (!isSnapshotCurrent()) return false;
 
+        if (reserveSaveLocator && !(await reserveSaveLocator(targetPath, effectiveDocumentId))) {
+          preserveRecovery(targetPath);
+          setOriginAutosaveStatus('error');
+          return false;
+        }
+
+        const reviewedMetadata = await reviewFidelity(metadataForWrite);
+        if (!reviewedMetadata) return false;
+        metadataForWrite = reviewedMetadata;
+        if (!fidelityApprovalStillCurrent()) return false;
+
         if (existingMetadata) {
           if (!snapshot.autosave && !externalBackupCreated) {
-            await tryCreateBackupSnapshot('manual');
-          } else if (snapshot.autosave && shouldCreateAutosaveBackup(backupScheduleRef.current, Date.now(), BACKUP_INTERVAL_MS)) {
+            const manualBackupCreated = await tryCreateBackupSnapshot('manual');
+            if (promisedBackupRequired && !manualBackupCreated) return failClosedForPromisedBackup();
+          } else if (snapshot.autosave && shouldCreateAutosaveBackup(backupSchedule, Date.now(), BACKUP_INTERVAL_MS)) {
             if (await tryCreateBackupSnapshot('autosave')) {
-              backupScheduleRef.current = markAutosaveBackupCreated(backupScheduleRef.current, Date.now());
+              backupSchedulesRef.current.set(effectiveDocumentId, markAutosaveBackupCreated(backupSchedule, Date.now()));
             }
           }
         }
@@ -359,23 +527,66 @@ export function useSaveOperations({
         const expectedMetadata = targetPath === snapshot.sourcePath
           ? (sourceTargetWasMissing ? null : existingMetadata ?? snapshot.sourceMetadata)
           : existingMetadata;
-        const nextMetadata = await host.file.writeTextFileAtomic(targetPath, snapshot.sourceText, metadataForWrite, expectedMetadata);
+        let nextMetadata: FileMetadata;
+        try {
+          const write = () => host.file.writeTextFileAtomic(targetPath, snapshot.sourceText, metadataForWrite, expectedMetadata);
+          nextMetadata = workspaceStore && saveToken
+            ? await workspaceStore.saves.scheduleNativeWrite(saveToken, write)
+            : await write();
+        } catch (writeError) {
+          const hostError = normalizeDocumentHostError(writeError);
+          if (hostError.code !== 'LOSSY_WRITE_REQUIRED') throw writeError;
+          const retryMetadata = await reviewFidelity(metadataForWrite, hostError.message);
+          if (!retryMetadata || !fidelityApprovalStillCurrent()) return false;
+          const retry = () => host.file.writeTextFileAtomic(targetPath, snapshot.sourceText, retryMetadata, expectedMetadata);
+          nextMetadata = workspaceStore && saveToken
+            ? await workspaceStore.saves.scheduleNativeWrite(saveToken, retry)
+            : await retry();
+        }
+        if (workspaceStore) workspaceStore.externalChanges.recordSelfSave(effectiveDocumentId, nextMetadata);
         if (!isSnapshotCurrent()) return false;
-        filePathRef.current = targetPath;
-        fileMetadataRef.current = nextMetadata;
+        if (commitSavedLocator && !(await commitSavedLocator(targetPath, effectiveDocumentId))) {
+          preserveRecovery(targetPath, nextMetadata);
+          setOriginAutosaveStatus('error');
+          return false;
+        }
         const nextFormat = inferDocumentFormat(targetPath, snapshot.sourceFormat);
-        formatRef.current = nextFormat;
-        setFilePath(targetPath);
-        setFormat(nextFormat);
-        setFileMetadata(nextMetadata);
-        setLastSavedCanonicalSourceText(snapshot.sourceText);
-        setAutosaveStatus('saved');
-        setLastAutosavedAt(Date.now());
-        setExternalConflict(false);
+        const savedAt = Date.now();
+        if (workspaceStore && saveToken) {
+          const current = workspaceStore.getState().documentsById[effectiveDocumentId];
+          const committedPath = current ? filePathForDocumentRecord(current) : null;
+          if (!committedPath || canonicalComparisonKey(committedPath) !== canonicalComparisonKey(targetPath)) return false;
+          const resultToken = workspaceStore.saves.refreshLocator(saveToken);
+          const committed = resultToken && workspaceStore.saves.commitOrigin(resultToken, () => {
+            workspaceStore.dispatch({ type: 'updateDocument', documentId: effectiveDocumentId, action: { type: 'formatChanged', format: nextFormat } });
+            workspaceStore.dispatch({ type: 'updateDocument', documentId: effectiveDocumentId, action: { type: 'fileBaselineChanged', fileBaseline: nextMetadata } });
+            workspaceStore.dispatch({ type: 'updateDocument', documentId: effectiveDocumentId, action: { type: 'savedBaselineChanged', savedSourceText: snapshot.sourceText } });
+            workspaceStore.dispatch({ type: 'updateDocument', documentId: effectiveDocumentId, action: { type: 'autosaveStatusChanged', autosaveStatus: 'saved' } });
+            workspaceStore.dispatch({ type: 'updateDocument', documentId: effectiveDocumentId, action: { type: 'lastAutosavedAtChanged', lastAutosavedAt: savedAt } });
+            workspaceStore.dispatch({ type: 'updateDocument', documentId: effectiveDocumentId, action: { type: 'externalConflictChanged', externalConflict: false } });
+          }).accepted;
+          if (!committed) {
+            preserveRecovery(targetPath, nextMetadata);
+            return false;
+          }
+        } else {
+          filePathRef.current = targetPath;
+          fileMetadataRef.current = nextMetadata;
+          formatRef.current = nextFormat;
+          setFilePath(targetPath);
+          setFormat(nextFormat);
+          setFileMetadata(nextMetadata);
+          setLastSavedCanonicalSourceText(snapshot.sourceText);
+          setOriginAutosaveStatus('saved');
+          setLastAutosavedAt(savedAt);
+          setOriginExternalConflict(false);
+        }
         setSettings(host.settings.rememberRecentFile(targetPath));
-        host.recovery.clearFileDraft(targetPath);
-        if (snapshot.sourcePath && snapshot.sourcePath !== targetPath) {
-          host.recovery.clearFileDraft(snapshot.sourcePath);
+        if (recoveryCoordinator && snapshot.sourceRevision !== null) {
+          await recoveryCoordinator.clearDocument(effectiveDocumentId, snapshot.sourceRevision);
+        } else {
+          host.recovery.clearFileDraft(targetPath);
+          if (snapshot.sourcePath && snapshot.sourcePath !== targetPath) host.recovery.clearFileDraft(snapshot.sourcePath);
         }
         if (!snapshot.autosave) {
           pushToast(
@@ -386,16 +597,17 @@ export function useSaveOperations({
         return targetPath;
       } catch (error) {
         console.error(error);
-        if (isExternalChangeSaveError(error)) {
+        const hostError = normalizeDocumentHostError(error);
+        if (hostError.code === 'FILE_CHANGED') {
           recordSaveDiagnostic(
             snapshot.autosave ? 'autosave-write-conflict' : 'save-write-conflict',
             saveErrorMessage(error, 'The file changed on disk before ScieMD could save.'),
             targetPath,
           );
-          if (snapshot.sourcePath) host.recovery.saveFileDraft(snapshot.sourcePath, snapshot.sourceText, Date.now(), snapshot.sourceMetadata, snapshot.sourceFormat);
+          preserveRecovery();
           if (isSnapshotCurrent()) {
-            setAutosaveStatus('conflict');
-            setExternalConflict(true);
+            setOriginAutosaveStatus('conflict');
+            setOriginExternalConflict(true);
             pushToast(
               snapshot.autosave
                 ? 'Autosave paused: the file changed on disk. Your in-memory draft was preserved for recovery.'
@@ -405,14 +617,27 @@ export function useSaveOperations({
           }
           return false;
         }
+        if (hostError.code === 'LOSSY_WRITE_REQUIRED') {
+          recordSaveDiagnostic(
+            snapshot.autosave ? 'autosave-lossy-write-blocked' : 'save-lossy-write-blocked',
+            hostError.message,
+            targetPath,
+          );
+          preserveRecovery();
+          if (isSnapshotCurrent()) {
+            setOriginAutosaveStatus('error');
+            pushToast('Save blocked because the current encoding cannot represent all document characters. Your draft was preserved.', 'error');
+          }
+          return false;
+        }
         recordSaveDiagnostic(
           snapshot.autosave ? 'autosave-failed' : 'save-failed',
           saveErrorMessage(error, 'Save failed.'),
           targetPath,
         );
-        if (snapshot.sourcePath) host.recovery.saveFileDraft(snapshot.sourcePath, snapshot.sourceText, Date.now(), snapshot.sourceMetadata, snapshot.sourceFormat);
+        preserveRecovery();
         if (isSnapshotCurrent()) {
-          setAutosaveStatus('error');
+          setOriginAutosaveStatus('error');
           pushToast(
             snapshot.autosave
               ? `Autosave failed: ${error instanceof Error ? error.message : 'Save failed.'}`
@@ -424,26 +649,40 @@ export function useSaveOperations({
       }
     };
 
-    updateSaveQueueDepth(1);
-    const queuedSave: Promise<string | false> = saveQueueRef.current.then(runSave, runSave);
+    if (!saveToken && workspaceStore) return false;
+    if (!workspaceStore) updateSaveQueueDepth(1);
+    const queuedSave: Promise<string | false> = workspaceStore && saveToken
+      ? workspaceStore.saves.enqueue(saveToken, runSave)
+      : saveQueueRef.current.then(runSave, runSave);
     const handledSave: Promise<string | false> = queuedSave.catch((error): false => {
       console.error('Save queue chain error:', error);
       recordSaveDiagnostic('save-queue-failed', saveErrorMessage(error, 'Save queue failed before the document could be written.'));
       if (isSnapshotCurrent()) {
-        setAutosaveStatus('error');
+        setOriginAutosaveStatus('error');
         pushToast(error instanceof Error ? error.message : 'Save queue failed before the document could be written.', 'error');
       }
       return false;
     });
-    saveQueueRef.current = handledSave.finally(() => updateSaveQueueDepth(-1));
+    if (!workspaceStore) saveQueueRef.current = handledSave.finally(() => updateSaveQueueDepth(-1));
     return handledSave;
-  }, [commitCanonicalSourceTextEdit, confirmText, confirmVisualRoundTripWrite, getDocumentIdentityVersion, host, pushToast, setAutosaveStatus, setExternalConflict, setFileMetadata, setFilePath, setFormat, setLastAutosavedAt, setLastSavedCanonicalSourceText, setSettings, structuredSavePolicyRef, updateSaveQueueDepth]);
+  }, [commitCanonicalSourceTextEdit, commitSavedLocator, confirmText, confirmVisualRoundTripWrite, effectiveDocumentId, host, pushToast, recoveryCoordinator, reserveSaveLocator, setAutosaveStatus, setExternalConflict, setFileMetadata, setFilePath, setFormat, setLastAutosavedAt, setLastSavedCanonicalSourceText, setSettings, structuredSavePolicyRef, updateSaveQueueDepth, workspaceStore]);
 
-  const ensureDocumentPathForAssets = useCallback(async () => {
-    if (filePath) return filePath;
+  const actorStructuredSavePolicy = structuredSavePolicyRef?.current;
+  useEffect(() => {
+    if (!workspaceStore) return;
+    workspaceStore.saves.registerActor(effectiveDocumentId, {
+      save: (options) => saveCurrent({ ...options, structuredSavePolicyOverride: actorStructuredSavePolicy }),
+    });
+  }, [actorStructuredSavePolicy, effectiveDocumentId, saveCurrent, workspaceStore]);
+
+  const ensureDocumentPathForAssets = useCallback(async (originatingDocumentId = effectiveDocumentId) => {
+    if (originatingDocumentId !== effectiveDocumentId) return null;
+    const originRecord = workspaceStore?.getState().documentsById[originatingDocumentId];
+    const originPath = originRecord ? filePathForDocumentRecord(originRecord) : filePath;
+    if (originPath) return originPath;
     const savedPath = await saveCurrent({ forceSaveAs: true });
     return typeof savedPath === 'string' ? savedPath : null;
-  }, [filePath, saveCurrent]);
+  }, [effectiveDocumentId, filePath, saveCurrent, workspaceStore]);
 
   return { saveCurrent, ensureDocumentPathForAssets, resetBackupSession, saveQueueDepth };
 }
@@ -517,20 +756,28 @@ function slugifyFilename(value: string): string {
   return slug || 'Untitled';
 }
 
-function isExternalChangeSaveError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /changed on disk|changed before ScieMD could save|changed before Scienfy could save/i.test(message);
-}
-
-function isMissingFileStatError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /could not resolve file path|not found|cannot find|no such file|os error 2/i.test(message);
-}
-
 function saveErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === 'string' && error.trim()) return error;
   return fallback;
+}
+
+function fidelityReviewMessage(
+  reasons: readonly SourceFidelityLossReason[],
+  nativeMessage?: string,
+): string {
+  const details: string[] = [];
+  if (reasons.includes('mixed-line-endings-without-map')) {
+    details.push('The original file uses mixed line endings, and ScieMD has no per-line reconstruction map. Saving will use the detected dominant line ending throughout.');
+  }
+  if (reasons.includes('decode-replacement')) {
+    details.push('The original byte stream required replacement characters while decoding; saving will make that decoded text authoritative.');
+  }
+  if (reasons.includes('encoding-unrepresentable') || nativeMessage) {
+    details.push('The current encoding cannot represent all document characters. Approval converts the saved file to UTF-8 without a BOM.');
+  }
+  if (nativeMessage) details.push(`Native file check: ${nativeMessage}`);
+  return details.join(' ');
 }
 
 function byteLength(value: string): number {

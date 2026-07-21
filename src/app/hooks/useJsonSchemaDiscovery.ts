@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { DocumentFormat, JsonSchemaSource } from '@sciemd/core';
+import type { DocumentEffectTarget } from '../effects/documentEffectCoordinator';
 
 export interface JsonSchemaDiscoveryState {
   schemaSource: JsonSchemaSource | null;
@@ -8,7 +9,12 @@ export interface JsonSchemaDiscoveryState {
   siblingCandidates: string[];
 }
 
+interface TargetedJsonSchemaDiscoveryState extends JsonSchemaDiscoveryState {
+  documentId: DocumentEffectTarget['documentId'];
+}
+
 interface UseJsonSchemaDiscoveryOptions {
+  target: DocumentEffectTarget;
   format: DocumentFormat;
   filePath: string | null;
   explicitSchemaPath: string | null;
@@ -18,18 +24,19 @@ interface UseJsonSchemaDiscoveryOptions {
 }
 
 export function useJsonSchemaDiscovery({
+  target,
   format,
   filePath,
   explicitSchemaPath,
   fileHost,
 }: UseJsonSchemaDiscoveryOptions): JsonSchemaDiscoveryState {
-  const requestRef = useRef(0);
   const readTextFile = fileHost.readTextFile;
   const siblingCandidates = useMemo(
     () => format === 'json' && filePath ? jsonSchemaSiblingCandidates(filePath) : [],
     [filePath, format],
   );
-  const [state, setState] = useState<JsonSchemaDiscoveryState>({
+  const [state, setState] = useState<TargetedJsonSchemaDiscoveryState>({
+    documentId: target.documentId,
     schemaSource: null,
     loading: false,
     error: null,
@@ -37,24 +44,26 @@ export function useJsonSchemaDiscovery({
   });
 
   useEffect(() => {
-    const requestId = ++requestRef.current;
+    const token = target.effects.begin(target.documentId, 'json-schema-discovery');
+    if (!token) return undefined;
     if (format !== 'json') {
-      setState({ schemaSource: null, loading: false, error: null, siblingCandidates: [] });
+      target.effects.commit(token, () => setState({ documentId: target.documentId, schemaSource: null, loading: false, error: null, siblingCandidates: [] }));
       return undefined;
     }
 
-    setState((current) => ({
+    target.effects.apply(token, () => setState((current) => ({
+      documentId: target.documentId,
       schemaSource: current.schemaSource,
       loading: true,
       error: null,
       siblingCandidates,
-    }));
+    })));
 
     void (async () => {
       if (explicitSchemaPath) {
         const response = await readTextFile(explicitSchemaPath);
-        if (requestId !== requestRef.current) return;
-        setState({
+        target.effects.commit(token, () => setState({
+          documentId: target.documentId,
           schemaSource: {
             kind: 'explicit',
             path: explicitSchemaPath,
@@ -64,15 +73,15 @@ export function useJsonSchemaDiscovery({
           loading: false,
           error: null,
           siblingCandidates,
-        });
+        }));
         return;
       }
 
       for (const candidate of siblingCandidates) {
         try {
           const response = await readTextFile(candidate);
-          if (requestId !== requestRef.current) return;
-          setState({
+          target.effects.commit(token, () => setState({
+            documentId: target.documentId,
             schemaSource: {
               kind: 'sibling',
               path: candidate,
@@ -82,35 +91,38 @@ export function useJsonSchemaDiscovery({
             loading: false,
             error: null,
             siblingCandidates,
-          });
+          }));
           return;
         } catch {
           // Missing or ungranted sibling schemas are expected. Keep discovery silent.
         }
       }
 
-      if (requestId !== requestRef.current) return;
-      setState({
+      target.effects.commit(token, () => setState({
+        documentId: target.documentId,
         schemaSource: null,
         loading: false,
         error: null,
         siblingCandidates,
-      });
+      }));
     })().catch((error) => {
-      if (requestId !== requestRef.current) return;
-      setState({
+      target.effects.commit(token, () => setState({
+        documentId: target.documentId,
         schemaSource: null,
         loading: false,
         error: error instanceof Error ? error.message : String(error || 'Could not load JSON Schema.'),
         siblingCandidates,
-      });
+      }));
     });
 
     return () => {
-      requestRef.current += 1;
+      target.effects.cancel(token);
     };
-  }, [explicitSchemaPath, format, readTextFile, siblingCandidates]);
+  }, [explicitSchemaPath, format, readTextFile, siblingCandidates, target.documentId, target.effects]);
 
+  if (state.documentId !== target.documentId) {
+    return { schemaSource: null, loading: format === 'json', error: null, siblingCandidates };
+  }
   return state;
 }
 

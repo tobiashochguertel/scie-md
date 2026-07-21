@@ -8,13 +8,20 @@ import { xmlAdapter } from './xml/xmlAdapter';
 import { yamlAdapter } from './yaml/yamlAdapter';
 import {
   adapterForFormat,
+  formatContributionCatalog,
+  formatContributionFor,
+  formatRuntimeBindings,
   extensionFromPath,
   formatFromMediaType,
   formatFromPath,
   isMarkdownFormat,
   isStructuredFormat,
   knownDocumentExtensions,
+  registerFormatAdapter,
+  runtimeBindingForFormat,
   sourceEditorCapabilitiesFor,
+  validateFormatContributionCatalog,
+  validateFormatRuntimeBindings,
 } from './registry';
 
 describe('format registry', () => {
@@ -107,5 +114,58 @@ describe('format registry', () => {
       lintProfile: 'none',
       contextMenuOperations: ['copyText', 'copyLine', 'selectLine'],
     });
+  });
+
+  it('provides one complete contribution and runtime binding for every supported format', () => {
+    const formats = ['markdown', 'json', 'jsonl', 'yaml', 'toml', 'xml', 'csv', 'tsv', 'plainText'] as const;
+    expect(formatContributionCatalog.formats.map(({ format }) => format)).toEqual(formats);
+    for (const format of formats) {
+      expect(formatContributionFor(format)?.format).toBe(format);
+      expect(runtimeBindingForFormat(format).format).toBe(format);
+      expect(sourceEditorCapabilitiesFor(format).languageId).toBe(format);
+    }
+    expect(runtimeBindingForFormat('plainText').adapter).toBeNull();
+  });
+
+  it('fails closed when a contribution runtime binding is missing', () => {
+    const bindings = { ...formatRuntimeBindings };
+    delete (bindings as Partial<typeof bindings>)['json-adapter'];
+    expect(() => validateFormatRuntimeBindings(formatContributionCatalog, bindings)).toThrow(
+      'Missing runtime binding json-adapter for json.',
+    );
+  });
+
+  it('keeps legacy idempotent registration compatible but rejects a second writer', () => {
+    expect(() => registerFormatAdapter(jsonAdapter)).not.toThrow();
+    expect(() => registerFormatAdapter({ ...jsonAdapter })).toThrow(
+      'Format adapter json must be declared by the canonical runtime bindings.',
+    );
+  });
+
+  it('rejects contradictory source-only and visual policies', () => {
+    const catalog = structuredClone(formatContributionCatalog);
+    const plainText = catalog.formats.find(({ format }) => format === 'plainText');
+    if (!plainText) throw new Error('Missing plain text fixture.');
+    (plainText.workbench.surfaces as string[]).push('structuredTree');
+    expect(() => validateFormatContributionCatalog(catalog)).toThrow(
+      'plainText exposes workbench surfaces while preview is disabled.',
+    );
+  });
+
+  it('records deliberate native exclusions as explained policy instead of drift', () => {
+    const csv = formatContributionFor('csv');
+    expect(csv?.native).toMatchObject({
+      openPicker: 'include',
+      launch: 'exclude',
+      osAssociation: 'exclude',
+    });
+    expect(csv?.native.exclusionReason).toContain('spreadsheet-friendly');
+    for (const contribution of formatContributionCatalog.formats.filter(({ format }) => format !== 'csv')) {
+      expect(contribution.native).toMatchObject({
+        openPicker: 'include',
+        launch: 'include',
+        osAssociation: 'include',
+      });
+    }
   });
 });

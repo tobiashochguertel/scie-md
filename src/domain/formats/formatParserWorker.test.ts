@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FormatParseResult } from '@sciemd/core';
+import { createDocumentId, sourceRevision } from '../../app/documentIdentity';
+import type { EffectOperationId, EffectToken } from '../../app/effects/documentEffectCoordinator';
 
 describe('formatParserWorker', () => {
   afterEach(() => {
@@ -144,7 +146,38 @@ describe('formatParserWorker', () => {
     expect(workers).toHaveLength(1);
     expect(workers[0].messages).toHaveLength(FORMAT_PARSER_WORKER_MAX_PENDING + 1);
   });
+
+  it('targets untitled cancellation by document operation instead of the null path', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('Worker', HangingWorker);
+    const { cancelFormatDocumentParse, FORMAT_PARSER_WORKER_TIMEOUT_MS, parseFormatDocumentAsync } = await import('./formatParserWorker');
+    const firstToken = effectToken('source-format-diagnostics:untitled-a');
+    const secondToken = effectToken('source-format-diagnostics:untitled-b');
+
+    const first = parseFormatDocumentAsync('json', '{"a":1}', null, {}, firstToken);
+    const second = parseFormatDocumentAsync('json', '{"b":2}', null, {}, secondToken);
+    const firstRejection = expect(first).rejects.toThrow(/targeted cancellation/);
+
+    expect(cancelFormatDocumentParse(firstToken)).toBe(true);
+    await firstRejection;
+    let secondSettled = false;
+    void second.then(() => { secondSettled = true; }, () => { secondSettled = true; });
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
+
+    const secondRejection = expect(second).rejects.toThrow(/timed out/);
+    await vi.advanceTimersByTimeAsync(FORMAT_PARSER_WORKER_TIMEOUT_MS);
+    await secondRejection;
+  });
 });
+
+function effectToken(operationId: string): EffectToken {
+  return {
+    documentId: createDocumentId(),
+    operationId: operationId as EffectOperationId,
+    sourceRevision: sourceRevision(0),
+  };
+}
 
 class ResponsiveWorker {
   onmessage: ((event: MessageEvent) => void) | null = null;

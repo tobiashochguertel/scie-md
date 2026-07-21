@@ -49,9 +49,9 @@ import {
   X,
 } from 'lucide-react';
 import type { EditorMode } from '../app/documentState';
-import { displayNameForPath } from '../app/documentState';
 import { MARKDOWN_UI_CAPABILITIES, type FormatUiCapabilities } from '../app/formatCapabilities';
 import { getKeyboardShortcutDisplay } from '../app/keyboardShortcuts';
+import type { ActiveDocumentChromeProjection } from '../app/workspace';
 import { structuredOperationsForTarget, type StructuredOperationIcon, type StructuredOperationId } from '../app/structuredOperationRegistry';
 import type { StructuredSurfaceId, StructuredSurfaceNavigationModel, StructuredSurfaceOption } from '../app/structuredSurfaceNavigation';
 import type { SidebarView, ThemeMode } from '../services/settingsService';
@@ -81,8 +81,7 @@ interface AppTopbarProps {
   format: DocumentFormat;
   formatCapabilities?: FormatUiCapabilities;
   activeMenu: AppTopbarMenuId | null;
-  filePath: string | null;
-  dirty: boolean;
+  documentChrome: ActiveDocumentChromeProjection;
   outlineOpen: boolean;
   inspectorOpen: boolean;
   focusMode: boolean;
@@ -217,8 +216,7 @@ export function AppTopbar({
   format,
   formatCapabilities = MARKDOWN_UI_CAPABILITIES,
   activeMenu,
-  filePath,
-  dirty,
+  documentChrome,
   outlineOpen,
   inspectorOpen,
   focusMode,
@@ -314,7 +312,6 @@ export function AppTopbar({
     action();
   };
   const visibleMenuLabels = menuLabels.filter((menu) => menuAvailableForFormat(menu.id, formatCapabilities));
-  const documentDisplayName = displayNameForPath(filePath, format);
   const canSwitchEditorMode = formatCapabilities.canUseVisualMarkdown
     || formatCapabilities.canUseReadonlyTree
     || formatCapabilities.canUseRecordList
@@ -436,7 +433,14 @@ export function AppTopbar({
         </div>
       </div>
 
-      <div className="document-title" title={filePath ?? documentDisplayName}>{dirty ? '* ' : ''}{documentDisplayName}</div>
+      <div className="document-title" title={documentChrome.filePath ?? documentChrome.displayName}>
+        <span>{documentChrome.activeDirty ? '* ' : ''}{documentChrome.displayName}</span>
+        {documentChrome.aggregateStatus && (
+          <span className="workspace-dirty-summary" role="status" aria-live="polite">
+            {documentChrome.aggregateStatus}
+          </span>
+        )}
+      </div>
 
       <div className="topbar-right" role="group" aria-label="View controls">
         {structuredSurfaceNavigation ? (
@@ -556,7 +560,11 @@ export function AppTopbar({
         >
           <button aria-label="Minimize window" title="Minimize" onClick={onWindowMinimize}><Minus size={15} /></button>
           <button aria-label="Maximize window" title="Maximize" onClick={onWindowMaximize}><Square size={13} /></button>
-          <button aria-label="Close window" title="Close" onClick={onWindowClose}><X size={15} /></button>
+          <button
+            aria-label={documentChrome.aggregateStatus ? `Close window. Workspace has ${documentChrome.aggregateStatus}.` : 'Close window'}
+            title={documentChrome.aggregateStatus ? `Close · ${documentChrome.aggregateStatus}` : 'Close'}
+            onClick={onWindowClose}
+          ><X size={15} /></button>
         </span>
       </div>
     </header>
@@ -621,8 +629,7 @@ function StructuredSurfaceToggle({
 interface RenderMenuContext extends Omit<AppTopbarProps,
   | 'activeMenu'
   | 'currentVisualStyle'
-  | 'dirty'
-  | 'filePath'
+  | 'documentChrome'
   | 'format'
   | 'onCloseMenus'
   | 'onTitlebarDoubleClick'

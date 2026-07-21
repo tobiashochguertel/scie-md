@@ -13,8 +13,7 @@ use serde::{Deserialize, Serialize};
 
 static PENDING_DOCUMENT_OPEN: OnceLock<Mutex<VecDeque<PathBuf>>> = OnceLock::new();
 const LAUNCH_DOCUMENT_EXTENSIONS: &[&str] = &[
-    "md", "markdown", "json", "jsonl", "ndjson", "yaml", "yml", "toml", "xml", "tsv", "txt",
-    "text",
+    "md", "markdown", "json", "jsonl", "ndjson", "yaml", "yml", "toml", "xml", "tsv", "txt", "text",
 ];
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -81,6 +80,7 @@ pub fn run() {
             clear_pending_markdown_open,
             commands::dialogs::pick_markdown_file,
             commands::dialogs::pick_document_file,
+            commands::dialogs::pick_document_files,
             commands::dialogs::pick_json_schema_file,
             commands::dialogs::pick_image_file,
             commands::dialogs::pick_citation_style_file,
@@ -92,11 +92,13 @@ pub fn run() {
             commands::diagnostics::clear_recovery_snapshot,
             commands::diagnostics::export_diagnostics_bundle,
             commands::diagnostics::mark_renderer_clean_shutdown,
+            commands::diagnostics::list_recovery_snapshots,
             commands::diagnostics::read_recovery_snapshot,
             commands::diagnostics::record_renderer_heartbeat,
             commands::diagnostics::write_recovery_snapshot,
             commands::path_grants::grant_external_path,
             commands::path_grants::sync_document_image_grants,
+            commands::path_utils::resolve_document_locator,
             commands::file_io::read_text_file,
             commands::file_io::read_text_file_for_edit,
             commands::file_io::read_text_file_preview,
@@ -282,20 +284,45 @@ fn run_desktop_smoke_self_test(app: tauri::AppHandle, report_path: &Path) -> Res
     let recovery = commands::diagnostics::write_recovery_snapshot(
         app.clone(),
         commands::diagnostics::RecoverySnapshotPayload {
-            schema_version: Some(2),
+            schema_version: Some(3),
+            generation: None,
+            checksum: None,
+            commit_state: Some("committed".into()),
+            document_id: None,
+            source_revision: None,
+            catalog_schema_version: None,
+            media_type: None,
             markdown: recovery_markdown.into(),
             file_path: report.startup_path.clone(),
             format: Some("markdown".into()),
             updated_at_ms: timestamp_ms(),
         },
     )?;
-    let restored = commands::diagnostics::read_recovery_snapshot(app.clone(), report.startup_path.clone(), Some(false))?
-        .ok_or_else(|| "Native recovery snapshot was not restored.".to_string())?;
+    let restored = commands::diagnostics::read_recovery_snapshot(
+        app.clone(),
+        report.startup_path.clone(),
+        None,
+        Some(false),
+    )?
+    .ok_or_else(|| "Native recovery snapshot was not restored.".to_string())?;
     if restored.markdown != recovery_markdown || restored.file_path != report.startup_path {
         return Err("Native recovery snapshot did not round-trip.".into());
     }
-    commands::diagnostics::clear_recovery_snapshot(app.clone(), report.startup_path.clone(), Some(false))?;
-    if commands::diagnostics::read_recovery_snapshot(app.clone(), report.startup_path.clone(), Some(false))?.is_some() {
+    commands::diagnostics::clear_recovery_snapshot(
+        app.clone(),
+        report.startup_path.clone(),
+        None,
+        None,
+        Some(false),
+    )?;
+    if commands::diagnostics::read_recovery_snapshot(
+        app.clone(),
+        report.startup_path.clone(),
+        None,
+        Some(false),
+    )?
+    .is_some()
+    {
         return Err("Native recovery snapshot was not cleared.".into());
     }
     report.recovery_bytes = Some(recovery.markdown_bytes);
@@ -756,7 +783,11 @@ mod tests {
             fs::write(&file, content).unwrap();
             let found = document_path_from_args(&["sciemd".into(), name.into()], cwd.as_ref());
 
-            assert_eq!(found, Some(file), "{name} should be a launch/open-with document");
+            assert_eq!(
+                found,
+                Some(file),
+                "{name} should be a launch/open-with document"
+            );
         }
 
         let _ = fs::remove_dir_all(directory);

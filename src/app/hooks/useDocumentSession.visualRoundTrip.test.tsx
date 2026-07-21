@@ -9,20 +9,9 @@ import type { PersistedSettings } from '../../services/settingsService';
 import type { AuthorshipMark } from '../../markdown/authorship';
 import type { ConfirmState } from './useDialogs';
 import { useDocumentSession } from './useDocumentSession';
-import { readVisualEditorState } from '../../components/visualEditorStateSync';
-
-vi.mock('../../components/visualEditorStateSync', () => ({
-  readVisualEditorState: vi.fn(() => null),
-  commitVisualEditorReadResult: vi.fn((result: { markdown: string; changed: boolean; markCommitted?: () => void } | null, onCommit: (markdown: string) => void) => {
-    if (!result) return null;
-    if (result.changed) {
-      result.markCommitted?.();
-      onCommit(result.markdown);
-    }
-    return result.markdown;
-  }),
-  commitVisualEditorState: vi.fn(() => null),
-}));
+import { documentEditorGateway } from '../documentEditorGateway';
+import type { EditorAdapter } from '../../components/editorAdapter';
+import { loadRecoveryCatalog, resetRecoveryCatalogForTests } from '../../services/recoveryCatalog';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -35,11 +24,12 @@ describe('useDocumentSession visual round-trip write acknowledgement', () => {
   let host: MockDocumentHost;
   let pushToast: ReturnType<typeof vi.fn<(text: string, tone?: 'info' | 'success' | 'warning' | 'error') => void>>;
   let confirmText: ReturnType<typeof vi.fn<(state: ConfirmState) => Promise<boolean>>>;
-  const mockedReadVisualEditorState = vi.mocked(readVisualEditorState);
+  const mockedReadVisualEditorState = vi.spyOn(documentEditorGateway, 'read');
 
   beforeEach(() => {
     Reflect.deleteProperty(window, '__TAURI_INTERNALS__');
     localStorage.clear();
+    resetRecoveryCatalogForTests();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -51,6 +41,7 @@ describe('useDocumentSession visual round-trip write acknowledgement', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     act(() => root.unmount());
     container.remove();
     document.body.innerHTML = '';
@@ -137,22 +128,168 @@ describe('useDocumentSession visual round-trip write acknowledgement', () => {
     await flushAsync();
 
     expect(mockedReadVisualEditorState).not.toHaveBeenCalled();
-    expect(host.recovery.saveFileDraftAsync).toHaveBeenCalledWith(
-      path,
-      '{"ok":false}\n',
-      expect.any(Number),
-      expect.objectContaining({ lastKnownSizeBytes: '{"ok":true}\n'.length }),
-      'json',
-    );
+    const entry = (await loadRecoveryCatalog()).find((candidate) => candidate.documentId === latestState?.documentId);
+    expect(entry).toMatchObject({ sourceText: '{"ok":false}\n', format: 'json' });
+    expect(entry?.locator).toMatchObject({ kind: 'file', displayPath: path });
   });
 
-  function renderSession() {
+  it('keeps opened frontmatter presentation document-local instead of rewriting global defaults', async () => {
+    renderSession();
+    const source = [
+      '---',
+      'scienfy:',
+      '  visualStyle: scienfy',
+      '  documentType: paper',
+      '---',
+      '# Paper',
+    ].join('\n');
+
+    act(() => {
+      latestState?.commitOpenedDocument('C:\\docs\\paper.md', source, DEFAULT_METADATA, 'visual', source, 'markdown');
+    });
+    await flushAsync();
+
+    expect(latestState?.documentRecord.presentation).toEqual({ visualStyle: 'scienfy', documentType: 'report' });
+    expect(vi.mocked(host.settings.updateSettings)).not.toHaveBeenCalled();
+    expect(vi.mocked(host.settings.rememberRecentFile)).toHaveBeenCalledWith('C:\\docs\\paper.md');
+  });
+
+  it('flushes and commits the addressed editor before replacing its workspace record', async () => {
+    renderSession('# Original\n');
+    const oldDocumentId = latestState!.documentId;
+    const events: string[] = [];
+    const adapter: EditorAdapter = {
+      surface: 'visual',
+      read: () => null,
+      flushPendingEdits: () => {
+        events.push('flush');
+        return {
+          surface: 'visual',
+          markdown: '# Dirty editor\n',
+          changed: true,
+          markCommitted: () => events.push('markCommitted'),
+        };
+      },
+      replace: () => false,
+      focus: () => undefined,
+      captureView: () => {
+        events.push('snapshot');
+        return { surface: 'visual', selection: { from: 1, to: 3 }, scrollTop: 12 };
+      },
+    };
+    documentEditorGateway.registerAdapter(oldDocumentId, 'visual', adapter);
+
+    act(() => {
+      latestState?.commitOpenedDocument('C:\\docs\\next.md', '# Next\n', DEFAULT_METADATA, 'visual', '# Next\n', 'markdown');
+    });
+    await flushAsync();
+
+    expect(events).toEqual(['flush', 'markCommitted', 'snapshot']);
+    expect(latestState?.documentId).not.toBe(oldDocumentId);
+    expect(latestState?.sourceText).toBe('# Next\n');
+    expect(documentEditorGateway.read(oldDocumentId)).toBeNull();
+  });
+
+  it('restores an intentionally empty untitled draft when it differs from the initial document', async () => {
+    vi.mocked(host.recovery.loadUntitledDraft).mockResolvedValue({
+      markdown: '',
+      savedAt: 1000,
+      format: 'plainText',
+    });
+    renderSession('# Initial content\n');
+    await flushAsync();
+
+    expect(confirmText).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Restore unsaved draft?',
+      okLabel: 'Restore',
+    }));
+    expect(latestState?.sourceText).toBe('');
+    expect(latestState?.format).toBe('plainText');
+  });
+
+  it('checkpoints the addressed untitled document after the declared 600 ms recovery lag', async () => {
+    vi.useFakeTimers();
+    vi.mocked(host.recovery.shouldPersistUntitledDraft).mockReturnValue(true);
+    renderSession();
+
+    act(() => {
+      latestState?.commitSourceTextEdit('   \n');
+    });
+    act(() => {
+      vi.advanceTimersByTime(599);
+    });
+    expect((await loadRecoveryCatalog()).find((entry) => entry.documentId === latestState?.documentId)).toBeUndefined();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect((await loadRecoveryCatalog()).find((entry) => entry.documentId === latestState?.documentId)).toMatchObject({
+      sourceText: '   \n',
+      format: 'markdown',
+      locator: { kind: 'untitled' },
+    });
+  });
+
+  it.each(['pagehide', 'beforeunload'] as const)(
+    'flushes the addressed recovery target on %s',
+    async (eventName) => {
+      const path = 'C:\\docs\\results.json';
+      renderSession();
+      await act(async () => {
+        await latestState?.handleOpen(path, { draftRestore: 'skip' });
+      });
+      await flushAsync();
+      act(() => {
+        latestState?.commitSourceTextEdit('');
+      });
+      await flushAsync();
+      act(() => {
+        window.dispatchEvent(new Event(eventName));
+      });
+      const entry = (await loadRecoveryCatalog()).find((candidate) => candidate.documentId === latestState?.documentId);
+      expect(entry).toMatchObject({ sourceText: '', format: 'json' });
+      expect(entry?.locator).toMatchObject({ kind: 'file', displayPath: path });
+    },
+  );
+
+  it('flushes the addressed recovery target when visibility becomes hidden', async () => {
+    const path = 'C:\\docs\\results.json';
+    renderSession();
+    await act(async () => {
+      await latestState?.handleOpen(path, { draftRestore: 'skip' });
+    });
+    await flushAsync();
+    act(() => {
+      latestState?.commitSourceTextEdit('');
+    });
+    await flushAsync();
+    const originalVisibilityState = document.visibilityState;
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+
+    try {
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await flushAsync();
+    } finally {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: originalVisibilityState });
+    }
+
+    const entry = (await loadRecoveryCatalog()).find((candidate) => candidate.documentId === latestState?.documentId);
+    expect(entry).toMatchObject({ sourceText: '', format: 'json' });
+    expect(entry?.locator).toMatchObject({ kind: 'file', displayPath: path });
+  });
+
+  function renderSession(initialMarkdown = '') {
     act(() => {
       root.render(
         <Harness
           host={host}
           confirmText={confirmText}
           pushToast={pushToast}
+          initialMarkdown={initialMarkdown}
           onState={(state) => {
             latestState = state;
           }}
@@ -179,19 +316,20 @@ function Harness({
   host,
   confirmText,
   pushToast,
+  initialMarkdown,
   onState,
 }: {
   host: DocumentHost;
   confirmText: (state: ConfirmState) => Promise<boolean>;
   pushToast: (text: string, tone?: 'info' | 'success' | 'warning' | 'error') => void;
+  initialMarkdown: string;
   onState: (state: SessionState) => void;
 }) {
   const [settings, setSettings] = useState<PersistedSettings>(() => loadSettings());
   const [_authorshipMarks, setAuthorshipMarks] = useState<AuthorshipMark[]>([]);
   const state = useDocumentSession({
-    initialMarkdown: '',
+    initialMarkdown,
     setSettings,
-    setAuthorshipMarks,
     confirmText,
     pushToast,
     host,

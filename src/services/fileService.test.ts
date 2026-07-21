@@ -11,6 +11,7 @@ import {
   peekPendingDocumentOpen,
   peekPendingMarkdownOpen,
   pickDocumentFile,
+  pickDocumentFiles,
   pickMarkdownFile,
   pickSavePath,
   readTextFile,
@@ -19,6 +20,7 @@ import {
   syncDocumentImageGrants,
   takePendingDocumentOpen,
   takePendingMarkdownOpen,
+  writeTextFileAtomic,
 } from './fileService';
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -38,6 +40,12 @@ describe('fileService', () => {
       contentHash: null,
       cloudState: 'local',
     });
+  });
+
+  it('opens the additive document picker through the native command', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(['C:\\docs\\a.md', 'C:\\docs\\b.json']);
+    await expect(pickDocumentFiles()).resolves.toEqual(['C:\\docs\\a.md', 'C:\\docs\\b.json']);
+    expect(invoke).toHaveBeenCalledWith('pick_document_files');
   });
 
   it('uses metadata-only stat calls by default', async () => {
@@ -132,8 +140,39 @@ describe('fileService', () => {
   });
 
   it('keeps generic text reads separate from edit-open text reads', async () => {
-    await readTextFile('C:\\docs\\paper.md');
-    await readTextFileForEdit('C:\\docs\\paper.md');
+    const nativeResponse = {
+      sourceText: 'alpha\nbeta\n',
+      content: 'alpha\nbeta\n',
+      metadata: {
+        lineEnding: 'cr' as const,
+        lineEndings: 'cr' as const,
+        encoding: 'utf8' as const,
+        hasBom: false,
+        hasMixedLineEndings: false,
+        decodeLossy: false,
+        losslessWrite: 'yes' as const,
+        lossReasons: [],
+        originalByteHash: 'hash',
+        lastKnownMtimeMs: 1,
+        lastKnownSizeBytes: 11,
+        contentHash: 'hash',
+        cloudState: 'local' as const,
+      },
+    };
+    vi.mocked(invoke).mockResolvedValueOnce(nativeResponse).mockResolvedValueOnce(nativeResponse);
+
+    const read = await readTextFile('C:\\docs\\paper.md');
+    const editRead = await readTextFileForEdit('C:\\docs\\paper.md');
+
+    expect(read.sourceEnvelope).toMatchObject({
+      sourceText: 'alpha\nbeta\n',
+      savedSourceText: 'alpha\nbeta\n',
+      dominantLineEnding: 'cr',
+      lineEndings: 'cr',
+      originalByteHash: 'hash',
+      losslessWrite: 'yes',
+    });
+    expect(editRead.sourceText).toBe('alpha\nbeta\n');
 
     expect(invoke).toHaveBeenNthCalledWith(1, 'read_text_file', {
       path: 'C:\\docs\\paper.md',
@@ -141,6 +180,37 @@ describe('fileService', () => {
     expect(invoke).toHaveBeenNthCalledWith(2, 'read_text_file_for_edit', {
       path: 'C:\\docs\\paper.md',
     });
+  });
+
+  it('uses generic sourceText and CR fidelity metadata for atomic writes', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({
+      lineEnding: 'cr',
+      encoding: 'utf8',
+      hasBom: false,
+      hasMixedLineEndings: false,
+      lastKnownMtimeMs: 2,
+      lastKnownSizeBytes: 11,
+      contentHash: 'next',
+      cloudState: 'local',
+    });
+
+    const result = await writeTextFileAtomic('C:\\docs\\paper.txt', 'alpha\nbeta\n', {
+      lineEnding: 'cr',
+      encoding: 'utf8',
+      hasBom: false,
+      hasMixedLineEndings: false,
+      lastKnownMtimeMs: 1,
+      lastKnownSizeBytes: 11,
+      contentHash: 'old',
+      cloudState: 'local',
+    });
+
+    expect(invoke).toHaveBeenCalledWith('write_text_file_atomic', expect.objectContaining({
+      sourceText: 'alpha\nbeta\n',
+      lineEnding: 'cr',
+    }));
+    expect(result.lineEndings).toBe('cr');
+    expect(result.losslessWrite).toBe('unknown');
   });
 
   it('lists readable explorer entries through the document native boundary', async () => {

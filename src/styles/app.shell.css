@@ -114,6 +114,129 @@ button:disabled {
   overflow: hidden;
 }
 
+.workspace-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  min-width: 0;
+  min-height: 38px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.workspace-tab-scroll {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.workspace-tab-item {
+  display: flex;
+  flex: 0 1 270px;
+  min-width: 150px;
+  max-width: 320px;
+  align-items: stretch;
+  border-right: 1px solid var(--border);
+}
+
+.workspace-tab-item.is-active {
+  background: var(--surface-soft);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.workspace-tab-item [role="tab"] {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 7px;
+  align-items: center;
+  padding: 5px 8px;
+  border: 0;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+}
+
+.workspace-tab-name,
+.workspace-tab-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-tab-format {
+  font-size: 0.67rem;
+  color: var(--text-muted);
+}
+
+.workspace-tab-status {
+  grid-column: 1 / -1;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
+.workspace-tab-close,
+.workspace-tab-actions,
+.workspace-tab-tools button,
+.workspace-tab-tools select {
+  border: 0;
+  color: var(--text);
+  background: transparent;
+}
+
+.workspace-tab-close {
+  align-self: center;
+  width: 28px;
+  height: 28px;
+  font-size: 1.1rem;
+}
+
+.workspace-tab-actions {
+  align-self: center;
+  width: 25px;
+  height: 28px;
+  color: transparent;
+}
+
+.workspace-tab-actions:focus {
+  width: 110px;
+  color: var(--text);
+}
+
+.workspace-tab-tools {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  border-left: 1px solid var(--border);
+}
+
+.workspace-tab-tools > * {
+  max-width: 155px;
+  padding-inline: 8px;
+  border-left: 1px solid var(--border) !important;
+}
+
+.workspace-active-panel {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+@media (max-width: 800px), (min-resolution: 1.75dppx) {
+  .workspace-tab-item { min-width: 128px; }
+  .workspace-tab-tools button { padding-inline: 5px; font-size: 0.72rem; }
+  .workspace-tab-tools select { max-width: 90px; }
+}
+
+@media (forced-colors: active) {
+  .workspace-tab-item.is-active { border-bottom: 3px solid Highlight; box-shadow: none; }
+  .workspace-tab-status, .workspace-tab-format { color: CanvasText; }
+}
+
 .app-shell.focus-mode .toolbar,
 .app-shell.focus-mode .ambient-strip,
 .app-shell.focus-mode .inspector-pane,
@@ -524,6 +647,18 @@ button:disabled {
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workspace-dirty-summary {
+  display: inline-flex;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
 }
 
 .topbar-right {

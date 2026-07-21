@@ -1,0 +1,9 @@
+[
+  { "contractVersion": 1, "code": "FILE_CHANGED", "message": "The file changed on disk." },
+  { "contractVersion": 1, "code": "NOT_FOUND", "message": "Document introuvable." },
+  { "contractVersion": 1, "code": "PERMISSION_DENIED", "message": "Zugriff verweigert." },
+  { "contractVersion": 1, "code": "CLOUD_UNAVAILABLE", "message": "Cloud document is not available locally." },
+  { "contractVersion": 1, "code": "BACKUP_FAILED", "message": "Backup snapshot could not be created." },
+  { "contractVersion": 1, "code": "LOSSY_WRITE_REQUIRED", "message": "The selected encoding cannot represent all characters." },
+  { "contractVersion": 1, "code": "UNKNOWN_HOST_ERROR", "message": "Unclassified host failure." }
+]

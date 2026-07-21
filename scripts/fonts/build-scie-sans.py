@@ -133,7 +133,9 @@ def rename_font(
     if not source.exists():
         raise FileNotFoundError(source)
 
-    font = TTFont(source)
+    # Preserve the source font timestamp so repeated builds are byte-for-byte
+    # reproducible and do not dirty tracked WOFF2 projections.
+    font = TTFont(source, recalcTimestamp=False)
     for name_id, value in make_names(family_name, ps_family_name, output_style, style_label, width_label).items():
         set_name(font, name_id, value)
 
@@ -156,7 +158,7 @@ def rename_font(
 
     font.save(ttf_path)
 
-    web_font = TTFont(ttf_path)
+    web_font = TTFont(ttf_path, recalcTimestamp=False)
     web_font.flavor = "woff2"
     web_font.save(woff2_path)
 

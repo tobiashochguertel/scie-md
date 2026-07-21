@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findKeyboardShortcut, getKeyboardShortcutDisplay, KEYBOARD_SHORTCUTS } from './keyboardShortcuts';
+import { findDirectWorkspaceTabIndex, findKeyboardShortcut, getKeyboardShortcutDisplay, KEYBOARD_SHORTCUTS } from './keyboardShortcuts';
 
 describe('keyboardShortcuts', () => {
   it('uses one registry for displayed shortcuts', () => {
@@ -24,6 +24,16 @@ describe('keyboardShortcuts', () => {
     expect(getKeyboardShortcutDisplay('print')).toBe('Ctrl/Cmd+P');
     expect(actionFor({ key: 'p', ctrlKey: true })).toBe('print');
     expect(actionFor({ key: 'p', ctrlKey: true, shiftKey: true })).toBe('commandPalette');
+  });
+
+  it('registers workspace lifecycle shortcuts and direct tab activation', () => {
+    expect(actionFor({ key: 'PageDown', ctrlKey: true })).toBe('nextWorkspaceTab');
+    expect(actionFor({ key: 'PageUp', metaKey: true })).toBe('previousWorkspaceTab');
+    expect(actionFor({ key: 'w', ctrlKey: true })).toBe('closeWorkspaceTab');
+    expect(actionFor({ key: 't', ctrlKey: true, shiftKey: true })).toBe('reopenWorkspaceTab');
+    expect(actionFor({ key: 's', ctrlKey: true, altKey: true })).toBe('saveAllWorkspace');
+    expect(findDirectWorkspaceTabIndex(new KeyboardEvent('keydown', { key: '3', altKey: true }))).toBe(2);
+    expect(findDirectWorkspaceTabIndex(new KeyboardEvent('keydown', { key: '3', altKey: true, shiftKey: true }))).toBeNull();
   });
 });
 

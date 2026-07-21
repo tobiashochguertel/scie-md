@@ -5,6 +5,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use super::host_error::{HostError, HostResult};
 use super::path_grants::{assert_file_read_allowed, assert_file_write_allowed};
 
 const BACKUP_LIMIT: usize = 20;
@@ -12,7 +13,11 @@ const BACKUP_MAX_TOTAL_BYTES: u64 = 250 * 1024 * 1024;
 const BACKUP_MAX_AGE: Duration = Duration::from_secs(90 * 24 * 60 * 60);
 
 #[tauri::command]
-pub fn create_backup_snapshot(path: String, label: String) -> Result<Option<String>, String> {
+pub fn create_backup_snapshot(path: String, label: String) -> HostResult<Option<String>> {
+    create_backup_snapshot_impl(path, label).map_err(HostError::backup)
+}
+
+fn create_backup_snapshot_impl(path: String, label: String) -> Result<Option<String>, String> {
     let source = PathBuf::from(path);
     assert_file_write_allowed(&source)?;
     if !source.exists() {

@@ -89,9 +89,7 @@ export function useCitationWorkflow({
       const fresh = await readTextFile(bibliographyPath);
       bibtexForUpsert = fresh.content;
       writeMetadata = fresh.metadata;
-      await createBackupSnapshot(bibliographyPath, 'external-bib').catch((error) => {
-        console.warn('Could not back up externally changed bibliography.', error);
-      });
+      await createBackupSnapshot(bibliographyPath, 'external-bib');
       pushToast('Bibliography changed on disk. ScieMD merged your citation into the latest .bib file and kept a backup.', 'warning');
     }
 
@@ -147,9 +145,7 @@ export function useCitationWorkflow({
       const fresh = await readTextFile(bibliographyPath);
       bibtexForDelete = fresh.content;
       writeMetadata = fresh.metadata;
-      await createBackupSnapshot(bibliographyPath, 'external-bib').catch((error) => {
-        console.warn('Could not back up externally changed bibliography.', error);
-      });
+      await createBackupSnapshot(bibliographyPath, 'external-bib');
       pushToast('Bibliography changed on disk. ScieMD deleted from the latest .bib file and kept a backup.', 'warning');
     }
     const nextBibtex = deleteBibtexEntrySource(bibtexForDelete, key);

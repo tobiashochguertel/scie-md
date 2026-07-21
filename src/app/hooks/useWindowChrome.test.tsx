@@ -30,27 +30,20 @@ describe('useWindowChrome', () => {
     container.remove();
   });
 
-  it('pauses pending autosave before opening the dirty close dialog', () => {
-    const onDirtyCloseRequested = vi.fn(() => undefined);
-    const setCloseDialogOpen = vi.fn((_open: boolean) => undefined);
+  it('routes titlebar close through the unified close transaction', () => {
     const closeWindow = vi.fn(async () => undefined);
 
-    renderChrome({ dirty: true, onDirtyCloseRequested, setCloseDialogOpen, closeWindow });
+    renderChrome({ closeWindow });
 
     act(() => {
       controls?.handleWindowClose();
     });
 
-    expect(onDirtyCloseRequested).toHaveBeenCalledTimes(1);
-    expect(setCloseDialogOpen).toHaveBeenCalledWith(true);
-    expect(closeWindow).not.toHaveBeenCalled();
+    expect(closeWindow).toHaveBeenCalledTimes(1);
   });
 
   function renderChrome(props: {
-    dirty: boolean;
-    onDirtyCloseRequested?: () => void;
-    setCloseDialogOpen: (open: boolean) => void;
-    closeWindow: () => Promise<void>;
+    closeWindow: () => Promise<unknown>;
   }) {
     act(() => {
       root.render(
@@ -66,19 +59,13 @@ describe('useWindowChrome', () => {
 });
 
 function Harness({
-  dirty,
-  onDirtyCloseRequested,
-  setCloseDialogOpen,
   closeWindow,
   onControls,
 }: {
-  dirty: boolean;
-  onDirtyCloseRequested?: () => void;
-  setCloseDialogOpen: (open: boolean) => void;
-  closeWindow: () => Promise<void>;
+  closeWindow: () => Promise<unknown>;
   onControls: (controls: ReturnType<typeof useWindowChrome>) => void;
 }) {
-  const controls = useWindowChrome({ dirty, onDirtyCloseRequested, setCloseDialogOpen, closeWindow });
+  const controls = useWindowChrome({ closeWindow });
   onControls(controls);
   return null;
 }

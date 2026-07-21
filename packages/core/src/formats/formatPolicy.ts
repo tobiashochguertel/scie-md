@@ -6,13 +6,11 @@ import type {
   StructuredVisualSurface,
 } from './documentFormat.js';
 import { createDocumentContent } from './documentFormat.js';
-import { formatDefinitionFor } from './formatDefinitions.js';
+import { formatContributionFor, formatDefinitionFor } from './formatDefinitions.js';
 
 export const DEFAULT_STRUCTURED_PARSE_BUDGET_BYTES = 1 * 1024 * 1024;
 export const STRUCTURED_TEXT_INGRESS_BUDGET_BYTES = 5 * 1024 * 1024;
 export const STRUCTURED_CLIPBOARD_INGRESS_BUDGET_BYTES = 5 * 1024 * 1024;
-
-const MARKDOWN_SOURCE_ONLY_FILE_BYTES = 5 * 1024 * 1024;
 
 export interface CanonicalizedIngressText {
   text: string;
@@ -37,49 +35,13 @@ export interface FormatRuntimePolicy {
   sourceOnlyByDefault: boolean;
 }
 
-interface FormatRuntimePolicyDeclaration {
-  defaultMode: 'visual' | 'source';
-  parseBudgetBytes?: number;
-  sourceOnlyFileBytes?: number;
-  canOpenAsDocument: boolean;
-  canPreview: boolean;
-  canUseVisualTree?: boolean;
-  canUseRecordList?: boolean;
-  canUseTablePreview?: boolean;
-  canEditVisually?: boolean;
-  canApplyClipboardReplace?: boolean;
-  sourceOnlyByDefault?: boolean;
-}
-
-const FORMAT_POLICY_DECLARATIONS: Record<DocumentFormat, FormatRuntimePolicyDeclaration> = {
-  markdown: {
-    defaultMode: 'visual',
-    parseBudgetBytes: MARKDOWN_SOURCE_ONLY_FILE_BYTES,
-    sourceOnlyFileBytes: MARKDOWN_SOURCE_ONLY_FILE_BYTES,
-    canOpenAsDocument: true,
-    canPreview: true,
-    canEditVisually: true,
-  },
-  json: editableStructuredPolicy({ canUseVisualTree: true, canApplyClipboardReplace: true }),
-  jsonl: editableStructuredPolicy({ canUseRecordList: true, canApplyClipboardReplace: true }),
-  yaml: readonlyStructuredPolicy({ canUseVisualTree: true }),
-  toml: readonlyStructuredPolicy({ canUseVisualTree: true }),
-  xml: readonlyStructuredPolicy({ canUseVisualTree: true }),
-  csv: editableStructuredPolicy({ canUseTablePreview: true }),
-  tsv: editableStructuredPolicy({ canUseTablePreview: true }),
-  plainText: {
-    defaultMode: 'source',
-    canOpenAsDocument: false,
-    canPreview: false,
-    sourceOnlyByDefault: true,
-  },
-};
-
 export function formatRuntimePolicyFor(format: DocumentFormat | null | undefined): FormatRuntimePolicy {
   const normalizedFormat = format ?? 'plainText';
-  const declaration = FORMAT_POLICY_DECLARATIONS[normalizedFormat] ?? FORMAT_POLICY_DECLARATIONS.plainText;
-  const parseBudgetBytes = declaration.parseBudgetBytes ?? null;
-  const sourceOnlyFileBytes = declaration.sourceOnlyFileBytes ?? parseBudgetBytes;
+  const contribution = formatContributionFor(normalizedFormat) ?? formatContributionFor('plainText');
+  if (!contribution) throw new Error('The canonical format contribution catalog is missing plain text.');
+  const declaration = contribution.runtimePolicy;
+  const { parseBudgetBytes, sourceOnlyFileBytes } = declaration;
+  const surfaces = new Set(contribution.workbench.surfaces);
   return {
     format: normalizedFormat,
     defaultMode: declaration.defaultMode,
@@ -89,13 +51,13 @@ export function formatRuntimePolicyFor(format: DocumentFormat | null | undefined
     clipboardIngressBudgetBytes: STRUCTURED_CLIPBOARD_INGRESS_BUDGET_BYTES,
     canOpenAsDocument: declaration.canOpenAsDocument,
     canPreview: declaration.canPreview,
-    canImport: declaration.canOpenAsDocument,
-    canUseVisualTree: Boolean(declaration.canUseVisualTree),
-    canUseRecordList: Boolean(declaration.canUseRecordList),
-    canUseTablePreview: Boolean(declaration.canUseTablePreview),
-    canEditVisually: Boolean(declaration.canEditVisually),
-    canApplyClipboardReplace: Boolean(declaration.canApplyClipboardReplace),
-    sourceOnlyByDefault: Boolean(declaration.sourceOnlyByDefault),
+    canImport: declaration.canImport,
+    canUseVisualTree: surfaces.has('structuredTree'),
+    canUseRecordList: surfaces.has('recordList'),
+    canUseTablePreview: surfaces.has('tablePreview'),
+    canEditVisually: contribution.workbench.editableSurfaces.length > 0,
+    canApplyClipboardReplace: declaration.canApplyClipboardReplace,
+    sourceOnlyByDefault: declaration.sourceOnlyByDefault,
   };
 }
 
@@ -168,30 +130,4 @@ function defaultSourceOnlyMessage(format: DocumentFormat): string {
   return budget === null
     ? `${label} parsing is disabled for this document. Source editing remains available.`
     : `${label} exceeds the ${formatBytes(budget)} background parse budget. Source editing remains available; visual inspection is disabled for this file.`;
-}
-
-function editableStructuredPolicy(
-  overrides: Pick<FormatRuntimePolicyDeclaration, 'canUseVisualTree' | 'canUseRecordList' | 'canUseTablePreview' | 'canApplyClipboardReplace'>,
-): FormatRuntimePolicyDeclaration {
-  return {
-    defaultMode: 'source',
-    parseBudgetBytes: DEFAULT_STRUCTURED_PARSE_BUDGET_BYTES,
-    canOpenAsDocument: true,
-    canPreview: true,
-    canEditVisually: true,
-    ...overrides,
-  };
-}
-
-function readonlyStructuredPolicy(
-  overrides: Pick<FormatRuntimePolicyDeclaration, 'canUseVisualTree' | 'canUseRecordList' | 'canUseTablePreview'>,
-): FormatRuntimePolicyDeclaration {
-  return {
-    defaultMode: 'source',
-    parseBudgetBytes: DEFAULT_STRUCTURED_PARSE_BUDGET_BYTES,
-    canOpenAsDocument: true,
-    canPreview: true,
-    canEditVisually: false,
-    ...overrides,
-  };
 }

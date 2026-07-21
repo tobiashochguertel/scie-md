@@ -70,6 +70,23 @@ describe('settingsService', () => {
     expect(loadSettings().recentFiles).toEqual(['/tmp/b.md']);
   });
 
+  it('converges Windows aliases through the canonical comparison authority', () => {
+    rememberRecentFile('C:\\Lab\\Paper.md');
+    rememberRecentFile('\\\\?\\C:\\lab\\paper.md');
+
+    expect(loadSettings().recentFiles).toEqual(['\\\\?\\C:\\lab\\paper.md']);
+    forgetRecentFile('c:/LAB/PAPER.md');
+    expect(loadSettings().recentFiles).toEqual([]);
+  });
+
+  it('deduplicates persisted recent aliases without changing the stored schema', () => {
+    localStorage.setItem('scienfy.markdown.settings.v1', JSON.stringify({
+      recentFiles: ['C:\\Lab\\Paper.md', 'c:/lab/paper.md'],
+    }));
+
+    expect(loadSettings().recentFiles).toEqual(['C:\\Lab\\Paper.md']);
+  });
+
   it('persists display settings without losing recent files', () => {
     rememberRecentFile('/tmp/a.md');
     updateSettings({

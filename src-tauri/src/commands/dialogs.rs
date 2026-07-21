@@ -20,7 +20,8 @@ const CSV_EXTENSIONS: &[&str] = &["csv"];
 const TSV_EXTENSIONS: &[&str] = &["tsv"];
 const PLAIN_TEXT_EXTENSIONS: &[&str] = &["txt", "text"];
 const SCIEMD_TEXT_DOCUMENT_EXTENSIONS: &[&str] = &[
-    "md", "markdown", "json", "jsonl", "ndjson", "yaml", "yml", "toml", "xml", "csv", "tsv", "txt", "text",
+    "md", "markdown", "json", "jsonl", "ndjson", "yaml", "yml", "toml", "xml", "csv", "tsv", "txt",
+    "text",
 ];
 const JSON_SCHEMA_EXTENSIONS: &[&str] = &["json"];
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
@@ -68,6 +69,33 @@ pub async fn pick_document_file<R: Runtime>(app: AppHandle<R>) -> Result<Option<
     let path = into_path(path)?;
     grant_file_and_parent(&path)?;
     Ok(Some(path.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
+pub async fn pick_document_files<R: Runtime>(app: AppHandle<R>) -> Result<Vec<String>, String> {
+    let selected = thread::spawn(move || {
+        app.dialog()
+            .file()
+            .set_title("Open ScieMD Documents")
+            .add_filter(
+                "All supported ScieMD text documents",
+                SCIEMD_TEXT_DOCUMENT_EXTENSIONS,
+            )
+            .blocking_pick_files()
+    })
+    .join()
+    .map_err(|_| "Could not open file picker.".to_string())?;
+
+    let Some(selected) = selected else {
+        return Ok(Vec::new());
+    };
+    let mut paths = Vec::with_capacity(selected.len());
+    for selected_path in selected {
+        let path = into_path(selected_path)?;
+        grant_file_and_parent(&path)?;
+        paths.push(path.to_string_lossy().to_string());
+    }
+    Ok(paths)
 }
 
 #[tauri::command]
@@ -328,7 +356,9 @@ fn save_dialog_policy(format: Option<&str>) -> SaveDialogPolicy {
 
 #[cfg(test)]
 mod tests {
-    use super::{save_dialog_policy, JSONL_EXTENSIONS, TOML_EXTENSIONS, XML_EXTENSIONS, YAML_EXTENSIONS};
+    use super::{
+        save_dialog_policy, JSONL_EXTENSIONS, TOML_EXTENSIONS, XML_EXTENSIONS, YAML_EXTENSIONS,
+    };
 
     #[test]
     fn save_dialog_policy_uses_format_specific_filters() {

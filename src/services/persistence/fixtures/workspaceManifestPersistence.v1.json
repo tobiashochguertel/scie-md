@@ -1,0 +1,22 @@
+{
+  "legacyCases": [
+    {
+      "name": "single active recovered draft",
+      "stored": {
+        "schemaVersion": 1,
+        "tabOrder": ["document:a"],
+        "activeDocumentId": "document:a",
+        "recoveryReferences": [{ "id": "document:a", "generation": 2 }]
+      }
+    },
+    {
+      "name": "ordered clean documents",
+      "stored": {
+        "schemaVersion": 1,
+        "tabOrder": ["document:b", "document:a"],
+        "activeDocumentId": "document:b",
+        "recoveryReferences": []
+      }
+    }
+  ]
+}

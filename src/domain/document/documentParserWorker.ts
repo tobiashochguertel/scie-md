@@ -1,6 +1,7 @@
 import { safeParseScienfyDocument } from '@sciemd/core';
 import type { ParsedScienfyDocument, ParseScienfyDocumentOptions } from '@sciemd/core';
 import { SOURCE_ONLY_FILE_BYTES } from '../../markdown/supportedMarkdown';
+import type { EffectToken } from '../../app/effects/documentEffectCoordinator';
 
 interface ParseWorkerResponse {
   id: number;
@@ -12,6 +13,10 @@ interface PendingParse {
   resolve: (document: ParsedScienfyDocument) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
+  markdown: string;
+  options: ParseScienfyDocumentOptions;
+  worker: Worker;
+  effectToken?: EffectToken;
 }
 
 let parserWorker: Worker | null = null;
@@ -25,9 +30,12 @@ const TRANSIENT_WORKER_FAILURE_PATTERN = /timed out|superseded|queue limit|worke
 export function parseScienfyDocumentAsync(
   markdown: string,
   options: ParseScienfyDocumentOptions = {},
+  effectToken?: EffectToken,
 ): Promise<ParsedScienfyDocument> {
   if (markdown.length > SOURCE_ONLY_FILE_BYTES && pendingParses.size > 0) {
-    rejectPendingParses(new Error('Document parser worker parse was superseded by a newer large-document request.'));
+    const superseded = new Error('Document parser worker parse was superseded by a newer large-document request.');
+    if (effectToken) rejectPendingParsesForDocument(effectToken.documentId, superseded);
+    else rejectPendingParses(superseded);
   }
   const worker = getParserWorker();
   if (!worker) return Promise.resolve().then(() => safeParseScienfyDocument(markdown, options));
@@ -37,9 +45,9 @@ export function parseScienfyDocumentAsync(
     trimPendingParseQueue();
     const timeout = setTimeout(() => {
       if (!pendingParses.has(id)) return;
-      rejectPendingParses(new Error(`Document parser worker timed out after ${PARSER_WORKER_TIMEOUT_MS} ms.`));
+      handleParseTimeout(id);
     }, PARSER_WORKER_TIMEOUT_MS);
-    pendingParses.set(id, { resolve, reject, timeout });
+    pendingParses.set(id, { resolve, reject, timeout, markdown, options, worker, effectToken });
     try {
       worker.postMessage({ id, markdown, options });
     } catch (error) {
@@ -47,6 +55,16 @@ export function parseScienfyDocumentAsync(
       reject(error instanceof Error ? error : new Error(String(error)));
     }
   });
+}
+
+export function cancelScienfyDocumentParse(token: EffectToken): boolean {
+  for (const [id, pending] of pendingParses) {
+    if (pending.effectToken?.operationId !== token.operationId) continue;
+    clearPendingParse(id);
+    pending.reject(new Error('Document parser worker parse was superseded by targeted cancellation.'));
+    return true;
+  }
+  return false;
 }
 
 export function isTransientParserWorkerFailure(error: unknown): boolean {
@@ -102,6 +120,34 @@ function clearPendingParse(id: number): void {
   const pending = pendingParses.get(id);
   if (pending) clearTimeout(pending.timeout);
   pendingParses.delete(id);
+}
+
+function handleParseTimeout(id: number): void {
+  const timedOut = pendingParses.get(id);
+  if (!timedOut) return;
+  const failedWorker = timedOut.worker;
+  clearPendingParse(id);
+  timedOut.reject(new Error(`Document parser worker timed out after ${PARSER_WORKER_TIMEOUT_MS} ms.`));
+  if (parserWorker === failedWorker) {
+    failedWorker.terminate();
+    parserWorker = null;
+  }
+  const unrelated = Array.from(pendingParses.entries()).filter(([, pending]) => pending.worker === failedWorker);
+  for (const [pendingId, pending] of unrelated) {
+    clearPendingParse(pendingId);
+    Promise.resolve()
+      .then(() => safeParseScienfyDocument(pending.markdown, pending.options))
+      .then(pending.resolve, pending.reject);
+  }
+}
+
+function rejectPendingParsesForDocument(documentId: EffectToken['documentId'] | undefined, error: Error): void {
+  if (!documentId) return;
+  for (const [id, pending] of pendingParses) {
+    if (pending.effectToken?.documentId !== documentId) continue;
+    clearPendingParse(id);
+    pending.reject(error);
+  }
 }
 
 function rejectPendingParses(error: Error): void {

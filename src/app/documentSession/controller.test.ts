@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_METADATA } from '../documentState';
+import { createSourceEnvelope, DEFAULT_METADATA } from '../documentState';
 import { SOURCE_ONLY_FILE_BYTES } from '../../markdown/supportedMarkdown';
 import {
   buildOpenedDocumentTransition,
@@ -15,10 +15,45 @@ import {
 } from './controller';
 
 describe('documentSession controller', () => {
+  it('keeps source naming generic while retaining bounded Markdown aliases', () => {
+    const transition = buildOpenedDocumentTransition({
+      path: 'C:\\lab\\notes.txt',
+      sourceText: 'plain source\n',
+      metadata: DEFAULT_METADATA,
+      format: 'plainText',
+      normalizeVisualStyle: () => null,
+    });
+
+    expect(transition.state.sourceText).toBe('plain source\n');
+    expect(transition.state.lastSavedSourceText).toBe('plain source\n');
+    expect(transition.state.markdown).toBe('plain source\n');
+  });
+
+  it('never labels mixed endings lossless without reconstruction evidence', () => {
+    const envelope = createSourceEnvelope('alpha\nbeta\n', 'alpha\nbeta\n', {
+      ...DEFAULT_METADATA,
+      lineEnding: 'crlf',
+      lineEndings: 'mixed',
+      hasMixedLineEndings: true,
+      contentHash: 'identity-only',
+      originalByteHash: 'identity-only',
+      losslessWrite: 'no',
+      lossReasons: ['mixed-line-endings-without-map'],
+    });
+
+    expect(envelope).toMatchObject({
+      lineEndings: 'mixed',
+      dominantLineEnding: 'crlf',
+      originalByteHash: 'identity-only',
+      losslessWrite: 'no',
+      lossReasons: ['mixed-line-endings-without-map'],
+    });
+  });
+
   it('defaults normal opened Markdown documents to visual mode', () => {
     const transition = buildOpenedDocumentTransition({
       path: 'C:\\lab\\paper.md',
-      content: '# Paper',
+      sourceText: '# Paper',
       metadata: {
         ...DEFAULT_METADATA,
         lastKnownSizeBytes: SOURCE_ONLY_FILE_BYTES,
@@ -42,7 +77,7 @@ describe('documentSession controller', () => {
   it('infers JSON opened documents and honors preferred tree mode state', () => {
     const transition = buildOpenedDocumentTransition({
       path: 'C:\\lab\\results.json',
-      content: '{"ok":true}\n',
+      sourceText: '{"ok":true}\n',
       metadata: DEFAULT_METADATA,
       preferredMode: 'visual',
       normalizeVisualStyle: () => null,
@@ -63,7 +98,7 @@ describe('documentSession controller', () => {
   it('keeps oversized opened Markdown documents in source mode through session transition', () => {
     const transition = buildOpenedDocumentTransition({
       path: 'C:\\lab\\large-paper.md',
-      content: '# Large',
+      sourceText: '# Large',
       metadata: {
         ...DEFAULT_METADATA,
         lastKnownSizeBytes: SOURCE_ONLY_FILE_BYTES + 1,
@@ -78,7 +113,7 @@ describe('documentSession controller', () => {
   it('builds opened saved-document state and metadata-derived settings', () => {
     const transition = buildOpenedDocumentTransition({
       path: 'C:\\lab\\paper.md',
-      content: '# Paper',
+      sourceText: '# Paper',
       metadata: DEFAULT_METADATA,
       preferredMode: 'source',
       parsedDocument: { visualStyle: 'scienfy', documentType: 'paper' },
@@ -94,14 +129,14 @@ describe('documentSession controller', () => {
       autosaveStatus: 'saved',
       externalConflict: false,
     });
-    expect(transition.settingsPatch).toEqual({ visualStyle: 'scienfy', documentType: 'report' });
+    expect(transition.presentationPatch).toEqual({ visualStyle: 'scienfy', documentType: 'report' });
     expect(transition.recentFilePath).toBe('C:\\lab\\paper.md');
   });
 
   it('builds untitled opened state without saved-file status', () => {
     const transition = buildOpenedDocumentTransition({
       path: null,
-      content: '',
+      sourceText: '',
       metadata: DEFAULT_METADATA,
       preferredMode: 'visual',
       normalizeVisualStyle: () => null,
@@ -201,7 +236,7 @@ describe('documentSession controller', () => {
     expect(decideLaunchDuplicate({
       requestedPath: 'C:/Lab/Paper.md',
       activePath: null,
-      inFlightPathKeys: new Set(['c:\\lab\\paper.md']),
+      inFlightPathKeys: new Set(['c:/lab/paper.md']),
       lastLaunchOpen: null,
       nowMs: 10_000,
       duplicateWindowMs: 3_000,
@@ -211,10 +246,21 @@ describe('documentSession controller', () => {
       requestedPath: 'C:/Lab/Paper.md',
       activePath: null,
       inFlightPathKeys: new Set(),
-      lastLaunchOpen: { pathKey: 'c:\\lab\\paper.md', openedAt: 8_000 },
+      lastLaunchOpen: { pathKey: 'c:/lab/paper.md', openedAt: 8_000 },
       nowMs: 10_000,
       duplicateWindowMs: 3_000,
     })).toMatchObject({ duplicate: true, reason: 'recent' });
+
+    expect(decideLaunchDuplicate({
+      requestedPath: 'C:\\alias\\paper.md',
+      requestedLocatorKey: 'stable:volume:42',
+      activePath: 'C:\\lab\\paper.md',
+      activeLocatorKey: 'stable:volume:42',
+      inFlightPathKeys: new Set(),
+      lastLaunchOpen: null,
+      nowMs: 10_000,
+      duplicateWindowMs: 3_000,
+    })).toMatchObject({ duplicate: true, reason: 'active' });
   });
 
   it('normalizes launch path display and status helpers', () => {

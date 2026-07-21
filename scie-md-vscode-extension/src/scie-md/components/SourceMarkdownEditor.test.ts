@@ -1,12 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import { CompletionContext } from '@codemirror/autocomplete';
+import { highlightingFor, syntaxTree } from '@codemirror/language';
 import { EditorState } from '@codemirror/state';
-import { buildInsertTransaction, createScientificCompletionSource, createSourceCitationDecorationRanges, createSourceInsertion, createSourceVariableDecorationRanges } from './SourceMarkdownEditor';
+import { tags } from '@lezer/highlight';
+import { buildInsertTransaction, createMarkdownPresentationExtension, createScientificCompletionSource, createSourceCitationDecorationRanges, createSourceInsertion, createSourceVariableDecorationRanges } from './SourceMarkdownEditor';
 import { createVariantGroupSnippet } from '@sciemd/core';
 
 function applyChange(doc: string, change: { from: number; to: number; insert: string }): string {
   return `${doc.slice(0, change.from)}${change.insert}${doc.slice(change.to)}`;
 }
+
+describe('semantic source presentation contract', () => {
+  it('preserves Markdown source and parse state while exposing semantic tag classes', () => {
+    const markdown = '# Heading\n\n**strong** [link](https://example.test) [@key]\n';
+    const state = EditorState.create({ doc: markdown, selection: { anchor: 2 }, extensions: createMarkdownPresentationExtension('enabled') });
+    expect(state.doc.toString()).toBe(markdown);
+    expect(state.selection.main.anchor).toBe(2);
+    expect(syntaxTree(state).toString()).toContain('Document');
+    expect(highlightingFor(state, [tags.heading, tags.strong, tags.link, tags.punctuation])).toBeTruthy();
+  });
+
+  it('falls back to plain text without mutating the document', () => {
+    const markdown = '# Still source\n';
+    const state = EditorState.create({ doc: markdown, extensions: createMarkdownPresentationExtension('large-file-fallback') });
+    expect(state.doc.toString()).toBe(markdown);
+    expect(syntaxTree(state).toString()).toBe('');
+  });
+});
 
 describe('createSourceInsertion', () => {
   it('wraps selected text for inline formatting', () => {

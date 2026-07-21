@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter};
 
 use super::{
     path_grants::{assert_directory_read_allowed, assert_file_read_allowed},
-    path_utils::external_safe_path,
+    path_utils::{canonical_comparison_key, external_safe_path},
 };
 
 static ACTIVE_WATCHER: OnceLock<Mutex<Option<ActiveFileWatcher>>> = OnceLock::new();
@@ -210,20 +210,7 @@ fn path_is_under(path: &Path, parent: &Path) -> bool {
 
 #[cfg(windows)]
 fn comparable_path(path: &Path) -> String {
-    let mut value = path.to_string_lossy().replace('\\', "/");
-    if let Some(rest) = value.strip_prefix("//?/UNC/") {
-        value = format!("//{rest}");
-    } else if let Some(rest) = value.strip_prefix("//?/") {
-        value = rest.to_string();
-    }
-    let is_unc = value.starts_with("//");
-    while value.contains("//") {
-        value = value.replace("//", "/");
-    }
-    if is_unc && !value.starts_with("//") {
-        value = format!("/{value}");
-    }
-    value.trim_end_matches('/').to_ascii_lowercase()
+    canonical_comparison_key(&path.to_string_lossy())
 }
 
 #[cfg(windows)]
@@ -237,7 +224,7 @@ fn normalized_comparable_path(path: &Path) -> String {
 
 #[cfg(not(windows))]
 fn comparable_path(path: &Path) -> String {
-    path.to_string_lossy().to_string()
+    canonical_comparison_key(&path.to_string_lossy())
 }
 
 fn is_relevant_event(kind: &EventKind) -> bool {

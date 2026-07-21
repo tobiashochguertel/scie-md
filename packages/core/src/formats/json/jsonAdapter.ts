@@ -1,14 +1,12 @@
 import type { FormatAdapter } from '../documentFormat.js';
+import { formatAdapterIdentity, requiredFormatParseBudgetBytes } from '../formatDefinitions.js';
 import { createJsonContent, parseJsonDocument, type JsonParseOptions, type ParsedJsonDocument } from './parseJsonDocument.js';
 
-export const JSON_FORMAT_EXTENSIONS = ['json'] as const;
-export const JSON_PARSE_BUDGET_BYTES = 1 * 1024 * 1024;
+export const JSON_FORMAT_EXTENSIONS = formatAdapterIdentity('json').extensions;
+export const JSON_PARSE_BUDGET_BYTES = requiredFormatParseBudgetBytes('json');
 
 export const jsonAdapter: FormatAdapter<ParsedJsonDocument, JsonParseOptions> = {
-  format: 'json',
-  label: 'JSON',
-  extensions: JSON_FORMAT_EXTENSIONS,
-  mediaTypes: ['application/json'],
+  ...formatAdapterIdentity('json'),
   capabilities: {
     sourceEditing: true,
     sourceEditor: {

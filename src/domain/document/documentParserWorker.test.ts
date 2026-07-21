@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createDocumentId, sourceRevision } from '../../app/documentIdentity';
+import type { EffectOperationId, EffectToken } from '../../app/effects/documentEffectCoordinator';
 
 describe('documentParserWorker', () => {
   afterEach(() => {
@@ -60,7 +62,41 @@ describe('documentParserWorker', () => {
     await vi.advanceTimersByTimeAsync(PARSER_WORKER_TIMEOUT_MS);
     await secondRejection;
   });
+
+  it('does not cancel an unrelated document when a large parse is superseded', async () => {
+    vi.stubGlobal('Worker', HangingWorker);
+    const { cancelScienfyDocumentParse, parseScienfyDocumentAsync } = await import('./documentParserWorker');
+    const { SOURCE_ONLY_FILE_BYTES } = await import('../../markdown/supportedMarkdown');
+    const firstDocument = createDocumentId();
+    const otherDocument = createDocumentId();
+    const other = token(otherDocument, 'layer-two-parse:other');
+    const stale = token(firstDocument, 'layer-two-parse:stale');
+    const fresh = token(firstDocument, 'layer-two-parse:fresh');
+    const large = `# Large\n\n${'x'.repeat(SOURCE_ONLY_FILE_BYTES + 1)}`;
+
+    const unrelatedParse = parseScienfyDocumentAsync('# Other', {}, other);
+    const staleParse = parseScienfyDocumentAsync(large, {}, stale);
+    const freshParse = parseScienfyDocumentAsync(`${large}\nnew`, {}, fresh);
+
+    await expect(staleParse).rejects.toThrow(/superseded/);
+    let unrelatedSettled = false;
+    void unrelatedParse.then(() => { unrelatedSettled = true; }, () => { unrelatedSettled = true; });
+    await Promise.resolve();
+    expect(unrelatedSettled).toBe(false);
+    expect(cancelScienfyDocumentParse(other)).toBe(true);
+    expect(cancelScienfyDocumentParse(fresh)).toBe(true);
+    await expect(unrelatedParse).rejects.toThrow(/targeted cancellation/);
+    await expect(freshParse).rejects.toThrow(/targeted cancellation/);
+  });
 });
+
+function token(documentId: ReturnType<typeof createDocumentId>, operationId: string): EffectToken {
+  return {
+    documentId,
+    operationId: operationId as EffectOperationId,
+    sourceRevision: sourceRevision(0),
+  };
+}
 
 class HangingWorker {
   onmessage: ((event: MessageEvent) => void) | null = null;

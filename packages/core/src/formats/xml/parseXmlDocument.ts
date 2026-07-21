@@ -9,6 +9,7 @@ import type {
   StructuredSourceMap,
 } from '../documentFormat.js';
 import { createDocumentContent } from '../documentFormat.js';
+import { requiredFormatParseBudgetBytes } from '../formatDefinitions.js';
 import {
   analyzeStructuredValue,
   createStructuredJsonPreview,
@@ -24,7 +25,7 @@ import {
   structuredValueType,
 } from '../structured/sourceMap.js';
 
-export const XML_PARSE_BUDGET_BYTES = 1 * 1024 * 1024;
+export const XML_PARSE_BUDGET_BYTES = requiredFormatParseBudgetBytes('xml');
 
 type XmlCursor = ReturnType<ReturnType<typeof parser.parse>['cursor']>;
 

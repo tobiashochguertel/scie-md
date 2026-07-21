@@ -1,10 +1,10 @@
-import { act, createElement, useRef, useState } from 'react';
+import { act, createElement, useRef, useState, useSyncExternalStore } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readVisualEditorState } from '../../components/visualEditorStateSync';
+import { documentEditorGateway } from '../documentEditorGateway';
 import { loadSettings } from '../../services/settingsService';
 import type { PersistedSettings } from '../../services/settingsService';
-import type { DocumentHost } from '../host/documentHost';
+import { DocumentHostError, type DocumentHost } from '../host/documentHost';
 import type { ConfirmState } from './useDialogs';
 import { useSaveOperations, suggestedDocumentSavePath, suggestedMarkdownSavePath } from './useSaveOperations';
 import type { VisualRoundTripWriteContext } from './useSaveOperations';
@@ -12,18 +12,10 @@ import { DEFAULT_METADATA } from '../documentState';
 import type { AutosaveStatus, FileMetadata } from '../documentState';
 import type { DocumentFormat } from '@sciemd/core';
 import type { StructuredSavePolicy } from '../structuredSavePolicy';
-
-vi.mock('../../components/visualEditorStateSync', () => ({
-  readVisualEditorState: vi.fn(() => null),
-  commitVisualEditorReadResult: vi.fn((result: { markdown: string; changed: boolean; markCommitted?: () => void } | null, onCommit: (markdown: string) => void) => {
-    if (!result) return null;
-    if (result.changed) {
-      result.markCommitted?.();
-      onCommit(result.markdown);
-    }
-    return result.markdown;
-  }),
-}));
+import { fallbackFileLocator, type FileDocumentLocator } from '../documentIdentity';
+import { createDocumentRecord } from '../documentRecord';
+import type { WorkspaceStore } from '../workspace/workspaceStore';
+import { createHiddenWorkspaceHarness } from '../workspace/hiddenWorkspaceHarness';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -81,7 +73,9 @@ describe('useSaveOperations', () => {
   let confirmVisualRoundTripWrite: ReturnType<typeof vi.fn<(markdown: string, context: VisualRoundTripWriteContext) => Promise<boolean>>>;
   let pushToast: ReturnType<typeof vi.fn<(text: string, tone?: 'info' | 'success' | 'warning' | 'error') => void>>;
   let commitMarkdownEdit: ReturnType<typeof vi.fn<(markdown: string) => void>>;
-  const mockedReadVisualEditorState = vi.mocked(readVisualEditorState);
+  let updateHarnessSource: (sourceText: string) => void;
+  let updateHarnessPath: (filePath: string | null) => void;
+  const mockedReadVisualEditorState = vi.spyOn(documentEditorGateway, 'flush');
 
   beforeEach(() => {
     container = document.createElement('div');
@@ -95,6 +89,8 @@ describe('useSaveOperations', () => {
     confirmVisualRoundTripWrite = vi.fn<(markdown: string, context: VisualRoundTripWriteContext) => Promise<boolean>>().mockResolvedValue(true);
     pushToast = vi.fn<(text: string, tone?: 'info' | 'success' | 'warning' | 'error') => void>();
     commitMarkdownEdit = vi.fn<(markdown: string) => void>();
+    updateHarnessSource = () => undefined;
+    updateHarnessPath = () => undefined;
     mockedReadVisualEditorState.mockReturnValue(null);
   });
 
@@ -403,7 +399,7 @@ describe('useSaveOperations', () => {
     const path = 'C:\\docs\\deleted.md';
     const sourceMetadata = metadata({ lastKnownMtimeMs: 1000, lastKnownSizeBytes: 9, contentHash: 'deleted-old', lineEnding: 'crlf' });
     const nextMetadata = metadata({ lastKnownMtimeMs: 2000, lastKnownSizeBytes: 9, contentHash: 'deleted-new', lineEnding: 'crlf' });
-    host.file.statFile.mockRejectedValue(new Error('The system cannot find the file specified. (os error 2)'));
+    host.file.statFile.mockRejectedValue(new DocumentHostError('NOT_FOUND', 'Fichier introuvable'));
     host.file.writeTextFileAtomic.mockResolvedValue(nextMetadata);
     renderHarness({ filePath: path, fileMetadata: sourceMetadata, markdown: '# Deleted\n' });
 
@@ -426,7 +422,7 @@ describe('useSaveOperations', () => {
     expect(latestSnapshot?.fileMetadata).toBe(nextMetadata);
   });
 
-  it('drops a stale Save As after document identity changes during path selection', async () => {
+  it('drops a stale Save As after the originating locator changes during path selection', async () => {
     const sourcePath = 'C:\\docs\\paper.md';
     const targetPath = 'C:\\docs\\renamed.md';
     const sourceMetadata = metadata({ lastKnownMtimeMs: 1000, lastKnownSizeBytes: 8, contentHash: 'source' });
@@ -443,7 +439,7 @@ describe('useSaveOperations', () => {
 
     expect(host.dialog.pickSavePath).toHaveBeenCalledWith(sourcePath, 'markdown');
 
-    identityVersion += 1;
+    act(() => updateHarnessPath?.('C:\\docs\\other.md'));
     pickedPath.resolve(targetPath);
     let result: string | false | undefined;
     await act(async () => {
@@ -454,7 +450,63 @@ describe('useSaveOperations', () => {
     expect(result).toBe(false);
     expect(host.file.statFile).not.toHaveBeenCalled();
     expect(host.file.writeTextFileAtomic).not.toHaveBeenCalled();
-    expect(latestSnapshot?.filePath).toBe(sourcePath);
+    expect(latestSnapshot?.filePath).toBe('C:\\docs\\other.md');
+  });
+
+  it('save_must_complete_for_originating_identity_even_if_active_document_changed', async () => {
+    const path = 'C:\\docs\\origin.md';
+    const sourceMetadata = metadata({ lastKnownMtimeMs: 1000, lastKnownSizeBytes: 9, contentHash: 'origin-old' });
+    const origin = createDocumentRecord({
+      locator: fallbackFileLocator(path),
+      sourceText: '# Origin\n',
+      savedSourceText: '# Old\n',
+      fileBaseline: sourceMetadata,
+    });
+    const other = createDocumentRecord({
+      locator: fallbackFileLocator('C:\\docs\\other.md'),
+      sourceText: '# Other\n',
+    });
+    const workspaceStore = createHiddenWorkspaceHarness(origin);
+    workspaceStore.dispatch({ type: 'openDocument', document: other });
+    workspaceStore.dispatch({ type: 'activateDocument', documentId: origin.id });
+    const verification = deferred<FileMetadata>();
+    host.file.statFile
+      .mockReturnValueOnce(verification.promise)
+      .mockResolvedValue(sourceMetadata);
+    host.file.writeTextFileAtomic.mockResolvedValue(metadata({ lastKnownMtimeMs: 2000, contentHash: 'origin-new' }));
+    act(() => {
+      root.render(createElement(WorkspaceSaveHarness, {
+        workspaceStore,
+        host,
+        confirmText,
+        pushToast,
+        onOperations: (operations: SaveOperations) => { latestOperations = operations; },
+      }));
+    });
+
+    let saveResult!: Promise<string | false>;
+    await act(async () => {
+      saveResult = latestOperations!.saveCurrent();
+      await Promise.resolve();
+    });
+
+    act(() => { workspaceStore.dispatch({ type: 'activateDocument', documentId: other.id }); });
+    verification.resolve(sourceMetadata);
+    let result: string | false | undefined;
+    await act(async () => {
+      result = await saveResult;
+    });
+
+    expect(result).toBe(path);
+    expect(host.file.writeTextFileAtomic).toHaveBeenCalledWith(
+      path,
+      '# Origin\n',
+      sourceMetadata,
+      sourceMetadata,
+    );
+    expect(workspaceStore.getState().activeDocumentId).toBe(other.id);
+    expect(workspaceStore.getState().documentsById[origin.id].source.savedSourceText).toBe('# Origin\n');
+    expect(workspaceStore.getState().documentsById[other.id].source.sourceText).toBe('# Other\n');
   });
 
   it('does not replace an existing Save As target when the user cancels replacement', async () => {
@@ -504,6 +556,34 @@ describe('useSaveOperations', () => {
     expect(host.file.writeTextFileAtomic).not.toHaveBeenCalled();
   });
 
+  it('fails closed when an existing Save As target cannot be backed up', async () => {
+    const targetPath = 'C:\\docs\\existing.md';
+    const existingMetadata = metadata({ lastKnownMtimeMs: 1500, lastKnownSizeBytes: 14, contentHash: 'existing' });
+    host.dialog.pickSavePath.mockResolvedValue(targetPath);
+    host.file.statFile.mockResolvedValue(existingMetadata);
+    host.file.createBackupSnapshot.mockRejectedValue(new DocumentHostError('BACKUP_FAILED', 'backup disk full'));
+    renderHarness({ filePath: null, markdown: '# Replacement\n' });
+
+    let result: string | false | undefined;
+    await act(async () => {
+      result = await latestOperations?.saveCurrent();
+    });
+    await flushAsync();
+
+    expect(result).toBe(false);
+    expect(host.file.createBackupSnapshot).toHaveBeenCalledWith(targetPath, 'manual');
+    expect(host.file.writeTextFileAtomic).not.toHaveBeenCalled();
+    expect(host.recovery.saveFileDraft).toHaveBeenCalledWith(
+      targetPath,
+      '# Replacement\n',
+      expect.any(Number),
+      DEFAULT_METADATA,
+      'markdown',
+    );
+    expect(latestSnapshot?.autosaveStatus).toBe('error');
+    expect(pushToast).toHaveBeenCalledWith(expect.stringContaining('promised backup'), 'error');
+  });
+
   it('refuses to write cloud-placeholder files and preserves a file draft', async () => {
     const path = 'C:\\docs\\cloud.md';
     const sourceMetadata = metadata({ lastKnownMtimeMs: 1000, lastKnownSizeBytes: 8, contentHash: 'cloud-source' });
@@ -531,7 +611,7 @@ describe('useSaveOperations', () => {
     const path = 'C:\\docs\\paper.md';
     const sourceMetadata = metadata({ lastKnownMtimeMs: 1000, lastKnownSizeBytes: 9, contentHash: 'old' });
     host.file.statFile.mockResolvedValue(sourceMetadata);
-    host.file.writeTextFileAtomic.mockRejectedValue(new Error('disk full'));
+    host.file.writeTextFileAtomic.mockRejectedValue(new DocumentHostError('UNKNOWN_HOST_ERROR', 'disk full'));
     renderHarness({ filePath: path, fileMetadata: sourceMetadata, markdown: '# Draft\n' });
 
     let result: string | false | undefined;
@@ -548,6 +628,138 @@ describe('useSaveOperations', () => {
       documentPath: path,
       sourceTextBytes: 8,
     }));
+  });
+
+  it('uses FILE_CHANGED rather than message text for a native write race', async () => {
+    const path = 'C:\\docs\\race.md';
+    const sourceMetadata = metadata({ lastKnownMtimeMs: 1000, lastKnownSizeBytes: 8, contentHash: 'source' });
+    host.file.statFile.mockResolvedValue(sourceMetadata);
+    host.file.writeTextFileAtomic.mockRejectedValue(new DocumentHostError('FILE_CHANGED', 'Le fichier a changé.'));
+    renderHarness({ filePath: path, fileMetadata: sourceMetadata, markdown: '# Local\n' });
+
+    let result: string | false | undefined;
+    await act(async () => {
+      result = await latestOperations?.saveCurrent();
+    });
+    await flushAsync();
+
+    expect(result).toBe(false);
+    expect(host.recovery.saveFileDraft).toHaveBeenCalled();
+    expect(latestSnapshot?.autosaveStatus).toBe('conflict');
+    expect(latestSnapshot?.externalConflict).toBe(true);
+  });
+
+  it('retries a native LOSSY_WRITE_REQUIRED veto as UTF-8 only after explicit approval', async () => {
+    const path = 'C:\\docs\\legacy.md';
+    const sourceMetadata = metadata({ encoding: 'utf8', contentHash: 'source' });
+    const nextMetadata = metadata({ encoding: 'utf8', contentHash: 'next' });
+    host.file.statFile.mockResolvedValue(sourceMetadata);
+    host.file.writeTextFileAtomic
+      .mockRejectedValueOnce(new DocumentHostError('LOSSY_WRITE_REQUIRED', 'Impossible de représenter tous les caractères.'))
+      .mockResolvedValueOnce(nextMetadata);
+    confirmText.mockResolvedValue(true);
+    renderHarness({ filePath: path, fileMetadata: sourceMetadata, markdown: '🧪\n' });
+
+    let result: string | false | undefined;
+    await act(async () => {
+      result = await latestOperations?.saveCurrent();
+    });
+    await flushAsync();
+
+    expect(result).toBe(path);
+    expect(confirmText).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Review file fidelity before saving',
+      okLabel: 'Save as UTF-8',
+    }));
+    expect(host.file.writeTextFileAtomic).toHaveBeenCalledTimes(2);
+    expect(host.file.writeTextFileAtomic).toHaveBeenLastCalledWith(
+      path,
+      '🧪\n',
+      expect.objectContaining({ encoding: 'utf8', hasBom: false }),
+      sourceMetadata,
+    );
+    expect(latestSnapshot?.autosaveStatus).toBe('saved');
+  });
+
+  it('preflights unrepresentable Windows-1252 edits and writes UTF-8 with the same disk guard', async () => {
+    const path = 'C:\\docs\\legacy.txt';
+    const sourceMetadata = metadata({ encoding: 'windows1252', contentHash: 'source' });
+    const nextMetadata = metadata({ encoding: 'utf8', contentHash: 'next' });
+    host.file.statFile.mockResolvedValue(sourceMetadata);
+    host.file.writeTextFileAtomic.mockResolvedValue(nextMetadata);
+    confirmText.mockResolvedValue(true);
+    renderHarness({ filePath: path, fileMetadata: sourceMetadata, format: 'plainText', markdown: 'result 🧪\n' });
+
+    let result: string | false | undefined;
+    await act(async () => {
+      result = await latestOperations?.saveCurrent();
+    });
+
+    expect(result).toBe(path);
+    expect(host.file.writeTextFileAtomic).toHaveBeenCalledTimes(1);
+    expect(host.file.writeTextFileAtomic).toHaveBeenCalledWith(
+      path,
+      'result 🧪\n',
+      expect.objectContaining({ encoding: 'utf8', hasBom: false }),
+      sourceMetadata,
+    );
+    expect(confirmText).toHaveBeenCalledWith(expect.objectContaining({ okLabel: 'Save as UTF-8' }));
+  });
+
+  it('rejects a stale fidelity approval after the source revision and locator change', async () => {
+    const path = 'C:\\docs\\legacy.md';
+    const sourceMetadata = metadata({ encoding: 'windows1252', contentHash: 'source' });
+    const approval = deferred<boolean>();
+    host.file.statFile.mockResolvedValue(sourceMetadata);
+    confirmText.mockReturnValueOnce(approval.promise);
+    renderHarness({ filePath: path, fileMetadata: sourceMetadata, markdown: '🧪\n' });
+
+    let savePromise: Promise<string | false> | undefined;
+    await act(async () => {
+      savePromise = latestOperations?.saveCurrent();
+      await flushAsync();
+    });
+    act(() => {
+      updateHarnessSource('new revision 🧪\n');
+      updateHarnessPath('C:\\docs\\moved.md');
+    });
+    approval.resolve(true);
+
+    let result: string | false | undefined;
+    await act(async () => {
+      result = await savePromise;
+    });
+
+    expect(result).toBe(false);
+    expect(host.file.writeTextFileAtomic).not.toHaveBeenCalled();
+    expect(host.recovery.saveFileDraft).toHaveBeenCalled();
+    expect(host.recovery.appendDiagnosticsEvent).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'save-fidelity-approval-stale',
+    }));
+  });
+
+  it('pauses autosave for mixed endings without a reconstruction map', async () => {
+    const path = 'C:\\docs\\mixed.md';
+    const sourceMetadata = metadata({
+      lineEnding: 'crlf',
+      hasMixedLineEndings: true,
+      lineEndings: 'mixed',
+      losslessWrite: 'no',
+      lossReasons: ['mixed-line-endings-without-map'],
+    });
+    host.file.statFile.mockResolvedValue(sourceMetadata);
+    renderHarness({ filePath: path, fileMetadata: sourceMetadata, markdown: 'alpha\nbeta\n' });
+
+    let result: string | false | undefined;
+    await act(async () => {
+      result = await latestOperations?.saveCurrent({ autosave: true });
+    });
+
+    expect(result).toBe(false);
+    expect(confirmText).not.toHaveBeenCalled();
+    expect(host.file.writeTextFileAtomic).not.toHaveBeenCalled();
+    expect(host.recovery.saveFileDraft).toHaveBeenCalled();
+    expect(latestSnapshot?.autosaveStatus).toBe('paused');
   });
 
   it('preserves a draft and marks conflict when disk metadata changed before save', async () => {
@@ -620,6 +832,34 @@ describe('useSaveOperations', () => {
     expect(latestSnapshot?.fileMetadata).toBe(nextMetadata);
   });
 
+  it('fails closed when a changed disk version cannot be backed up before overwrite', async () => {
+    const path = 'C:\\docs\\conflict.md';
+    const sourceMetadata = metadata({ lastKnownMtimeMs: 1000, lastKnownSizeBytes: 8, contentHash: 'source' });
+    const changedMetadata = metadata({ lastKnownMtimeMs: 2000, lastKnownSizeBytes: 12, contentHash: 'changed' });
+    host.file.statFile.mockResolvedValue(changedMetadata);
+    host.file.createBackupSnapshot.mockRejectedValue(new DocumentHostError('BACKUP_FAILED', 'backup unavailable'));
+    renderHarness({ filePath: path, fileMetadata: sourceMetadata, markdown: '# Local edit\n' });
+
+    let result: string | false | undefined;
+    await act(async () => {
+      result = await latestOperations?.saveCurrent({ forceOverwrite: true });
+    });
+    await flushAsync();
+
+    expect(result).toBe(false);
+    expect(host.file.createBackupSnapshot).toHaveBeenCalledWith(path, 'external');
+    expect(host.file.writeTextFileAtomic).not.toHaveBeenCalled();
+    expect(host.recovery.saveFileDraft).toHaveBeenCalledWith(
+      path,
+      '# Local edit\n',
+      expect.any(Number),
+      sourceMetadata,
+      'markdown',
+    );
+    expect(latestSnapshot?.autosaveStatus).toBe('error');
+    expect(latestSnapshot?.externalConflict).toBe(true);
+  });
+
   it('pauses autosave for parser-invalid structured source and preserves a recovery draft', async () => {
     const path = 'C:\\docs\\invalid.json';
     const sourceMetadata = metadata({ lastKnownMtimeMs: 1000, lastKnownSizeBytes: 9, contentHash: 'invalid-source' });
@@ -688,12 +928,67 @@ describe('useSaveOperations', () => {
     expect(latestSnapshot?.autosaveStatus).toBe('paused');
   });
 
+  it('reserves a Save As locator before disk inspection and blocks an owned target', async () => {
+    const targetPath = 'C:\\docs\\owned.md';
+    const reserveSaveLocator = vi.fn<(path: string) => Promise<FileDocumentLocator | null>>().mockResolvedValue(null);
+    host.dialog.pickSavePath.mockResolvedValue(targetPath);
+    renderHarness({ reserveSaveLocator });
+
+    let result: string | false | undefined;
+    await act(async () => {
+      result = await latestOperations?.saveCurrent({ forceSaveAs: true });
+    });
+
+    expect(result).toBe(false);
+    expect(reserveSaveLocator).toHaveBeenCalledWith(targetPath, expect.any(String));
+    expect(host.file.statFile).not.toHaveBeenCalled();
+    expect(host.file.writeTextFileAtomic).not.toHaveBeenCalled();
+    expect(host.recovery.saveFileDraft).toHaveBeenCalledWith(
+      targetPath,
+      '# Draft\n',
+      expect.any(Number),
+      DEFAULT_METADATA,
+      'markdown',
+    );
+  });
+
+  it('rechecks a missing Save As reservation before writing and refreshes identity afterward', async () => {
+    const targetPath = 'C:\\docs\\new.md';
+    const reservedLocator: FileDocumentLocator = {
+      kind: 'file',
+      displayPath: targetPath,
+      comparisonKey: 'c:/docs/new.md',
+      identityConfidence: 'pathOnly',
+      aliases: [],
+    };
+    const reserveSaveLocator = vi.fn<(path: string) => Promise<FileDocumentLocator | null>>().mockResolvedValue(reservedLocator);
+    const commitSavedLocator = vi.fn<(path: string) => Promise<boolean>>().mockResolvedValue(true);
+    host.dialog.pickSavePath.mockResolvedValue(targetPath);
+    host.file.statFile.mockRejectedValue(new DocumentHostError('NOT_FOUND', 'Missing'));
+    host.file.writeTextFileAtomic.mockResolvedValue(metadata({ contentHash: 'created' }));
+    renderHarness({ reserveSaveLocator, commitSavedLocator });
+
+    let result: string | false | undefined;
+    await act(async () => {
+      result = await latestOperations?.saveCurrent({ forceSaveAs: true });
+    });
+    await flushAsync();
+
+    expect(result).toBe(targetPath);
+    expect(reserveSaveLocator).toHaveBeenCalledTimes(2);
+    expect(commitSavedLocator).toHaveBeenCalledWith(targetPath, expect.any(String));
+    expect(reserveSaveLocator.mock.invocationCallOrder[1]).toBeLessThan(host.file.writeTextFileAtomic.mock.invocationCallOrder[0]);
+    expect(host.file.writeTextFileAtomic.mock.invocationCallOrder[0]).toBeLessThan(commitSavedLocator.mock.invocationCallOrder[0]);
+  });
+
   function renderHarness(options: {
     filePath?: string | null;
     fileMetadata?: FileMetadata;
     format?: DocumentFormat;
     markdown?: string;
     structuredSavePolicy?: StructuredSavePolicy;
+    reserveSaveLocator?: (path: string) => Promise<FileDocumentLocator | null>;
+    commitSavedLocator?: (path: string) => Promise<boolean>;
   } = {}) {
     act(() => {
       root.render(createElement(SaveHarness, {
@@ -705,6 +1000,8 @@ describe('useSaveOperations', () => {
         getDocumentIdentityVersion: () => identityVersion,
         confirmVisualRoundTripWrite,
         structuredSavePolicy: options.structuredSavePolicy,
+        reserveSaveLocator: options.reserveSaveLocator,
+        commitSavedLocator: options.commitSavedLocator,
         confirmText,
         pushToast,
         commitMarkdownEdit,
@@ -714,10 +1011,56 @@ describe('useSaveOperations', () => {
         onSnapshot: (snapshot: SaveSnapshot) => {
           latestSnapshot = snapshot;
         },
+        onMutators: (mutators: { setSourceText: (value: string) => void; setFilePath: (value: string | null) => void }) => {
+          updateHarnessSource = mutators.setSourceText;
+          updateHarnessPath = mutators.setFilePath;
+        },
       }));
     });
   }
 });
+
+function WorkspaceSaveHarness({
+  workspaceStore,
+  host,
+  confirmText,
+  pushToast,
+  onOperations,
+}: {
+  workspaceStore: WorkspaceStore;
+  host: DocumentHost;
+  confirmText: (state: ConfirmState) => Promise<boolean>;
+  pushToast: (text: string, tone?: 'info' | 'success' | 'warning' | 'error') => void;
+  onOperations: (operations: SaveOperations) => void;
+}) {
+  const state = useSyncExternalStore(workspaceStore.subscribe, workspaceStore.getState, workspaceStore.getState);
+  const document = state.documentsById[state.activeDocumentId!];
+  const [_settings, setSettings] = useState<PersistedSettings>(() => loadSettings());
+  const operations = useSaveOperations({
+    documentId: document.id,
+    workspaceStore,
+    reserveSaveLocator: async () => document.locator.kind === 'file' ? document.locator : null,
+    commitSavedLocator: async () => true,
+    filePath: document.locator.kind === 'file' ? document.locator.displayPath : null,
+    fileMetadata: document.fileBaseline,
+    format: document.format,
+    sourceText: document.source.sourceText,
+    setFilePath: () => undefined,
+    setFormat: () => undefined,
+    setFileMetadata: () => undefined,
+    setLastSavedSourceText: () => undefined,
+    setAutosaveStatus: () => undefined,
+    setLastAutosavedAt: () => undefined,
+    setExternalConflict: () => undefined,
+    setSettings,
+    commitSourceTextEdit: () => undefined,
+    confirmText,
+    pushToast,
+    host,
+  });
+  onOperations(operations);
+  return null;
+}
 
 function SaveHarness({
   host,
@@ -728,11 +1071,14 @@ function SaveHarness({
   getDocumentIdentityVersion,
   confirmVisualRoundTripWrite,
   structuredSavePolicy,
+  reserveSaveLocator,
+  commitSavedLocator,
   confirmText,
   pushToast,
   commitMarkdownEdit,
   onOperations,
   onSnapshot,
+  onMutators,
 }: {
   host: DocumentHost;
   initialFilePath: string | null;
@@ -742,11 +1088,14 @@ function SaveHarness({
   getDocumentIdentityVersion: () => number;
   confirmVisualRoundTripWrite: (markdown: string, context: VisualRoundTripWriteContext) => Promise<boolean>;
   structuredSavePolicy?: StructuredSavePolicy;
+  reserveSaveLocator?: (path: string) => Promise<FileDocumentLocator | null>;
+  commitSavedLocator?: (path: string) => Promise<boolean>;
   confirmText: (state: ConfirmState) => Promise<boolean>;
   pushToast: (text: string, tone?: 'info' | 'success' | 'warning' | 'error') => void;
   commitMarkdownEdit: (markdown: string) => void;
   onOperations: (operations: SaveOperations) => void;
   onSnapshot: (snapshot: SaveSnapshot) => void;
+  onMutators: (mutators: { setSourceText: (value: string) => void; setFilePath: (value: string | null) => void }) => void;
 }) {
   const [filePath, setFilePath] = useState<string | null>(initialFilePath);
   const [fileMetadata, setFileMetadata] = useState<FileMetadata>(initialFileMetadata);
@@ -758,11 +1107,14 @@ function SaveHarness({
   const [autosaveStatus, setAutosaveStatus] = useState<AutosaveStatus>('idle');
   const [lastAutosavedAt, setLastAutosavedAt] = useState<number | null>(null);
   const [externalConflict, setExternalConflict] = useState(false);
+  onMutators({ setSourceText, setFilePath });
   const [_settings, setSettings] = useState<PersistedSettings>(() => loadSettings());
   const structuredSavePolicyRef = useRef<StructuredSavePolicy>(defaultStructuredSavePolicy(format));
   structuredSavePolicyRef.current = structuredSavePolicy ?? defaultStructuredSavePolicy(format);
 
   const operations = useSaveOperations({
+    reserveSaveLocator,
+    commitSavedLocator,
     filePath,
     fileMetadata,
     format,
