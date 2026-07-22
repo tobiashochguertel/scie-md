@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "family": "IBM Plex Mono",
+  "package": "@ibm/plex-mono",
+  "packageVersion": "2.5.0",
+  "upstreamFontVersion": "2.5.0",
+  "source": "https://github.com/IBM/plex",
+  "license": "OFL-1.1",
+  "authoritativeDirectory": "public/fonts/vendor/ibm-plex-mono",
+  "generatedMirror": "scie-md-vscode-extension/src/scie-md/styles/fonts/vendor/ibm-plex-mono",
+  "generatedBy": "scripts/fonts/sync-ibm-plex-mono.mjs",
+  "faces": [
+    {
+      "weight": 400,
+      "style": "normal",
+      "file": "ibm-plex-mono-400-normal.woff2"
+    },
+    {
+      "weight": 400,
+      "style": "italic",
+      "file": "ibm-plex-mono-400-italic.woff2"
+    },
+    {
+      "weight": 500,
+      "style": "normal",
+      "file": "ibm-plex-mono-500-normal.woff2"
+    },
+    {
+      "weight": 700,
+      "style": "normal",
+      "file": "ibm-plex-mono-700-normal.woff2"
+    }
+  ],
+  "supplementalGlyphFace": {
+    "family": "Noto Sans Mono",
+    "package": "@fontsource/noto-sans-mono",
+    "packageVersion": "5.2.10",
+    "source": "https://github.com/notofonts/latin-greek-cyrillic",
+    "license": "OFL-1.1",
+    "unicodeRange": "U+0370-03FF",
+    "file": "noto-sans-mono-greek-400-normal.woff2",
+    "purpose": "Greek glyph coverage within the IBM Plex Mono CSS composite family"
+  },
+  "files": [
+    {
+      "name": "ibm-plex-mono-400-normal.woff2",
+      "bytes": 49248,
+      "sha256": "ba204497f16b6d334cee9d1e963a831b73e3a56e1d6300a8489d18df7214b350"
+    },
+    {
+      "name": "ibm-plex-mono-400-italic.woff2",
+      "bytes": 53408,
+      "sha256": "2024bf2b08027dcd6d09091385756e327744bbe26b782c411381dffc40ffc622"
+    },
+    {
+      "name": "ibm-plex-mono-500-normal.woff2",
+      "bytes": 50400,
+      "sha256": "33faf307fa6031fb4062276d7320a6d632de890cbb347576fd80cfa01077bc25"
+    },
+    {
+      "name": "ibm-plex-mono-700-normal.woff2",
+      "bytes": 50380,
+      "sha256": "ea576f38d05cc44cca48c45314984beb8cc1d2b886f58e1dce99f15dc344eb1d"
+    },
+    {
+      "name": "OFL.txt",
+      "bytes": 4456,
+      "sha256": "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da"
+    },
+    {
+      "name": "noto-sans-mono-greek-400-normal.woff2",
+      "bytes": 6588,
+      "sha256": "127bdd57fab3329cc2aff2c24b1b02a7864d48f05ad5be95a66a709fa10c49a3"
+    },
+    {
+      "name": "OFL-Noto-Sans-Mono.txt",
+      "bytes": 4394,
+      "sha256": "9e73c367ca79c54f9bce96d879b7a7f7fa279119ed4b3e61299f061b34f361cb"
+    }
+  ]
+}

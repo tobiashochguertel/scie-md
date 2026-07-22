@@ -90,7 +90,7 @@ export type WorkspaceCommand =
   | { type: 'requestClose'; documentId: DocumentId; requestId: string }
   | { type: 'cancelClose'; documentId: DocumentId; requestId: string }
   | { type: 'finalizeRemoveDocument'; authorization: WorkspaceCloseAuthorization }
-  | { type: 'reopenDocument'; documentId?: DocumentId }
+  | { type: 'reopenDocument'; documentId?: DocumentId; rehydratedDocument?: DocumentRecord }
   | { type: 'reorderDocument'; documentId: DocumentId; toIndex: number }
   | { type: 'closeOthers'; documentId: DocumentId; requests: Record<DocumentId, string> }
   | { type: 'closeRight'; documentId: DocumentId; requests: Record<DocumentId, string> }
@@ -170,7 +170,7 @@ export function workspaceReducer(current: WorkspaceState, command: WorkspaceComm
       next = finalizeRemoveDocument(state, command.authorization);
       break;
     case 'reopenDocument':
-      next = reopenDocument(state, command.documentId);
+      next = reopenDocument(state, command.documentId, command.rehydratedDocument);
       break;
     case 'reorderDocument':
       next = reorderDocument(state, command.documentId, command.toIndex);
@@ -264,6 +264,9 @@ export function assertValidWorkspaceState(state: WorkspaceState): WorkspaceState
   assertUniqueAndComplete('tabOrder', state.tabOrder, documentIds);
   assertUniqueAndComplete('recentlyActiveDocumentIds', state.recentlyActiveDocumentIds, documentIds);
   if (state.activeDocumentId && !state.documentsById[state.activeDocumentId]) throw new Error('The active document must exist in documentsById.');
+  if (state.activeDocumentId && state.documentsById[state.activeDocumentId].source.residency.kind !== 'resident') {
+    throw new Error('The active document must own resident source.');
+  }
   if (documentIds.length > 1 && (!state.capability.multiDocumentWorkspaceEnabled || !state.capability.activationSurface)) {
     throw new Error('Multiple documents require the enabled capability and a registered activation surface.');
   }
@@ -463,11 +466,15 @@ function removeDocument(state: WorkspaceState, documentId: DocumentId): Workspac
   };
 }
 
-function reopenDocument(state: WorkspaceState, requestedId?: DocumentId): WorkspaceState {
-  const document = requestedId
+function reopenDocument(state: WorkspaceState, requestedId?: DocumentId, rehydratedDocument?: DocumentRecord): WorkspaceState {
+  const closed = requestedId
     ? state.recentlyClosedDocuments.find((entry) => entry.id === requestedId)
     : state.recentlyClosedDocuments[0];
-  if (!document) return diagnostic(state, 'reopenDocument', 'DOCUMENT_NOT_FOUND', requestedId ?? null, 'No matching recently closed document is available.');
+  if (!closed) return diagnostic(state, 'reopenDocument', 'DOCUMENT_NOT_FOUND', requestedId ?? null, 'No matching recently closed document is available.');
+  const document = rehydratedDocument ?? closed;
+  if (document.id !== closed.id || !sameDocumentLocator(document.locator, closed.locator)) {
+    return diagnostic(state, 'reopenDocument', 'STALE_REPLACEMENT', closed.id, 'Reopened source does not match the recently closed document.');
+  }
   const reopened = addDocument(state, document, 'reopenDocument');
   if (!reopened.documentsById[document.id]) return reopened;
   return { ...reopened, recentlyClosedDocuments: reopened.recentlyClosedDocuments.filter((entry) => entry.id !== document.id) };

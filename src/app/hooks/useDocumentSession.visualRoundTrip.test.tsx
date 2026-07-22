@@ -2,7 +2,7 @@ import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_METADATA } from '../documentState';
-import type { FileMetadata, ReadTextFileResponse } from '../documentState';
+import { createHostReadResponse, type FileMetadata, type ReadTextFileResponse } from '../documentState';
 import type { DocumentHost } from '../host/documentHost';
 import { loadSettings } from '../../services/settingsService';
 import type { PersistedSettings } from '../../services/settingsService';
@@ -412,14 +412,11 @@ function createHost(): MockDocumentHost {
 }
 
 function readResponse(content: string): ReadTextFileResponse {
-  return {
-    content,
-    metadata: {
+  return createHostReadResponse(content, {
       ...DEFAULT_METADATA,
       lastKnownSizeBytes: content.length,
       contentHash: `hash:${content.length}`,
-    },
-  };
+  });
 }
 
 async function flushAsync() {

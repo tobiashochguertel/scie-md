@@ -13,7 +13,9 @@ const bundledFonts = [
   { name: 'Source Serif 4', use: 'Manuscript, journal, and Nature-style prose', license: 'SIL OFL 1.1' },
   { name: 'Lora', use: 'Science-style long-form reading surface', license: 'SIL OFL 1.1' },
   { name: 'IBM Plex Sans', use: 'Lab-note, technical, and label typography', license: 'SIL OFL 1.1' },
-  { name: 'JetBrains Mono', use: 'Source mode, code blocks, and SVG source labels', license: 'SIL OFL 1.1' },
+  { name: 'IBM Plex Mono', use: 'Markdown source fallback when no VS Code editor font is configured', license: 'SIL OFL 1.1' },
+  { name: 'Noto Sans Mono', use: 'Greek source-glyph supplement', license: 'SIL OFL 1.1' },
+  { name: 'JetBrains Mono', use: 'Code blocks, technical UI, structured previews, and SVG source labels', license: 'SIL OFL 1.1' },
   { name: 'KaTeX math fonts', use: 'Equation rendering', license: 'KaTeX package MIT license' },
 ];
 

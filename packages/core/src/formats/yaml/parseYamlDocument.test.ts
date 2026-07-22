@@ -3,7 +3,7 @@ import { parseDocument } from 'yaml';
 import { createYamlContent, createYamlJsonPreview, parseYamlDocument, YAML_ALIAS_COUNT_LIMIT } from './parseYamlDocument.js';
 
 describe('parseYamlDocument', () => {
-  it('parses valid YAML into a structured read-only value', () => {
+  it('parses valid YAML into a guarded editable structured value', () => {
     const result = parseYamlDocument(createYamlContent('sample:\n  name: Alpha\n  counts:\n    - 1\n    - 2\n'));
 
     expect(result.parsed?.value).toEqual({ sample: { name: 'Alpha', counts: [1, 2] } });
@@ -17,34 +17,33 @@ describe('parseYamlDocument', () => {
       format: 'yaml',
       pointer: '',
       displayPath: '$',
-      lossy: true,
-      editable: false,
+      lossy: false,
+      editable: true,
       span: expect.objectContaining({ line: 1, column: 1 }),
     });
     expect(result.parsed?.sourceMap.nodesByPointer['/sample/name']).toMatchObject({
       path: ['sample', 'name'],
       displayPath: '$.sample.name',
       type: 'string',
-      lossy: true,
-      editable: false,
+      lossy: false,
+      editable: true,
       span: expect.objectContaining({ line: 2, column: 9 }),
       keySpan: expect.objectContaining({ line: 2, column: 3 }),
-      unsupportedReason: expect.stringContaining('fixture-backed source-preserving edit planner'),
     });
     expect(result.diagnostics).toEqual([]);
     expect(result.parsed?.preservation).toMatchObject({
       format: 'yaml',
-      visualWritesEnabled: false,
-      decision: 'defer-visual-writes',
-      sourceMapFeasibility: 'cst-spike-required',
+      visualWritesEnabled: true,
+      decision: 'guarded-visual-writes',
+      sourceMapFeasibility: 'cst-source-preserving',
       nodeSpanCoverage: 'partial',
       candidateLibraries: ['yaml'],
     });
     expect(result.parsed?.sourceMapInspection).toMatchObject({
       nodeCount: 6,
       spannedNodeCount: 6,
-      editableNodeCount: 0,
-      visualWritesEnabled: false,
+      editableNodeCount: 6,
+      visualWritesEnabled: true,
     });
     expect(result.parsed?.jsonPreview.content).toContain('"sample"');
   });
@@ -109,7 +108,7 @@ describe('parseYamlDocument', () => {
     ]));
   });
 
-  it('documents YAML CST/range evidence without enabling YAML writes', () => {
+  it('documents YAML CST/range evidence and gates unsupported nodes', () => {
     const text = [
       '# top',
       'defaults: &defaults',
@@ -147,11 +146,12 @@ describe('parseYamlDocument', () => {
       'comment',
       'tag',
     ]));
-    expect(result.parsed?.sourceMap.nodes.every((node) => node.lossy && !node.editable)).toBe(true);
-    expect(result.parsed?.preservation.blockers.join('\n')).toContain('CST-backed edit planner');
+    expect(result.parsed?.sourceMap.nodes.some((node) => node.editable)).toBe(true);
+    expect(result.parsed?.sourceMap.nodesByPointer['/copy/name']?.editable).toBe(false);
+    expect(result.parsed?.preservation.blockers.join('\n')).toContain('always require source review');
   });
 
-  it('keeps YAML visual writes disabled while exposing source-map inspection evidence', () => {
+  it('enables only locally owned YAML nodes while exposing source-only evidence', () => {
     const result = parseYamlDocument(createYamlContent([
       'defaults: &defaults',
       '  name: Alpha',
@@ -179,8 +179,8 @@ describe('parseYamlDocument', () => {
     ]));
     expect(result.parsed?.sourceMapInspection).toMatchObject({
       spanCoverage: 'partial',
-      editableNodeCount: 0,
-      visualWritesEnabled: false,
+      editableNodeCount: 1,
+      visualWritesEnabled: true,
     });
   });
 });

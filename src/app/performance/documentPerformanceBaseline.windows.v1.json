@@ -1,0 +1,477 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-22T14:41:28.462Z",
+  "candidate": {
+    "sourceIdentity": {
+      "head": "f28bb9cf7abeb504402f702e8d8a78bdf302e03a",
+      "buildInputManifestSha256": "a3b5ce28ccffa7ed04b231051e3aa73c792e65651c015e03fa86ec0d5b3330cc",
+      "fileCount": 1207
+    },
+    "executablePath": "src-tauri/target/release/sciemd.exe",
+    "executableSha256": "f744ca205762fd2d643f0334de01a4884dd7b031e23177d0f3f8a1cd2b813d8c"
+  },
+  "environment": {
+    "os": "win32 x64",
+    "webview": "WebView2 evergreen",
+    "cpu": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "memoryBytes": null,
+    "powerState": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+    "buildMode": "Tauri release"
+  },
+  "fixtureIdentity": {
+    "cold": [
+      {
+        "id": "markdown-1mib-many-line",
+        "bytes": 1048576,
+        "state": "dirty"
+      },
+      {
+        "id": "unicode-below-threshold",
+        "bytes": 5242879,
+        "state": "clean"
+      },
+      {
+        "id": "unicode-at-threshold",
+        "bytes": 5242880,
+        "state": "clean"
+      },
+      {
+        "id": "unicode-above-threshold",
+        "bytes": 5242881,
+        "state": "clean"
+      },
+      {
+        "id": "markdown-5mib-many-line",
+        "bytes": 5242880,
+        "state": "clean"
+      },
+      {
+        "id": "markdown-10mib-many-line",
+        "bytes": 10485760,
+        "state": "clean"
+      },
+      {
+        "id": "markdown-24mib-long-line",
+        "bytes": 25165824,
+        "state": "clean"
+      }
+    ],
+    "workspace": [
+      {
+        "id": "workspace-10mib-1",
+        "bytes": 10485760,
+        "state": "dirty"
+      },
+      {
+        "id": "workspace-10mib-2",
+        "bytes": 10485760,
+        "state": "clean"
+      },
+      {
+        "id": "workspace-10mib-3",
+        "bytes": 10485760,
+        "state": "clean"
+      },
+      {
+        "id": "workspace-10mib-4",
+        "bytes": 10485760,
+        "state": "clean"
+      },
+      {
+        "id": "workspace-10mib-5",
+        "bytes": 10485760,
+        "state": "clean"
+      },
+      {
+        "id": "workspace-24mib-1",
+        "bytes": 25165824,
+        "state": "clean"
+      },
+      {
+        "id": "workspace-24mib-2",
+        "bytes": 25165824,
+        "state": "clean"
+      },
+      {
+        "id": "workspace-24mib-3",
+        "bytes": 25165824,
+        "state": "clean"
+      }
+    ],
+    "structured": [
+      {
+        "id": "structured-json",
+        "bytes": 16,
+        "state": "clean"
+      },
+      {
+        "id": "structured-jsonl",
+        "bytes": 18,
+        "state": "clean"
+      },
+      {
+        "id": "structured-yaml",
+        "bytes": 15,
+        "state": "clean"
+      },
+      {
+        "id": "structured-toml",
+        "bytes": 18,
+        "state": "clean"
+      },
+      {
+        "id": "structured-xml",
+        "bytes": 30,
+        "state": "clean"
+      },
+      {
+        "id": "structured-csv",
+        "bytes": 15,
+        "state": "clean"
+      },
+      {
+        "id": "structured-tsv",
+        "bytes": 15,
+        "state": "clean"
+      }
+    ],
+    "sampleCount": 5
+  },
+  "distributions": {
+    "warm_reactivation_editor_attach_ms": {
+      "samples": [
+        14.899999976158142,
+        14.900000035762787,
+        15.800000011920929,
+        15.800000011920929,
+        16
+      ],
+      "median": 15.800000011920929,
+      "p95": 16
+    },
+    "cold_open_first_editable_ms": {
+      "samples": [
+        326.9000000357628,
+        491.4000000357628,
+        903.4000000357628,
+        1750.3999999761581,
+        2989,
+        2993.599999964237,
+        3050
+      ],
+      "median": 1750.3999999761581,
+      "p95": 3050
+    },
+    "accepted_to_visibly_echoed_input_ms": {
+      "samples": [
+        39.5,
+        40.30000001192093,
+        41.5,
+        43.30000001192093,
+        50.39999997615814
+      ],
+      "median": 41.5,
+      "p95": 50.39999997615814
+    },
+    "native_cancel_stop_ms": {
+      "samples": [
+        0.0523,
+        5.9162,
+        6.2055,
+        11.5537,
+        16.688100000000002
+      ],
+      "median": 6.2055,
+      "p95": 16.688100000000002
+    }
+  },
+  "coldProbes": [
+    {
+      "id": "unicode-below-threshold",
+      "outcome": "editable",
+      "elapsedMs": 2993.599999964237,
+      "processWorkingSetBytes": 41398272
+    },
+    {
+      "id": "unicode-at-threshold",
+      "outcome": "editable",
+      "elapsedMs": 2989,
+      "processWorkingSetBytes": 40603648
+    },
+    {
+      "id": "markdown-5mib-many-line",
+      "outcome": "editable",
+      "elapsedMs": 3050,
+      "processWorkingSetBytes": 40792064
+    }
+  ],
+  "coldTraceSummary": {
+    "openOperations": 4,
+    "activations": 0,
+    "mainDocumentByteAcquisitions": 4,
+    "acquiredBytes": 127661083,
+    "wholeSourceMaterializations": 2,
+    "materializedBytes": 1048576,
+    "fullDocumentTransactions": 0
+  },
+  "structuredProbe": {
+    "formats": [
+      "structured-json",
+      "structured-jsonl",
+      "structured-yaml",
+      "structured-toml",
+      "structured-xml",
+      "structured-tsv"
+    ],
+    "compatibilityExclusions": [
+      {
+        "id": "structured-csv",
+        "reason": "CSV remains deliberately excluded from OS startup/Open With arguments; Round 1 does not broaden file-association compatibility."
+      }
+    ],
+    "tabCount": 9,
+    "traceSummary": {
+      "openOperations": 6,
+      "activations": 0,
+      "mainDocumentByteAcquisitions": 6,
+      "acquiredBytes": 65872,
+      "wholeSourceMaterializations": 1,
+      "materializedBytes": 0,
+      "fullDocumentTransactions": 0
+    },
+    "processTreeWorkingSetBytes": 3356409856
+  },
+  "counts": {
+    "openOperations": 4,
+    "activations": 16,
+    "mainDocumentByteAcquisitions": 7,
+    "acquiredBytes": 150726708,
+    "wholeSourceMaterializations": 14,
+    "materializedBytes": 8128789,
+    "fullDocumentTransactions": 0
+  },
+  "memory": {
+    "prePressureWebviewHeapBytes": 101349438,
+    "prePressureProcessWorkingSetBytes": 122318848,
+    "pressureProcessTreeWorkingSetBytes": 718110720,
+    "pressureWebviewHeapBytes": 133945116,
+    "pressureHeapReason": null
+  },
+  "semanticGates": {
+    "packagedWebViewReached": true,
+    "acceptedInputReached": true,
+    "visiblyEchoedInputReached": true,
+    "warmActivationMainDocumentByteAcquisitions": 0,
+    "contentFreeTrace": true,
+    "nativeRendererClockSubtraction": false,
+    "cumulativeWorkspaceTabsReached": [
+      "workspace-10mib-1",
+      "workspace-10mib-2",
+      "workspace-10mib-3",
+      "workspace-10mib-4",
+      "workspace-10mib-5",
+      "workspace-24mib-1",
+      "workspace-24mib-2",
+      "workspace-24mib-3"
+    ],
+    "nativeCancellation": {
+      "measured": true,
+      "samples": [
+        {
+          "accepted": true,
+          "stopped": true,
+          "stopMs": 11.5537
+        },
+        {
+          "accepted": true,
+          "stopped": true,
+          "stopMs": 16.688100000000002
+        },
+        {
+          "accepted": true,
+          "stopped": true,
+          "stopMs": 6.2055
+        },
+        {
+          "accepted": true,
+          "stopped": true,
+          "stopMs": 5.9162
+        },
+        {
+          "accepted": true,
+          "stopped": true,
+          "stopMs": 0.0523
+        }
+      ],
+      "p95Ms": 16.688100000000002,
+      "budgetMs": 500
+    },
+    "nativeTransport": {
+      "selected": "bounded-channel",
+      "decisionEvidence": {
+        "priorOneShotCandidate": {
+          "buildInputManifestSha256": "87a35ed774c7ae5f516e90ea5a80e015dcd25263bc2dc6e1b2c9e8f5057d9423",
+          "executableSha256": "1c2d6e6a267f7310027f3c1a0f0a1637e1da1e6f59518b1a95b8710f9d0f271f",
+          "invokeWallResidualP95Ms": 3925.126,
+          "material": true
+        },
+        "boundedChannelCandidate": {
+          "invokeWall": {
+            "samples": [
+              44.59999996423721,
+              116.60000002384186,
+              126.30000001192093,
+              240.69999998807907
+            ],
+            "median": 116.60000002384186,
+            "p95": 240.69999998807907
+          },
+          "invokeWallResidual": {
+            "samples": [
+              22.704,
+              68.777,
+              87.422,
+              163.201
+            ],
+            "median": 68.777,
+            "p95": 163.201
+          }
+        }
+      },
+      "materialityBudgetMs": 100,
+      "rationale": "The measured one-shot renderer invoke residual exceeded 100 ms p95, so production reads use ordered UTF-8-safe 2 MiB channel chunks and assemble once before authoritative commit; native cooperative checkpoints remain 256 KiB."
+    },
+    "analysisRuntime": {
+      "metrics": {
+        "hits": 32,
+        "misses": 43,
+        "completed": 43,
+        "cancellations": 0,
+        "evictions": 30,
+        "rejections": 0,
+        "requestTransferBytes": 7340047,
+        "responseRetainedBytes": 4878,
+        "activeLeases": 0,
+        "queued": 0,
+        "running": 0,
+        "artifacts": 13
+      },
+      "workerPayloadDecision": {
+        "strategy": "one-shot-structured-clone",
+        "reason": "Existing parser workers accept one revision snapshot per cache miss. Projected responses remove wholesale source fields; SAB is not justified without cross-origin isolation and measured benefit.",
+        "requestDeduplication": "one in-flight transfer per exact artifact key",
+        "largeInputFallback": "source editor and viewport highlighting remain on the main thread while deep work is unavailable or background-only"
+      }
+    },
+    "sourceFont": {
+      "loads": [
+        2,
+        1,
+        1,
+        1
+      ],
+      "faces": [
+        {
+          "status": "loaded",
+          "weight": "400",
+          "style": "normal"
+        },
+        {
+          "status": "loaded",
+          "weight": "400",
+          "style": "italic"
+        },
+        {
+          "status": "loaded",
+          "weight": "500",
+          "style": "normal"
+        },
+        {
+          "status": "loaded",
+          "weight": "700",
+          "style": "normal"
+        },
+        {
+          "status": "loaded",
+          "weight": "400",
+          "style": "normal"
+        }
+      ],
+      "computedFamily": "\"IBM Plex Mono\", monospace",
+      "remeasure": "loaded",
+      "resources": [
+        "http://tauri.localhost/fonts/vendor/ibm-plex-mono/ibm-plex-mono-400-normal.woff2",
+        "http://tauri.localhost/fonts/vendor/ibm-plex-mono/noto-sans-mono-greek-400-normal.woff2",
+        "http://tauri.localhost/fonts/vendor/ibm-plex-mono/ibm-plex-mono-400-italic.woff2",
+        "http://tauri.localhost/fonts/vendor/ibm-plex-mono/ibm-plex-mono-700-normal.woff2",
+        "http://tauri.localhost/fonts/vendor/ibm-plex-mono/ibm-plex-mono-500-normal.woff2"
+      ],
+      "offlineFace": {
+        "status": "loaded",
+        "family": "\"IBM Plex Mono Offline Probe\""
+      }
+    }
+  },
+  "dominantPhases": [
+    {
+      "name": "whole-source-materialization",
+      "phase": "recovery-checkpoint",
+      "durationMs": 8763.599999964237
+    },
+    {
+      "name": "long-task",
+      "phase": "renderer-main-thread",
+      "durationMs": 1972
+    },
+    {
+      "name": "whole-source-materialization",
+      "phase": "recovery-checkpoint",
+      "durationMs": 1334.3999999761581
+    },
+    {
+      "name": "aggregate-commit",
+      "phase": null,
+      "durationMs": 1247
+    },
+    {
+      "name": "long-task",
+      "phase": "renderer-main-thread",
+      "durationMs": 1139
+    },
+    {
+      "name": "long-task",
+      "phase": "renderer-main-thread",
+      "durationMs": 1016
+    },
+    {
+      "name": "long-task",
+      "phase": "renderer-main-thread",
+      "durationMs": 902
+    },
+    {
+      "name": "long-task",
+      "phase": "renderer-main-thread",
+      "durationMs": 577
+    },
+    {
+      "name": "long-task",
+      "phase": "renderer-main-thread",
+      "durationMs": 506
+    },
+    {
+      "name": "recovery-draft",
+      "phase": "missing",
+      "durationMs": 312.2999999523163
+    },
+    {
+      "name": "long-task",
+      "phase": "renderer-main-thread",
+      "durationMs": 290
+    },
+    {
+      "name": "long-task",
+      "phase": "renderer-main-thread",
+      "durationMs": 288
+    }
+  ]
+}

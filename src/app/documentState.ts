@@ -33,11 +33,29 @@ export interface FileMetadata {
 }
 
 export interface ReadTextFileResponse {
-  sourceEnvelope?: SourceEnvelope;
-  sourceText?: string;
-  /** @deprecated Native compatibility alias. Use sourceEnvelope.sourceText. */
-  content: string;
+  contractVersion: 2;
+  sourceText: string;
   metadata: FileMetadata;
+  nativeTimings?: NativeDocumentReadTimings;
+  snapshot: NativeDocumentSnapshotEvidence;
+}
+
+export interface NativeDocumentSnapshotEvidence {
+  method: 'windows-write-excluding-handle-v1' | 'verified-double-read-v1' | 'host-coherent-snapshot-v1';
+  attempts: number;
+  identityVerified: boolean;
+}
+
+export interface NativeDocumentReadTimings {
+  clock: 'native-monotonic-duration';
+  permissionCloudGrantMs: number;
+  statMs: number;
+  readMs: number;
+  decodeFidelityMs: number;
+  hashMs: number;
+  imageGrantDiscoveryMs: number;
+  totalMs: number;
+  byteCount: number;
 }
 
 export interface SourceEnvelope {
@@ -127,11 +145,27 @@ export function createSourceEnvelope(
 }
 
 export function readSourceEnvelope(response: ReadTextFileResponse): SourceEnvelope {
-  return response.sourceEnvelope ?? createSourceEnvelope(
-    response.sourceText ?? response.content,
-    response.sourceText ?? response.content,
+  return createSourceEnvelope(
+    response.sourceText,
+    response.sourceText,
     normalizeFileMetadata(response.metadata),
   );
+}
+
+export function createHostReadResponse(
+  sourceText: string,
+  metadata: FileMetadata,
+): ReadTextFileResponse {
+  return {
+    contractVersion: 2,
+    sourceText,
+    metadata,
+    snapshot: {
+      method: 'host-coherent-snapshot-v1',
+      attempts: 1,
+      identityVerified: true,
+    },
+  };
 }
 
 export function assessSourceWriteFidelity(

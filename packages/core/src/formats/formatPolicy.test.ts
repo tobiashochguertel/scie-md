@@ -71,7 +71,7 @@ describe('format runtime policy', () => {
     expect(formatRuntimePolicyFor('yaml')).toMatchObject({
       canPreview: true,
       canUseVisualTree: true,
-      canEditVisually: false,
+      canEditVisually: true,
     });
   });
 

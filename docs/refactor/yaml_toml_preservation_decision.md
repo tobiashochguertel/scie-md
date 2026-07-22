@@ -4,31 +4,31 @@ Date: 2026-06-30
 
 ## Decision
 
-YAML and TOML remain read-only visual inspection formats in this refactor. ScieMD should not enable tree-driven YAML/TOML writes until the adapter layer has a source-preserving parser/editor contract with node identity, source spans, comments, syntax style, ordering, and an edit planner that can prove a patch is narrower than a full document rewrite.
+YAML and TOML have separate preservation authorities. YAML exposes a deliberately narrow, review-required, CST-backed editable tree. Desktop TOML exposes a review-required native `toml_edit` tree for its registered safe subset; hosts without the native capability remain visually read-only.
 
 ## Current Implementation Evidence
 
-- YAML is parsed with the `yaml` package through `parseDocument`, then normalized through `document.toJS()` for the visual tree. The visual value is useful for inspection, but it is not the editable source representation.
-- The `yaml` package exposes useful source-level evidence, including node `range` data, source tokens when `keepSourceTokens` is enabled, comments, anchors, aliases, tags, and scalar token detail. That is enough to justify a future CST/source-map spike, but not enough by itself because ScieMD has not mapped those CST nodes to stable visual edit intents.
-- TOML is parsed with `smol-toml`, which gives normalized values but does not expose a lossless edit tree for comments, whitespace, dotted-key syntax, array-of-table identity, or original section ordering.
-- Round F5 added the fixture-backed `toml_edit` spike in `src-tauri/tests/toml_preservation_spike.rs` with fixtures in `docs/refactor/toml_preservation_fixtures/`. The result makes `toml_edit` the leading future TOML adapter candidate, but production TOML writes remain disabled because ScieMD still lacks a source-map adapter and edit planner.
+- YAML is parsed with the `yaml` package through `parseDocument`; the normalized `document.toJS()` value remains projection-only. Edit authority comes exclusively from CST ranges and guarded source tokens in `yamlEdits.ts`.
+- The YAML planner and operation registry cover scalar replacement, simple-key rename, block-mapping add/delete, block-sequence append, and unambiguous item deletion. The generic tree and inspector expose per-node source-only reasons for excluded syntax.
+- Desktop TOML is parsed and source-mapped by `toml_edit` through the typed host boundary. The same native identity feeds the tree, navigation, operation capabilities, and scalar conflict review.
+- `plan_toml_mutation` returns typed, guarded, UTF-16-addressed patches and exact-source evidence. It has no file APIs; the shared executor and document aggregate retain sole commit authority. `smol-toml` is explicitly a non-authoritative preview/defense fallback.
 - Taplo remains worth evaluating for syntax-tree, formatter, schema, and language-server behavior, but this refactor has not fixture-tested it as ScieMD's edit engine.
 
 ## Product Behavior
 
-- YAML/TOML can be opened in source mode and inspected in a normalized read-only tree.
+- YAML/TOML can be opened in source mode. Eligible YAML nodes and eligible desktop-native TOML nodes expose review-required write controls.
 - The tree and inspector show preservation warnings for syntax that would be lost or changed by a naive value rewrite.
 - YAML/TOML expose a copyable JSON preview with explicit lossy/read-only diagnostics.
-- Visual write controls remain disabled for YAML/TOML.
-- The TOML-specific evidence and future adapter contract are documented in `docs/refactor/toml_source_preservation_evaluation.md`.
+- YAML and TOML writes use guarded source patches and the sealed structured-mutation executor. TOML scalar/key/table/scalar-array operations are enabled only when the native planner advertises that operation for the exact node.
+- The TOML-specific evidence and operation/host matrix are documented in `docs/refactor/toml_source_preservation_evaluation.md`.
 
-## Requirements Before Enabling Writes
+## Preserved Requirements
 
-1. A source map that links each visual node to stable parser/CST nodes and original source spans.
+1. Editable YAML nodes must link to stable CST/source-token spans; normalized alias or merge projections never become authority.
 2. Fixture coverage for YAML comments, anchors, aliases, tags, block scalars, merge keys, indentation-sensitive structures, TOML comments, dotted keys, arrays of tables, duplicate sections/keys, and section ordering.
 3. An edit planner that can reject unsafe edits and apply safe edits without full-document reserialization.
 4. Round-trip checks proving untouched source regions remain byte-for-byte stable for supported edits.
-5. UI language that distinguishes value inspection, JSON conversion, and format-preserving source editing.
+5. UI language must distinguish value inspection, read-only JSON conversion, guarded YAML source editing, and actionable source-only exclusions.
 
 ## References
 

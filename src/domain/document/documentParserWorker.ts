@@ -60,8 +60,14 @@ export function parseScienfyDocumentAsync(
 export function cancelScienfyDocumentParse(token: EffectToken): boolean {
   for (const [id, pending] of pendingParses) {
     if (pending.effectToken?.operationId !== token.operationId) continue;
+    const cancelledWorker = pending.worker;
     clearPendingParse(id);
     pending.reject(new Error('Document parser worker parse was superseded by targeted cancellation.'));
+    const relatedPending = Array.from(pendingParses.values()).some((related) => related.worker === cancelledWorker);
+    if (parserWorker === cancelledWorker && !relatedPending) {
+      cancelledWorker.terminate();
+      parserWorker = null;
+    }
     return true;
   }
   return false;

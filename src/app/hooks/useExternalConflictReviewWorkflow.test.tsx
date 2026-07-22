@@ -3,7 +3,7 @@ import { createRoot, Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MutableRefObject } from 'react';
 import { DEFAULT_METADATA } from '../documentState';
-import type { FileMetadata, ReadTextFileResponse } from '../documentState';
+import { createHostReadResponse, type FileMetadata, type ReadTextFileResponse } from '../documentState';
 import type { DocumentHost } from '../host/documentHost';
 import type { DocumentFormat } from '@sciemd/core';
 import { loadSettings } from '../../services/settingsService';
@@ -135,7 +135,7 @@ describe('useExternalConflictReviewWorkflow', () => {
     const [merged, diskSource, diskMetadata] = adoptReviewedDiskMerge.mock.calls[0];
     expect(JSON.parse(merged)).toEqual({ name: 'local', count: 2 });
     expect(merged).not.toContain('<<<<<<<');
-    expect(diskSource).toBe(disk.content);
+    expect(diskSource).toBe(disk.sourceText);
     expect(diskMetadata).toBe(disk.metadata);
     expect(controls?.externalConflictReview).toBeNull();
     expect(pushToast).toHaveBeenCalledWith('Applied selected disk JSON changes', 'success');
@@ -170,9 +170,9 @@ describe('useExternalConflictReviewWorkflow', () => {
 
     expect(host.file.readTextFile).toHaveBeenCalledTimes(2);
     const [merged, diskSource, diskMetadata] = adoptReviewedDiskMerge.mock.calls[0];
-    expect(merged).toBe(disk.content);
+    expect(merged).toBe(disk.sourceText);
     expect(merged).toContain('9007199254740995');
-    expect(diskSource).toBe(disk.content);
+    expect(diskSource).toBe(disk.sourceText);
     expect(diskMetadata).toBe(disk.metadata);
     expect(controls?.externalConflictReview).toBeNull();
     expect(pushToast).toHaveBeenCalledWith('Accepted disk JSONL changes', 'success');
@@ -205,7 +205,7 @@ describe('useExternalConflictReviewWorkflow', () => {
       await flushAsync();
     });
 
-    expect(adoptReviewedDiskMerge.mock.calls[0][0]).toBe(disk.content);
+    expect(adoptReviewedDiskMerge.mock.calls[0][0]).toBe(disk.sourceText);
     expect(pushToast).toHaveBeenCalledWith('Accepted disk CSV changes', 'success');
   });
 
@@ -239,7 +239,7 @@ describe('useExternalConflictReviewWorkflow', () => {
 
     const [merged, diskSource, diskMetadata] = adoptReviewedDiskMerge.mock.calls[0];
     expect(merged).toBe('study:\n  title: local\n  count: 2\n');
-    expect(diskSource).toBe(disk.content);
+    expect(diskSource).toBe(disk.sourceText);
     expect(diskMetadata).toBe(disk.metadata);
     expect(pushToast).toHaveBeenCalledWith('Applied selected disk YAML changes', 'success');
   });
@@ -562,10 +562,7 @@ function createHost(): MockDocumentHost {
 }
 
 function readResponse(content: string, responseMetadata: FileMetadata = metadata()): ReadTextFileResponse {
-  return {
-    content,
-    metadata: responseMetadata,
-  };
+  return createHostReadResponse(content, responseMetadata);
 }
 
 function metadata(patch: Partial<FileMetadata> = {}): FileMetadata {

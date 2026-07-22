@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lab:study xmlns:lab="urn:lab:v1" xmlns:m="urn:measure" id="S-Ω">
+  <lab:title>Coating µ-study</lab:title>
+  <section xmlns:lab="urn:lab:v2" m:unit="nm">
+    Before <lab:sample status="ready">film</lab:sample> after.
+  </section>
+  <?review preserve?>
+  <!-- namespace rebinding and mixed content remain source-only -->
+</lab:study>

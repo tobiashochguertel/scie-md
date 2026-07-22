@@ -1,9 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CompletionContext } from '@codemirror/autocomplete';
 import { highlightingFor, syntaxTree } from '@codemirror/language';
 import { EditorState } from '@codemirror/state';
 import { tags } from '@lezer/highlight';
-import { buildInsertTransaction, createMarkdownPresentationExtension, createScientificCompletionSource, createSourceCitationDecorationRanges, createSourceInsertion, createSourceVariableDecorationRanges } from './SourceMarkdownEditor';
+import { buildInsertTransaction, createMarkdownPresentationExtension, createScientificCompletionSource, createSourceCitationDecorationRanges, createSourceInsertion, createSourceVariableDecorationRanges, remeasureSourceEditorAfterFontsReady } from './SourceMarkdownEditor';
 import { createVariantGroupSnippet } from '@sciemd/core';
 
 function applyChange(doc: string, change: { from: number; to: number; insert: string }): string {
@@ -11,6 +11,21 @@ function applyChange(doc: string, change: { from: number; to: number; insert: st
 }
 
 describe('semantic source presentation contract', () => {
+  it('remeasures the Markdown source editor after its configured font stack is ready', async () => {
+    const requestMeasure = vi.fn();
+    const dom = document.createElement('div');
+    const load = vi.fn().mockResolvedValue([]);
+    const fonts = { load, ready: Promise.resolve({}) } as unknown as FontFaceSet;
+
+    remeasureSourceEditorAfterFontsReady({ requestMeasure, dom }, fonts);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(load).toHaveBeenCalledTimes(3);
+    expect(requestMeasure).toHaveBeenCalledTimes(1);
+    expect(dom.dataset.sourceFontRemeasured).toBe('loaded');
+  });
+
   it('preserves Markdown source and parse state while exposing semantic tag classes', () => {
     const markdown = '# Heading\n\n**strong** [link](https://example.test) [@key]\n';
     const state = EditorState.create({ doc: markdown, selection: { anchor: 2 }, extensions: createMarkdownPresentationExtension('enabled') });

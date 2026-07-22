@@ -1,5 +1,5 @@
-import type { FileMetadata, ReadTextFileResponse } from '../documentState';
-import type { DocumentFormat } from '@sciemd/core';
+import type { FileMetadata, NativeDocumentReadTimings, ReadTextFileResponse } from '../documentState';
+import type { DocumentFormat, TomlNativeMutationIntent, TomlNativeMutationPlanReport, TomlNativeSourceMapReport } from '@sciemd/core';
 import type { DiagnosticsEvent } from '../../services/nativeRecoveryService';
 import type { PersistedSettings } from '../../services/settingsService';
 import type { UntitledDraft } from '../../services/draftRecoveryService';
@@ -17,10 +17,24 @@ export type { DocumentHostErrorCode, DocumentHostErrorPayload } from './document
 
 export type HostUnlisten = () => void;
 
+export interface NativeReadCancellationResult {
+  accepted: boolean;
+  stopped: boolean;
+  stopMs: number;
+}
+
+export interface DocumentReadOptions {
+  operationId?: string;
+  signal?: AbortSignal;
+  onEarlyMetadata?: (metadata: FileMetadata) => void;
+  onNativeCancellation?: (result: NativeReadCancellationResult) => void;
+  onNativeTimings?: (timings: NativeDocumentReadTimings) => void;
+}
+
 export interface FileHost {
   /** Lifecycle methods reject with DocumentHostError, including browser/test hosts. */
-  readTextFile(path: string): Promise<ReadTextFileResponse>;
-  readTextFileForEdit(path: string): Promise<ReadTextFileResponse>;
+  readTextFile(path: string, options?: DocumentReadOptions): Promise<ReadTextFileResponse>;
+  readTextFileForEdit(path: string, options?: DocumentReadOptions): Promise<ReadTextFileResponse>;
   statFile(path: string, options?: { contentHash?: boolean }): Promise<FileMetadata>;
   writeTextFileAtomic(
     path: string,
@@ -87,6 +101,12 @@ export interface IdentityHost {
   resolveFileLocator(path: string, options?: { allowMissing?: boolean }): Promise<FileDocumentLocator>;
 }
 
+export interface StructuredMutationHost {
+  readonly capabilities: { readonly tomlNativePlanning: boolean };
+  inspectToml(sourceText: string): Promise<TomlNativeSourceMapReport>;
+  planToml(sourceText: string, intent: TomlNativeMutationIntent): Promise<TomlNativeMutationPlanReport>;
+}
+
 export interface DocumentHost {
   file: FileHost;
   dialog: DialogHost;
@@ -96,4 +116,6 @@ export interface DocumentHost {
   watcher: WatcherHost;
   /** Optional only for compatibility hosts; production desktop always provides it. */
   identity?: IdentityHost;
+  /** Absent on browser/extension compatibility hosts; they keep TOML visual mode read-only. */
+  structuredMutation?: StructuredMutationHost;
 }

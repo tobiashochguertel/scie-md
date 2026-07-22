@@ -24,13 +24,15 @@ import { editableTailPlugin } from './editableTailPlugin';
 import { focusModePlugin } from './focusModePlugin';
 import { visualEditingBoundaryPlugin } from './visualEditingBoundaryPlugin';
 import { flushScieMetadataNodeViews, isScieMetadataNode, registerScieMetadataEditorContext, scieMetadataPlugins, unregisterScieMetadataEditorContext, updateScieMetadataEditorContext } from './milkdown/scieMetadataNodes';
-import type { EditorAdapter, EditorAdapterReady, EditorReadResult, EditorSelectionAnchor } from './editorAdapter';
+import type { EditorAdapter, EditorAdapterReady, EditorReadResult, EditorSelectionAnchor, EditorViewSnapshot } from './editorAdapter';
 import '@milkdown/theme-nord/style.css';
 import 'katex/dist/katex.min.css';
 import { canonicalizeVariableTokens } from '@sciemd/core';
 import type { VariableDefinition } from '@sciemd/core';
 import type { BibtexEntry } from '@sciemd/core';
 import type { MarkdownHeading } from '@sciemd/core';
+import type { DocumentId, SourceRevision } from '../app/documentIdentity';
+import { documentPerformance, utf8ByteLength } from '../app/performance/documentPerformance';
 
 export type VisualMarkdownInsert = (markdown: string, options?: { filePath?: string | null }) => void;
 export interface VisualMarkdownJumpTarget {
@@ -45,6 +47,8 @@ export type VisualMarkdownFind = (query: string, occurrence: number, caseSensiti
 export type VisualMarkdownSelection = EditorSelectionGetter;
 
 interface VisualMarkdownEditorProps {
+  performanceDocumentId?: DocumentId;
+  revision?: SourceRevision;
   markdown: string;
   filePath: string | null;
   onChange: (markdown: string) => void;
@@ -70,7 +74,7 @@ interface VisualMarkdownEditorProps {
   onEditVariable?: (name: string) => void;
 }
 
-function MilkdownSurface({ markdown, filePath, onChange, onEditorReady, onInsertReady, onJumpReady, onFindReady, onHistoryReady, onSelectionTextReady, onAdapterReady, onCursorLineChange, onViewportLineChange, outlineHeadings = [], onLockViolation, onToast, confirmText, citationKeys = [], citationEntries = [], variableDefinitions = [], highlightedVariableName = null, onEditCitation, onEditVariable }: VisualMarkdownEditorProps) {
+function MilkdownSurface({ performanceDocumentId, revision, markdown, filePath, onChange, onEditorReady, onInsertReady, onJumpReady, onFindReady, onHistoryReady, onSelectionTextReady, onAdapterReady, onCursorLineChange, onViewportLineChange, outlineHeadings = [], onLockViolation, onToast, confirmText, citationKeys = [], citationEntries = [], variableDefinitions = [], highlightedVariableName = null, onEditCitation, onEditVariable }: VisualMarkdownEditorProps) {
   const initialSplit = useRef(splitVisualMarkdown(markdown));
   const citationKeysRef = useRef(citationKeys);
   const citationEntriesRef = useRef(citationEntries);
@@ -81,6 +85,9 @@ function MilkdownSurface({ markdown, filePath, onChange, onEditorReady, onInsert
   const visualPaths = useRef(toVisualImagePaths(initialSplit.current.visualMarkdown, filePath));
   const initialMarkdown = useRef(visualPaths.current.markdown);
   const onChangeRef = useRef(onChange);
+  const performanceDocumentIdRef = useRef(performanceDocumentId);
+  const revisionRef = useRef(revision);
+  const runtimeInstanceIdRef = useRef(`visual-editor-${Math.random().toString(36).slice(2)}`);
   const onCursorLineChangeRef = useRef(onCursorLineChange);
   const onViewportLineChangeRef = useRef(onViewportLineChange);
   const outlineHeadingsRef = useRef(outlineHeadings);
@@ -110,6 +117,14 @@ function MilkdownSurface({ markdown, filePath, onChange, onEditorReady, onInsert
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
+
+  useEffect(() => {
+    performanceDocumentIdRef.current = performanceDocumentId;
+  }, [performanceDocumentId]);
+
+  useEffect(() => {
+    revisionRef.current = revision;
+  }, [revision]);
 
   useEffect(() => {
     onCursorLineChangeRef.current = onCursorLineChange;
@@ -222,6 +237,18 @@ function MilkdownSurface({ markdown, filePath, onChange, onEditorReady, onInsert
               return;
             }
             lastEmittedMarkdown.current = fullMarkdown;
+            const tracedDocumentId = performanceDocumentIdRef.current;
+            if (tracedDocumentId) {
+              documentPerformance.trace({ name: 'input-accepted', documentId: tracedDocumentId, surface: 'visual' });
+              documentPerformance.trace({
+                name: 'whole-source-materialization',
+                documentId: tracedDocumentId,
+                surface: 'visual',
+                materializedBytes: utf8ByteLength(fullMarkdown),
+                phase: 'milkdown-change-callback',
+              });
+              requestAnimationFrame(() => documentPerformance.trace({ name: 'input-echoed', documentId: tracedDocumentId, surface: 'visual' }));
+            }
             onChangeRef.current(fullMarkdown);
           });
         }),
@@ -255,6 +282,11 @@ function MilkdownSurface({ markdown, filePath, onChange, onEditorReady, onInsert
       onSelectionTextReady?.(undefined);
       onAdapterReady?.(undefined);
       return undefined;
+    }
+    if (performanceDocumentIdRef.current) {
+      const tracedDocumentId = performanceDocumentIdRef.current;
+      documentPerformance.trace({ name: 'editor-attach', documentId: tracedDocumentId, surface: 'visual' });
+      requestAnimationFrame(() => documentPerformance.trace({ name: 'next-frame', documentId: tracedDocumentId, surface: 'visual' }));
     }
 
     onInsertReady?.((markdownSnippet, options) => {
@@ -519,6 +551,30 @@ function MilkdownSurface({ markdown, filePath, onChange, onEditorReady, onInsert
         return true;
       },
       flushPendingEdits: readEditorState,
+      runtimeKey: () => {
+        const documentId = performanceDocumentIdRef.current;
+        const sourceRevision = revisionRef.current;
+        if (!documentId || sourceRevision === undefined) return null;
+        return { documentId, sourceRevision, surface: 'visual', configurationFingerprint: runtimeInstanceIdRef.current };
+      },
+      suspendRuntime: () => {
+        const key = adapter.runtimeKey?.();
+        if (!key) return null;
+        const snapshot = adapter.captureView?.();
+        return {
+          key,
+          state: snapshot,
+          scrollTop: snapshot?.scrollTop ?? 0,
+          focused: false,
+          byteWeight: Math.min(4 * 1024 * 1024, Math.max(64 * 1024, sourceMarkdownRef.current.length)),
+          historyBytes: 0,
+          kind: 'bounded-rebuild',
+        };
+      },
+      attachRuntime: (runtime) => runtime.kind === 'bounded-rebuild'
+        && runtime.state !== null
+        && adapter.restoreView?.(runtime.state as EditorViewSnapshot) === true,
+      rebuildRuntime: () => true,
     };
     onAdapterReady?.(adapter);
     const synchronizeEditorState = (force = false) => {

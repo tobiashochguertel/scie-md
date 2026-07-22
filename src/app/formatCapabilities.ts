@@ -12,7 +12,7 @@ export interface FormatUiCapabilities {
   canUseVisualMarkdown: boolean;
   canUseReadonlyTree: boolean;
   canUseStructuredVisualMode: boolean;
-  canEditJsonVisualTree: boolean;
+  canEditStructuredVisualTree: boolean;
   canUseRecordList: boolean;
   canUseTablePreview: boolean;
   canUseManuscriptReadiness: boolean;
@@ -25,7 +25,10 @@ export interface FormatUiCapabilities {
   sourceEditor: SourceEditorCapabilities;
 }
 
-export function formatCapabilitiesFor(format: DocumentFormat): FormatUiCapabilities {
+export function formatCapabilitiesFor(
+  format: DocumentFormat,
+  hostCapabilities: { tomlNativePlanning?: boolean } = {},
+): FormatUiCapabilities {
   const contribution = formatContributionFor(format);
   if (!contribution) throw new Error(`Missing format contribution for ${format}.`);
   const surfaces = new Set(contribution.workbench.surfaces);
@@ -36,7 +39,8 @@ export function formatCapabilitiesFor(format: DocumentFormat): FormatUiCapabilit
     canUseVisualMarkdown: surfaces.has('markdownVisual'),
     canUseReadonlyTree: surfaces.has('structuredTree'),
     canUseStructuredVisualMode: surfaces.has('structuredTree'),
-    canEditJsonVisualTree: editableSurfaces.has('structuredTree'),
+    canEditStructuredVisualTree: editableSurfaces.has('structuredTree')
+      && (format !== 'toml' || hostCapabilities.tomlNativePlanning === true),
     canUseRecordList: surfaces.has('recordList'),
     canUseTablePreview: surfaces.has('tablePreview'),
     canUseManuscriptReadiness: features.has('manuscriptReadiness'),

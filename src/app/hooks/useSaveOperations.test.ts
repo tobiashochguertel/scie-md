@@ -8,11 +8,11 @@ import { DocumentHostError, type DocumentHost } from '../host/documentHost';
 import type { ConfirmState } from './useDialogs';
 import { useSaveOperations, suggestedDocumentSavePath, suggestedMarkdownSavePath } from './useSaveOperations';
 import type { VisualRoundTripWriteContext } from './useSaveOperations';
-import { DEFAULT_METADATA } from '../documentState';
+import { createHostReadResponse, DEFAULT_METADATA } from '../documentState';
 import type { AutosaveStatus, FileMetadata } from '../documentState';
 import type { DocumentFormat } from '@sciemd/core';
 import type { StructuredSavePolicy } from '../structuredSavePolicy';
-import { fallbackFileLocator, type FileDocumentLocator } from '../documentIdentity';
+import { fallbackFileLocator, sourceRevision, type FileDocumentLocator } from '../documentIdentity';
 import { createDocumentRecord } from '../documentRecord';
 import type { WorkspaceStore } from '../workspace/workspaceStore';
 import { createHiddenWorkspaceHarness } from '../workspace/hiddenWorkspaceHarness';
@@ -507,6 +507,27 @@ describe('useSaveOperations', () => {
     expect(workspaceStore.getState().activeDocumentId).toBe(other.id);
     expect(workspaceStore.getState().documentsById[origin.id].source.savedSourceText).toBe('# Origin\n');
     expect(workspaceStore.getState().documentsById[other.id].source.sourceText).toBe('# Other\n');
+  });
+
+  it('writes the revisioned buffer snapshot after an incremental source edit and advances the saved checkpoint only after success', async () => {
+    const path = 'C:\\docs\\incremental.txt';
+    const sourceMetadata = metadata({ lastKnownMtimeMs: 1000, lastKnownSizeBytes: 5, contentHash: 'old' });
+    const origin = createDocumentRecord({ locator: fallbackFileLocator(path), format: 'plainText', sourceText: 'saved', fileBaseline: sourceMetadata, mode: 'source' });
+    const workspaceStore = createHiddenWorkspaceHarness(origin);
+    workspaceStore.dispatch({
+      type: 'updateDocument', documentId: origin.id,
+      action: { type: 'sourceChangeSetApplied', changeSet: { documentId: origin.id, expectedRevision: sourceRevision(0), changes: [{ from: 0, to: 5, insert: 'draft', expectedText: 'saved' }] } },
+    });
+    host.file.statFile.mockResolvedValue(sourceMetadata);
+    host.file.writeTextFileAtomic.mockResolvedValue(metadata({ lastKnownMtimeMs: 2000, lastKnownSizeBytes: 5, contentHash: 'new' }));
+    act(() => {
+      root.render(createElement(WorkspaceSaveHarness, { workspaceStore, host, confirmText, pushToast, onOperations: (operations: SaveOperations) => { latestOperations = operations; } }));
+    });
+    await act(async () => { await latestOperations!.saveCurrent(); });
+    expect(host.file.writeTextFileAtomic).toHaveBeenCalledWith(path, 'draft', sourceMetadata, sourceMetadata);
+    const saved = workspaceStore.getState().documentsById[origin.id];
+    expect(saved.source.savedRevision).toBe(saved.source.revision);
+    expect(saved.lifecycle.content).toBe('clean');
   });
 
   it('does not replace an existing Save As target when the user cancels replacement', async () => {
@@ -1190,8 +1211,8 @@ function createHost(): MockDocumentHost {
   let settings = loadSettings();
   return {
     file: {
-      readTextFile: vi.fn().mockResolvedValue({ content: '', metadata: DEFAULT_METADATA }),
-      readTextFileForEdit: vi.fn().mockResolvedValue({ content: '', metadata: DEFAULT_METADATA }),
+      readTextFile: vi.fn().mockResolvedValue(createHostReadResponse('', DEFAULT_METADATA)),
+      readTextFileForEdit: vi.fn().mockResolvedValue(createHostReadResponse('', DEFAULT_METADATA)),
       statFile: vi.fn<DocumentHost['file']['statFile']>().mockResolvedValue(DEFAULT_METADATA),
       writeTextFileAtomic: vi.fn<DocumentHost['file']['writeTextFileAtomic']>().mockResolvedValue(DEFAULT_METADATA),
       createBackupSnapshot: vi.fn<DocumentHost['file']['createBackupSnapshot']>().mockResolvedValue(null),

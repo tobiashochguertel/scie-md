@@ -12,7 +12,7 @@ const hostErrorPath = path.join(repoRoot, 'src-tauri', 'src', 'commands', 'host_
 const fileIoPath = path.join(repoRoot, 'src-tauri', 'src', 'commands', 'file_io.rs');
 const backupsPath = path.join(repoRoot, 'src-tauri', 'src', 'commands', 'backups.rs');
 const documentHostErrorPath = path.join(repoRoot, 'src', 'app', 'host', 'documentHostError.ts');
-const hostErrorFixturePath = path.join(repoRoot, 'src', 'app', 'host', 'fixtures', 'documentHostErrors.v1.json');
+const hostErrorFixturePath = path.join(repoRoot, 'src', 'app', 'host', 'fixtures', 'documentHostErrors.v2.json');
 const openDocumentPath = path.join(repoRoot, 'src', 'app', 'documentSession', 'openDocument.ts');
 const saveOperationsPath = path.join(repoRoot, 'src', 'app', 'hooks', 'useSaveOperations.ts');
 const documentStatePath = path.join(repoRoot, 'src', 'app', 'documentState.ts');
@@ -91,6 +91,7 @@ const requiredCommandGroups = {
   fileIo: [
     'read_text_file',
     'read_text_file_for_edit',
+    'cancel_text_file_read',
     'read_text_file_preview',
     'read_binary_file_base64',
     'list_readable_files',
@@ -157,7 +158,7 @@ validateDocumentAssociationPolicy(config);
 validateDocumentLaunchPolicy(libSource);
 validateWindowsInstallerDocumentPolicy(nsisHooksSource);
 validateManualStructuredOpenPolicy(dialogsSource);
-validateExperimentalTomlSourceMapPolicy(tomlSourceMapSource, registeredCommands, invokedCommands);
+validateProductionTomlMutationPolicy(tomlSourceMapSource, registeredCommands, invokedCommands);
 validateDocumentLifecycleErrorBoundary();
 validateDocumentFidelityBoundary();
 
@@ -330,19 +331,16 @@ function validateManualStructuredOpenPolicy(source) {
   }
 }
 
-function validateExperimentalTomlSourceMapPolicy(source, registeredCommands, invokedCommands) {
-  if (!registeredCommands.has('inspect_toml_source_map')) {
-    failures.push('Experimental TOML source-map evidence command must stay registered while the preservation spike is active.');
+function validateProductionTomlMutationPolicy(source, registeredCommands, invokedCommands) {
+  for (const command of ['inspect_toml_source_map', 'plan_toml_mutation']) {
+    if (!registeredCommands.has(command)) failures.push(`Production TOML native command must be registered: ${command}.`);
+    if (!invokedCommands.has(command)) failures.push(`The typed desktop host must consume the production TOML command: ${command}.`);
   }
-  if (invokedCommands.has('inspect_toml_source_map')) {
-    failures.push('TypeScript must not invoke inspect_toml_source_map until a typed host bridge and edit planner are implemented.');
+  for (const marker of ['toml-native-dto-v1', 'toml-edit-native-v1', 'production-source-preserving', 'inspect-and-plan-guarded-patches']) {
+    if (!source.includes(marker)) failures.push(`TOML native authority is missing contract marker: ${marker}.`);
   }
-  if (!source.includes('experimental-readonly-evidence') || !source.includes('inspect-source-map-only')) {
-    failures.push('TOML source-map command must advertise itself as experimental read-only evidence.');
-  }
-  if (!source.includes('visual_writes_enabled: false')) {
-    failures.push('TOML source-map command must keep visual_writes_enabled false.');
-  }
+  if (!source.includes('visual_writes_enabled: true')) failures.push('TOML native authority must advertise guarded visual writes.');
+  if (source.includes('fs::write') || source.includes('std::fs')) failures.push('TOML native planning must not acquire file-write authority.');
 }
 
 function validateDocumentLifecycleErrorBoundary() {
@@ -353,20 +351,21 @@ function validateDocumentLifecycleErrorBoundary() {
     'CLOUD_UNAVAILABLE',
     'BACKUP_FAILED',
     'LOSSY_WRITE_REQUIRED',
+    'CANCELLED',
     'UNKNOWN_HOST_ERROR',
   ];
   const fixtureCodes = hostErrorFixture.map((entry) => entry.code);
-  if (hostErrorFixture.some((entry) => entry.contractVersion !== 1)) {
-    failures.push('Document lifecycle error fixture must stay on contractVersion 1.');
+  if (hostErrorFixture.some((entry) => entry.contractVersion !== 2)) {
+    failures.push('Document lifecycle error fixture must stay on contractVersion 2.');
   }
   if (JSON.stringify(fixtureCodes) !== JSON.stringify(expectedCodes)) {
     failures.push('Document lifecycle error fixture must contain the complete ordered v1 code set.');
   }
-  if (!documentHostErrorSource.includes('DOCUMENT_HOST_ERROR_CONTRACT_VERSION = 1')) {
-    failures.push('TypeScript document host error boundary must declare contract version 1.');
+  if (!documentHostErrorSource.includes('DOCUMENT_HOST_ERROR_CONTRACT_VERSION = 2')) {
+    failures.push('TypeScript document host error boundary must declare contract version 2.');
   }
-  if (!hostErrorSource.includes('HOST_ERROR_CONTRACT_VERSION: u16 = 1')) {
-    failures.push('Rust document host error boundary must declare contract version 1.');
+  if (!hostErrorSource.includes('HOST_ERROR_CONTRACT_VERSION: u16 = 2')) {
+    failures.push('Rust document host error boundary must declare contract version 2.');
   }
   for (const code of expectedCodes) {
     if (!documentHostErrorSource.includes(`'${code}'`)) {
@@ -374,7 +373,7 @@ function validateDocumentLifecycleErrorBoundary() {
     }
   }
   for (const command of ['read_text_file', 'read_text_file_for_edit', 'stat_file', 'write_text_file_atomic']) {
-    const signature = new RegExp(`pub fn ${command}\\b[\\s\\S]*?\\) -> HostResult<`);
+    const signature = new RegExp(`pub (?:async )?fn ${command}\\b[\\s\\S]*?\\) -> HostResult<`);
     if (!signature.test(fileIoSource)) failures.push(`${command} must return the typed HostResult boundary.`);
   }
   if (!/pub fn create_backup_snapshot\b[\s\S]*?\) -> HostResult</.test(backupsSource)) {
@@ -397,6 +396,25 @@ function validateDocumentFidelityBoundary() {
     if (!fileIoSource.includes(field)) {
       failures.push(`Rust document fidelity DTO is missing ${field}.`);
     }
+  }
+  const readResponse = fileIoSource.match(/pub struct ReadTextFileResponse\s*\{([\s\S]*?)\n\}/)?.[1] ?? '';
+  if (!readResponse.includes('contract_version: u16') || !readResponse.includes('source_text: String')) {
+    failures.push('Native read DTO must be versioned and contain the canonical source_text field.');
+  }
+  if (/\bcontent\s*:\s*String/.test(readResponse)) {
+    failures.push('Native read DTO must not contain the deprecated duplicate content field.');
+  }
+  if (!/pub async fn read_text_file\b/.test(fileIoSource) || !/pub async fn read_text_file_for_edit\b/.test(fileIoSource)) {
+    failures.push('Native full-text read commands must stay asynchronous.');
+  }
+  if (!fileIoSource.includes('Channel<NativeTextReadEvent>') || !fileIoSource.includes('NativeTextReadEvent::SourceChunk') || !fileIoSource.includes('NativeTextReadEvent::Complete')) {
+    failures.push('Native full-text reads must use the bounded ordered Tauri channel selected by packaged transport evidence.');
+  }
+  if (!fileServiceSource.includes('new Channel<NativeTextReadEvent>()') || !fileServiceSource.includes("const sourceText = chunks.join('')")) {
+    failures.push('TypeScript full-text reads must assemble the bounded native channel before the single authoritative source commit.');
+  }
+  if (!fileIoSource.includes('cancel_text_file_read') || !fileIoSource.includes('operation_id: String')) {
+    failures.push('Native full-text reads must retain the operation-ID cooperative cancellation protocol.');
   }
   if (!/write_text_file_atomic\([\s\S]*?source_text: String/.test(fileIoSource)) {
     failures.push('Native atomic write must use the generic source_text argument.');

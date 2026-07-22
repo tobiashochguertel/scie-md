@@ -6,6 +6,7 @@ import {
   applyStructuredExternalConflictReviewDecisions,
   canonicalizeStructuredIngressText,
   createJsonContent,
+  createStructuredMutationPlan,
   createStructuredEditReviewPlan,
   createStructuredExternalConflictReview,
   formatFromPath,
@@ -16,11 +17,17 @@ import {
   planJsonVisualEdit,
   planJsonlVisualEdit,
   planTabularVisualEdit,
+  planXmlVisualEdit,
+  planYamlVisualEdit,
   resolveStructuredEditReviewApply,
   structuredEditTransactionFromJsonEdit,
   structuredEditTransactionFromJsonlEdit,
   structuredEditTransactionFromTabularEdit,
+  structuredEditTransactionFromXmlEdit,
+  structuredEditTransactionFromYamlEdit,
+  structuredEditTransactionFromTomlNativePlan,
   tabularSourceHash,
+  structuredMutationFingerprint,
   validateJsonValueAgainstSchema,
 } from '@sciemd/core';
 import type { DocumentFormat, FormatDiagnostic } from '@sciemd/core';
@@ -28,6 +35,10 @@ import { createStructuredSavePolicy } from './structuredSavePolicy';
 import { parseSourceFormatDiagnostics } from './formatDiagnostics';
 import { formatCapabilitiesFor } from './formatCapabilities';
 import { createStructuredSurfaceNavigationModel } from './structuredSurfaceNavigation';
+import { createStructuredEditJournalEntry } from './structuredEditJournal';
+import { executeStructuredMutation, requestStructuredMutationApproval } from './structured/structuredMutationExecutor';
+import { createDocumentHistory, recordDocumentEdit, redoDocumentHistory, undoDocumentHistory } from '../markdown/documentHistory';
+import type { StructuredEditTransaction } from '@sciemd/core';
 
 const exampleDir = resolve('docs/example-files');
 const report: {
@@ -106,8 +117,8 @@ describe('structured workflow validation', () => {
         });
       } else if (format === 'yaml' || format === 'toml' || format === 'xml') {
         expect(diagnostics.structuredAnalysis?.status, fileName).toBe('valid');
-        expect(formatRuntimePolicyFor(format).canEditVisually, fileName).toBe(false);
-        expect(adapter?.capabilities.formatPreservingEdits, fileName).toBe(false);
+        expect(formatRuntimePolicyFor(format).canEditVisually, fileName).toBe(true);
+        expect(adapter?.capabilities.formatPreservingEdits, fileName).toBe(true);
         report.files.push({
           name: fileName,
           format,
@@ -200,7 +211,37 @@ describe('structured workflow validation', () => {
     expect(tsvAnalysis?.status).toBe('valid');
     expect(tsvAnalysis?.dataRowCount).toBe(20);
     expect(tsvAnalysis?.parseResult.parsed?.dataRows[0]?.[12]).toBe('round12_repeat');
+
+    const yamlSource = readExample('materials-study-config.yaml');
+    const yamlNext = applyReviewedYamlEdit(yamlSource, {
+      kind: 'replaceScalar', path: ['study', 'title'], nextValue: 'Round 7 YAML validation',
+    });
+    const yamlAnalysis = parseSourceFormatDiagnostics('yaml', yamlNext, null).structuredAnalysis;
+    expect(yamlAnalysis?.status).toBe('valid');
+    expect(yamlAnalysis?.parseResult.parsed?.value).toMatchObject({ study: { title: 'Round 7 YAML validation' } });
+    expect(yamlNext).toContain('defaults: &sample_defaults');
+    expect(yamlNext.startsWith('---\n# ScieMD YAML feature coverage file.')).toBe(true);
+    const tomlSource = readExample('materials-study-settings.toml');
+    const tomlNext = applyReviewedTomlNativeEdit(tomlSource, ['title'], 'Round 8 TOML validation');
+    const tomlAnalysis = parseSourceFormatDiagnostics('toml', tomlNext, null).structuredAnalysis;
+    expect(tomlAnalysis?.status).toBe('valid');
+    expect(tomlAnalysis?.parseResult.parsed?.value).toMatchObject({ title: 'Round 8 TOML validation' });
+    expect(tomlNext.startsWith('# ScieMD TOML feature coverage file.')).toBe(true);
+    expect(tomlNext).toContain('owner.name = "Amina Rahman"');
+    const xmlSource = '<lab:root xmlns:lab="urn:lab"><lab:sample id="A">Alpha</lab:sample><!-- keep --></lab:root>\r\n';
+    const xmlNext = applyReviewedXmlEdit(xmlSource, ['children', 0, 'children', 0, 'children', 0, 'text'], 'Round 9 & verified');
+    const xmlAnalysis = parseSourceFormatDiagnostics('xml', xmlNext, null).structuredAnalysis;
+    expect(xmlAnalysis?.status).toBe('valid');
+    expect(xmlNext).toContain('Round 9 &amp; verified');
+    expect(xmlNext).toContain('xmlns:lab="urn:lab"');
+    expect(xmlNext).toContain('<!-- keep -->');
+    expect(xmlNext.endsWith('\r\n')).toBe(true);
+    const xmlHistory = createDocumentHistory();
+    recordDocumentEdit(xmlHistory, xmlSource);
+    expect(undoDocumentHistory(xmlHistory, xmlNext)).toBe(xmlSource);
+    expect(redoDocumentHistory(xmlHistory, xmlSource)).toBe(xmlNext);
     report.workflows.push('reviewed-visual-edit-save-reopen');
+    report.workflows.push('canonical-structured-mutation-executor');
   });
 
   it('keeps stale reviewed edits and unsafe structured syntax from applying silently', () => {
@@ -328,6 +369,13 @@ describe('structured workflow validation', () => {
     const tableMerge = applyStructuredExternalConflictReviewDecisions(tableReview, rejected);
     expect(tableMerge.ok).toBe(true);
     expect(tableMerge.nextSource).toBe('id,note\n001,local\n');
+    const xmlReview = createStructuredExternalConflictReview(
+      'xml', '<root><title>base</title></root>', '<root><title>local</title></root>', '<root><title>disk</title></root>',
+    );
+    expect(xmlReview.status).toBe('ready');
+    const xmlMerge = applyStructuredExternalConflictReviewDecisions(xmlReview, new Set());
+    expect(xmlMerge.ok).toBe(true);
+    expect(xmlMerge.nextSource).toBe('<root><title>disk</title></root>');
     report.workflows.push('external-conflict-review');
   });
 });
@@ -367,11 +415,7 @@ function applyReviewedJsonEdit(
   expect(plan.ok, plan.unsupportedReason).toBe(true);
   const transaction = structuredEditTransactionFromJsonEdit(source, intent, plan);
   expect(transaction).not.toBeNull();
-  const review = createStructuredEditReviewPlan({ source, transaction: transaction!, documentEpoch: 1 });
-  expect(review).not.toBeNull();
-  const apply = resolveStructuredEditReviewApply(source, 1, review!);
-  expect(apply.ok).toBe(true);
-  return apply.ok ? apply.nextSource : source;
+  return executeProductionMutation(source, transaction!);
 }
 
 function applyReviewedJsonlEdit(
@@ -382,11 +426,7 @@ function applyReviewedJsonlEdit(
   expect(plan.ok, plan.unsupportedReason).toBe(true);
   const transaction = structuredEditTransactionFromJsonlEdit(source, intent, plan);
   expect(transaction).not.toBeNull();
-  const review = createStructuredEditReviewPlan({ source, transaction: transaction!, documentEpoch: 1 });
-  expect(review).not.toBeNull();
-  const apply = resolveStructuredEditReviewApply(source, 1, review!);
-  expect(apply.ok).toBe(true);
-  return apply.ok ? apply.nextSource : source;
+  return executeProductionMutation(source, transaction!);
 }
 
 function applyReviewedTabularEdit(
@@ -397,9 +437,54 @@ function applyReviewedTabularEdit(
   expect(plan.ok, plan.unsupportedReason).toBe(true);
   const transaction = structuredEditTransactionFromTabularEdit(source, intent, plan);
   expect(transaction).not.toBeNull();
-  const review = createStructuredEditReviewPlan({ source, transaction: transaction!, documentEpoch: 1 });
-  expect(review).not.toBeNull();
-  const apply = resolveStructuredEditReviewApply(source, 1, review!);
-  expect(apply.ok).toBe(true);
-  return apply.ok ? apply.nextSource : source;
+  return executeProductionMutation(source, transaction!);
+}
+
+function applyReviewedYamlEdit(
+  source: string,
+  intent: Parameters<typeof planYamlVisualEdit>[1],
+): string {
+  const plan = planYamlVisualEdit(source, intent);
+  expect(plan.ok, plan.unsupportedReason).toBe(true);
+  const transaction = structuredEditTransactionFromYamlEdit(source, intent, plan);
+  expect(transaction).not.toBeNull();
+  return executeProductionMutation(source, transaction!);
+}
+
+function applyReviewedXmlEdit(source: string, path: Array<string | number>, nextValue: string): string {
+  const intent = { kind: 'replaceScalar' as const, path, nextValue };
+  const plan = planXmlVisualEdit(source, intent);
+  expect(plan.ok, plan.unsupportedReason).toBe(true);
+  const transaction = structuredEditTransactionFromXmlEdit(source, intent, plan);
+  expect(transaction).not.toBeNull();
+  return executeProductionMutation(source, transaction!);
+}
+
+function applyReviewedTomlNativeEdit(source: string, path: string[], nextValue: string): string {
+  const oldToken = '"Ultrasonic spray coating parameter sweep"';
+  const from = source.indexOf(oldToken); const insert = JSON.stringify(nextValue);
+  const nextSource = `${source.slice(0, from)}${insert}${source.slice(from + oldToken.length)}`;
+  const transaction = structuredEditTransactionFromTomlNativePlan(source, { kind: 'replaceScalar', path, newValue: nextValue }, {
+    dtoVersion: 'toml-native-dto-v1', plannerVersion: 'toml-edit-native-v1', status: 'planned', operationId: 'replaceScalar', path,
+    patches: [{ from, to: from + oldToken.length, insert, expectedText: oldToken }], nextSource,
+    nextValue: parseSourceFormatDiagnostics('toml', nextSource, null).structuredAnalysis?.parseResult.parsed?.value ?? null,
+    diagnostics: [], untouchedRegionsExact: true,
+  });
+  expect(transaction).not.toBeNull();
+  return executeProductionMutation(source, transaction!);
+}
+
+function executeProductionMutation(source: string, transaction: StructuredEditTransaction): string {
+  const validatorFingerprint = structuredMutationFingerprint('structured-workflow-validator');
+  const plan = createStructuredMutationPlan({ documentId: 'workflow-document', sourceRevision: 0, source, transaction, validatorFingerprint });
+  let committedSource = source;
+  const result = executeStructuredMutation({
+    plan,
+    current: { documentId: 'workflow-document', sourceRevision: 0, source, validatorFingerprint, catalogAdvertised: true, plannerAvailable: true, hostWriteAvailable: true, runtimeAllowsVisualEditing: true, nodeAllowsEditing: true },
+    ...(plan.review === 'required' ? { approval: requestStructuredMutationApproval(plan) } : {}),
+    journalEntry: createStructuredEditJournalEntry({ plan, sourceBefore: source, appliedAt: 1 }),
+    commitPort: { commit: (candidate) => { committedSource = candidate.transaction.nextSource; return { status: 'accepted', revision: 1 }; } },
+  });
+  expect(result).toEqual({ status: 'committed', revision: 1 });
+  return committedSource;
 }

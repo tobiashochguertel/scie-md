@@ -1,7 +1,6 @@
 import type { DocumentId } from './documentIdentity';
 
 export interface ActiveDocumentCompatibilityClearers {
-  clearRuntimeDocument: (documentId: DocumentId) => void;
   clearEditorRuntime: () => void;
   clearReviewOverlays: () => void;
   clearPendingDecisions: () => void;
@@ -19,7 +18,6 @@ export function clearActiveDocumentCompatibilityState(
   clearers: ActiveDocumentCompatibilityClearers,
 ): boolean {
   if (previousDocumentId === nextDocumentId) return false;
-  clearers.clearRuntimeDocument(previousDocumentId);
   clearers.clearEditorRuntime();
   clearers.clearReviewOverlays();
   clearers.clearPendingDecisions();

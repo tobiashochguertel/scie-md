@@ -1,9 +1,11 @@
-import { invoke } from '@tauri-apps/api/core';
+import { Channel, invoke } from '@tauri-apps/api/core';
 import type { DocumentFormat } from '@sciemd/core';
 import type { FileMetadata, ReadTextFileResponse } from '../app/documentState';
-import { createSourceEnvelope, DEFAULT_METADATA, normalizeFileMetadata } from '../app/documentState';
+import { DEFAULT_METADATA, normalizeFileMetadata } from '../app/documentState';
 import type { PandocExportFormat } from '../export/exportTypes';
 import type { NativeDocumentLocator } from '../app/documentIdentity';
+import type { DocumentReadOptions, NativeReadCancellationResult } from '../app/host/documentHost';
+import { DocumentHostError } from '../app/host/documentHostError';
 
 export type FileExplorerEntryKind =
   | 'directory'
@@ -123,12 +125,12 @@ export async function clearPendingDocumentOpen(path: string): Promise<void> {
   await invoke('clear_pending_document_open', { path });
 }
 
-export async function readTextFile(path: string): Promise<ReadTextFileResponse> {
-  return normalizeReadResponse(await invoke<NativeReadTextFileResponse>('read_text_file', { path }));
+export async function readTextFile(path: string, options: DocumentReadOptions = {}): Promise<ReadTextFileResponse> {
+  return invokeNativeTextRead('read_text_file', path, options);
 }
 
-export async function readTextFileForEdit(path: string): Promise<ReadTextFileResponse> {
-  return normalizeReadResponse(await invoke<NativeReadTextFileResponse>('read_text_file_for_edit', { path }));
+export async function readTextFileForEdit(path: string, options: DocumentReadOptions = {}): Promise<ReadTextFileResponse> {
+  return invokeNativeTextRead('read_text_file_for_edit', path, options);
 }
 
 export async function readTextFilePreview(path: string, maxBytes = 8192): Promise<{ content: string; modifiedMs: number }> {
@@ -202,22 +204,108 @@ export async function createGeneratedSiblingArtifact(
   return { ...response, metadata: normalizeFileMetadata(response.metadata) };
 }
 
-interface NativeReadTextFileResponse {
-  sourceText?: string;
-  content: string;
+interface NativeReadTextFileComplete {
+  kind: 'complete';
+  contractVersion: number;
+  chunkCount: number;
   metadata: Partial<FileMetadata>;
+  nativeTimings?: ReadTextFileResponse['nativeTimings'];
+  snapshot: ReadTextFileResponse['snapshot'];
 }
 
-function normalizeReadResponse(response: NativeReadTextFileResponse): ReadTextFileResponse {
-  const sourceText = response.sourceText ?? response.content;
+type NativeTextReadEvent =
+  | { kind: 'sourceChunk'; sequence: number; sourceChunk: string }
+  | NativeReadTextFileComplete;
+
+function normalizeReadResponse(response: NativeReadTextFileComplete, sourceText: string): ReadTextFileResponse {
+  if (response.contractVersion !== 2 || !Number.isInteger(response.chunkCount)) {
+    throw new DocumentHostError('UNKNOWN_HOST_ERROR', 'Native document read returned an unsupported response contract.');
+  }
   const metadata = normalizeFileMetadata(response.metadata);
   return {
+    contractVersion: 2,
     sourceText,
-    content: response.content ?? sourceText,
     metadata,
-    sourceEnvelope: createSourceEnvelope(sourceText, sourceText, metadata),
+    nativeTimings: response.nativeTimings,
+    snapshot: response.snapshot,
   };
 }
+
+let textReadSequence = 0;
+
+async function invokeNativeTextRead(
+  command: 'read_text_file' | 'read_text_file_for_edit',
+  path: string,
+  options: DocumentReadOptions,
+): Promise<ReadTextFileResponse> {
+  const operationId = options.operationId ?? `renderer-read-${Date.now()}-${++textReadSequence}`;
+  if (options.signal?.aborted) throw new DocumentHostError('CANCELLED', 'Document read cancelled before native acquisition.');
+
+  const earlyMetadata = options.onEarlyMetadata
+    ? statFile(path).then((metadata) => {
+      if (!options.signal?.aborted) options.onEarlyMetadata?.(metadata);
+    }).catch(() => undefined)
+    : Promise.resolve();
+  void earlyMetadata;
+
+  const cancel = () => {
+    void invoke<NativeReadCancellationResult>('cancel_text_file_read', { operationId })
+      .then((result) => options.onNativeCancellation?.(result))
+      .catch(() => undefined);
+  };
+  options.signal?.addEventListener('abort', cancel, { once: true });
+  let sourceChunks: string[] | null = null;
+  let eventChannel: Channel<NativeTextReadEvent> | null = null;
+  try {
+    const chunks: string[] = [];
+    sourceChunks = chunks;
+    let channelCompleted = false;
+    let resolveCompletion!: (event: NativeReadTextFileComplete) => void;
+    let rejectCompletion!: (error: DocumentHostError) => void;
+    const completion = new Promise<NativeReadTextFileComplete>((resolve, reject) => {
+      resolveCompletion = resolve;
+      rejectCompletion = reject;
+    });
+    const onEvent = new Channel<NativeTextReadEvent>();
+    eventChannel = onEvent;
+    onEvent.onmessage = (event) => {
+      if (channelCompleted) return;
+      if (event.kind === 'sourceChunk') {
+        if (event.sequence !== chunks.length || typeof event.sourceChunk !== 'string') {
+          channelCompleted = true;
+          rejectCompletion(new DocumentHostError('UNKNOWN_HOST_ERROR', 'Native document read channel returned an invalid source chunk sequence.'));
+          return;
+        }
+        chunks.push(event.sourceChunk);
+        return;
+      }
+      if (event.chunkCount !== chunks.length) {
+        channelCompleted = true;
+        rejectCompletion(new DocumentHostError('UNKNOWN_HOST_ERROR', 'Native document read channel returned an invalid completion record.'));
+        return;
+      }
+      channelCompleted = true;
+      resolveCompletion(event);
+    };
+    await invoke<void>(command, { path, operationId, onEvent });
+    const complete = await completion;
+    const sourceText = chunks.join('');
+    chunks.length = 0;
+    const response = normalizeReadResponse(complete, sourceText);
+    if (options.signal?.aborted) throw new DocumentHostError('CANCELLED', 'Document read cancelled before renderer commit.');
+    if (response.nativeTimings) options.onNativeTimings?.(response.nativeTimings);
+    return response;
+  } finally {
+    if (eventChannel) {
+      eventChannel.onmessage = () => undefined;
+      const closableChannel = eventChannel as unknown as { cleanupCallback?: () => void };
+      closableChannel.cleanupCallback?.();
+    }
+    if (sourceChunks) sourceChunks.length = 0;
+    options.signal?.removeEventListener('abort', cancel);
+  }
+}
+
 
 export async function createBackupSnapshot(path: string, label: string): Promise<string | null> {
   const result = await invoke<string | null>('create_backup_snapshot', { path, label });

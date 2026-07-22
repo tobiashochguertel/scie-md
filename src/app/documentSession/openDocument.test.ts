@@ -1,13 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_METADATA } from '../documentState';
-import type { ReadTextFileResponse } from '../documentState';
+import { createHostReadResponse, type ReadTextFileResponse } from '../documentState';
 import { DocumentHostError, type DocumentHost } from '../host/documentHost';
 import { loadSettings } from '../../services/settingsService';
 import type { PersistedSettings } from '../../services/settingsService';
-import {
-  openDocumentForSession,
-  restoreExternalLaunchDraftAfterCommit,
-} from './openDocument';
+import { openDocumentForSession } from './openDocument';
 import type { OpenDocumentForSessionInput } from './openDocument';
 
 describe('openDocumentForSession', () => {
@@ -17,7 +14,7 @@ describe('openDocumentForSession', () => {
 
   it('opens a disk document with status and diagnostics around read and commit', async () => {
     const path = 'C:\\docs\\paper.md';
-    const input = createOpenInput();
+    const input = createOpenInput({ timeouts: { fileReadMs: 1_000, draftRestoreMs: 1_000 } });
     input.host.file.readTextFileForEdit = vi.fn().mockResolvedValue(readResponse('# Disk\n'));
 
     const opened = await openDocumentForSession({ ...input, explicitPath: path });
@@ -25,7 +22,10 @@ describe('openDocumentForSession', () => {
     expect(opened).toBe(true);
     expect(input.settleDirtyDocumentBeforeReplace).toHaveBeenCalledTimes(1);
     expect(input.preserveDirtyDraftBeforeExternalOpen).not.toHaveBeenCalled();
-    expect(input.host.file.readTextFileForEdit).toHaveBeenCalledWith(path);
+    expect(input.host.file.readTextFileForEdit).toHaveBeenCalledWith(path, expect.objectContaining({
+      operationId: expect.any(String),
+      signal: expect.any(AbortSignal),
+    }));
     expect(input.commitOpenedDocument).toHaveBeenCalledWith(path, '# Disk\n', readResponse('# Disk\n').metadata, undefined);
     expect(input.showDocumentOpenStatus).toHaveBeenNthCalledWith(1, path, 'reading', {});
     expect(input.showDocumentOpenStatus).toHaveBeenNthCalledWith(2, path, 'preparing', { immediate: false });
@@ -35,6 +35,52 @@ describe('openDocumentForSession', () => {
       'document-open-read-complete',
       'document-open-committed',
     ]);
+  });
+
+  it.each(['read-first', 'recovery-first'] as const)('overlaps native read and recovery lookup when %s settles first', async (first) => {
+    const path = 'C:\\docs\\overlap.md';
+    const input = createOpenInput({ timeouts: { fileReadMs: 1_000, draftRestoreMs: 1_000 } });
+    const read = deferred<ReadTextFileResponse>();
+    const recovery = deferred<null>();
+    input.host.file.readTextFileForEdit = vi.fn().mockReturnValue(read.promise);
+    input.host.recovery.loadFileDraft = vi.fn().mockReturnValue(recovery.promise);
+
+    const opening = openDocumentForSession({ ...input, explicitPath: path });
+    await vi.waitFor(() => {
+      expect(input.host.file.readTextFileForEdit).toHaveBeenCalledTimes(1);
+      expect(input.host.recovery.loadFileDraft).toHaveBeenCalledTimes(1);
+    });
+    if (first === 'read-first') {
+      read.resolve(readResponse('# Disk\n'));
+      await Promise.resolve();
+      expect(input.commitOpenedDocument).not.toHaveBeenCalled();
+      recovery.resolve(null);
+    } else {
+      recovery.resolve(null);
+      await Promise.resolve();
+      expect(input.commitOpenedDocument).not.toHaveBeenCalled();
+      read.resolve(readResponse('# Disk\n'));
+    }
+
+    await expect(opening).resolves.toBe(true);
+    expect(input.commitOpenedDocument).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts the native operation and never commits when the owning open is cancelled', async () => {
+    const path = 'C:\\docs\\cancelled.md';
+    const controller = new AbortController();
+    const input = createOpenInput({ readSignal: controller.signal });
+    input.host.file.readTextFileForEdit = vi.fn<DocumentHost['file']['readTextFileForEdit']>((_path, options) => new Promise<ReadTextFileResponse>((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(new DocumentHostError('CANCELLED', 'cancelled')), { once: true });
+    }));
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const opening = openDocumentForSession({ ...input, explicitPath: path });
+    await vi.waitFor(() => expect(input.host.file.readTextFileForEdit).toHaveBeenCalledTimes(1));
+    controller.abort();
+
+    await expect(opening).resolves.toBe(false);
+    expect(input.commitOpenedDocument).not.toHaveBeenCalled();
   });
 
   it('uses the generic document picker when no explicit path is provided', async () => {
@@ -77,6 +123,32 @@ describe('openDocumentForSession', () => {
     expect(input.commitOpenedDocument).toHaveBeenCalledWith(path, '# Draft\n', readResponse('# Disk\n').metadata, 'visual', '# Disk\n', 'markdown');
     expect(input.pushToast).toHaveBeenCalledWith('Restored unsaved file draft.', 'warning');
     expect(input.host.recovery.clearFileDraft).not.toHaveBeenCalled();
+  });
+
+  it('joins external-launch recovery before committing the auto-restored draft exactly once', async () => {
+    const path = 'C:\\docs\\launch.md';
+    const input = createOpenInput();
+    input.host.file.readTextFileForEdit = vi.fn().mockResolvedValue(readResponse('# Disk\n'));
+    input.host.recovery.loadFileDraft = vi.fn().mockResolvedValue({ markdown: '# Draft\n', savedAt: 1000, format: 'markdown' });
+    input.host.recovery.shouldOfferFileDraftRestore = vi.fn().mockReturnValue(true);
+
+    const opened = await openDocumentForSession({
+      ...input,
+      explicitPath: path,
+      options: { externalLaunch: true, draftRestore: 'auto', preferredMode: 'visual' },
+    });
+
+    expect(opened).toBe(true);
+    expect(input.preserveDirtyDraftBeforeExternalOpen).toHaveBeenCalledTimes(1);
+    expect(input.commitOpenedDocument).toHaveBeenCalledTimes(1);
+    expect(input.commitOpenedDocument).toHaveBeenCalledWith(
+      path,
+      '# Draft\n',
+      readResponse('# Disk\n').metadata,
+      'visual',
+      '# Disk\n',
+      'markdown',
+    );
   });
 
   it('clears an offerable file draft when the user opens the disk version', async () => {
@@ -152,59 +224,6 @@ describe('openDocumentForSession', () => {
   });
 });
 
-describe('restoreExternalLaunchDraftAfterCommit', () => {
-  it('restores an offerable launch draft only while the disk document is still current', async () => {
-    const path = 'C:\\docs\\launch.md';
-    const host = createHost();
-    const commitOpenedDocument = vi.fn<OpenDocumentForSessionInput['commitOpenedDocument']>();
-    const pushToast = vi.fn<OpenDocumentForSessionInput['pushToast']>();
-    host.recovery.loadFileDraft = vi.fn().mockResolvedValue({ markdown: '# Draft\n', savedAt: 2000, format: 'markdown' });
-    host.recovery.shouldOfferFileDraftRestore = vi.fn().mockReturnValue(true);
-
-    await restoreExternalLaunchDraftAfterCommit({
-      recoveryHost: host.recovery,
-      path,
-      response: readResponse('# Disk\n'),
-      preferredMode: 'visual',
-      isStillCurrentDocument: () => true,
-      getCurrentSourceText: () => '# Disk\n',
-      commitOpenedDocument,
-      pushToast,
-      draftRestoreTimeoutMs: 20,
-    });
-
-    expect(commitOpenedDocument).toHaveBeenCalledWith(path, '# Draft\n', readResponse('# Disk\n').metadata, 'visual', '# Disk\n', 'markdown');
-    expect(pushToast).toHaveBeenCalledWith('Restored unsaved file draft.', 'warning');
-    expect(diagnosticEventTypes(host)).toEqual([
-      'document-open-draft-check-start',
-      'document-open-draft-restored',
-    ]);
-  });
-
-  it('leaves a launch draft untouched after the active document changes', async () => {
-    const host = createHost();
-    const commitOpenedDocument = vi.fn<OpenDocumentForSessionInput['commitOpenedDocument']>();
-    const pushToast = vi.fn<OpenDocumentForSessionInput['pushToast']>();
-    host.recovery.loadFileDraft = vi.fn().mockResolvedValue({ markdown: '# Draft\n', savedAt: 2000, format: 'markdown' });
-    host.recovery.shouldOfferFileDraftRestore = vi.fn().mockReturnValue(true);
-
-    await restoreExternalLaunchDraftAfterCommit({
-      recoveryHost: host.recovery,
-      path: 'C:\\docs\\launch.md',
-      response: readResponse('# Disk\n'),
-      preferredMode: 'visual',
-      isStillCurrentDocument: () => false,
-      getCurrentSourceText: () => '# Disk\n',
-      commitOpenedDocument,
-      pushToast,
-      draftRestoreTimeoutMs: 20,
-    });
-
-    expect(commitOpenedDocument).not.toHaveBeenCalled();
-    expect(pushToast).not.toHaveBeenCalled();
-  });
-});
-
 function createOpenInput(overrides: Partial<OpenDocumentForSessionInput> = {}): OpenDocumentForSessionInput {
   let statusToken = 0;
   return {
@@ -213,8 +232,6 @@ function createOpenInput(overrides: Partial<OpenDocumentForSessionInput> = {}): 
     pushToast: vi.fn<OpenDocumentForSessionInput['pushToast']>(),
     setSettings: vi.fn<(settings: PersistedSettings | ((current: PersistedSettings) => PersistedSettings)) => void>(),
     isLatestOpenRequest: vi.fn<OpenDocumentForSessionInput['isLatestOpenRequest']>().mockReturnValue(true),
-    isExternalLaunchDocumentCurrent: vi.fn<OpenDocumentForSessionInput['isExternalLaunchDocumentCurrent']>().mockReturnValue(true),
-    getCurrentSourceText: vi.fn<OpenDocumentForSessionInput['getCurrentSourceText']>().mockReturnValue('# Disk\n'),
     settleDirtyDocumentBeforeReplace: vi.fn<OpenDocumentForSessionInput['settleDirtyDocumentBeforeReplace']>().mockResolvedValue(true),
     preserveDirtyDraftBeforeExternalOpen: vi.fn<OpenDocumentForSessionInput['preserveDirtyDraftBeforeExternalOpen']>(),
     showDocumentOpenStatus: vi.fn<OpenDocumentForSessionInput['showDocumentOpenStatus']>(() => {
@@ -283,17 +300,20 @@ function createHost(): DocumentHost {
 }
 
 function readResponse(content: string): ReadTextFileResponse {
-  return {
-    content,
-    metadata: {
+  return createHostReadResponse(content, {
       ...DEFAULT_METADATA,
       lastKnownSizeBytes: content.length,
       contentHash: `hash:${content.length}`,
-    },
-  };
+  });
 }
 
 function diagnosticEventTypes(host: DocumentHost): string[] {
   const appendDiagnosticsEvent = host.recovery.appendDiagnosticsEvent as ReturnType<typeof vi.fn>;
   return appendDiagnosticsEvent.mock.calls.map(([event]) => event.eventType);
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
 }

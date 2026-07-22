@@ -77,7 +77,7 @@ export function useCitationWorkflow({
     let writeMetadata: FileMetadata | null = null;
     try {
       const response = await readTextFile(bibliographyPath);
-      bibtexForUpsert = response.content;
+      bibtexForUpsert = response.sourceText;
       writeMetadata = response.metadata;
     } catch {
       bibtexForUpsert = '';
@@ -87,7 +87,7 @@ export function useCitationWorkflow({
     const freshMetadata = await statFile(bibliographyPath, { contentHash: true }).catch(() => null);
     if (freshMetadata && (!writeMetadata || metadataChanged(writeMetadata, freshMetadata, 0))) {
       const fresh = await readTextFile(bibliographyPath);
-      bibtexForUpsert = fresh.content;
+      bibtexForUpsert = fresh.sourceText;
       writeMetadata = fresh.metadata;
       await createBackupSnapshot(bibliographyPath, 'external-bib');
       pushToast('Bibliography changed on disk. ScieMD merged your citation into the latest .bib file and kept a backup.', 'warning');
@@ -138,12 +138,12 @@ export function useCitationWorkflow({
     if (!confirmed) throw new Error('Citation deletion canceled.');
 
     const response = await readTextFile(bibliographyPath);
-    let bibtexForDelete = response.content;
+    let bibtexForDelete = response.sourceText;
     let writeMetadata: FileMetadata | null = response.metadata;
     const freshMetadata = await statFile(bibliographyPath, { contentHash: true }).catch(() => null);
     if (freshMetadata && metadataChanged(writeMetadata, freshMetadata, 0)) {
       const fresh = await readTextFile(bibliographyPath);
-      bibtexForDelete = fresh.content;
+      bibtexForDelete = fresh.sourceText;
       writeMetadata = fresh.metadata;
       await createBackupSnapshot(bibliographyPath, 'external-bib');
       pushToast('Bibliography changed on disk. ScieMD deleted from the latest .bib file and kept a backup.', 'warning');

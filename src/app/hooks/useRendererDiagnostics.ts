@@ -6,6 +6,7 @@ import {
   type RendererHeartbeatMetrics,
 } from '../../services/nativeRecoveryService';
 import { isTauriRuntime } from '../runtime';
+import { utf8SourceBytes } from '../runtime/documentAnalysisPolicy';
 import {
   EMPTY_BACKGROUND_JOB_SNAPSHOT,
   summarizeBackgroundJobs,
@@ -24,6 +25,7 @@ interface UseRendererDiagnosticsOptions {
   backgroundJobs?: BackgroundJobSnapshot;
   onPreviousSessionCrashDetected?: () => void;
   createDocumentMetrics?: (sourceText: string) => RendererDocumentMetrics;
+  documentMetrics?: RendererDocumentMetrics;
   heartbeatIntervalMs?: number;
   now?: () => number;
 }
@@ -56,6 +58,7 @@ export function useRendererDiagnostics({
   backgroundJobs = EMPTY_BACKGROUND_JOB_SNAPSHOT,
   onPreviousSessionCrashDetected,
   createDocumentMetrics = summarizeSourceTextForDiagnostics,
+  documentMetrics: suppliedDocumentMetrics,
   heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS,
   now = Date.now,
 }: UseRendererDiagnosticsOptions): void {
@@ -63,10 +66,11 @@ export function useRendererDiagnostics({
     const random = Math.random().toString(36).slice(2);
     return `${Date.now().toString(36)}-${random}`;
   }, []);
-  const documentMetrics = useMemo(
-    () => createDocumentMetrics(sourceText),
-    [createDocumentMetrics, sourceText],
+  const computedDocumentMetrics = useMemo(
+    () => suppliedDocumentMetrics ?? createDocumentMetrics(sourceText),
+    [createDocumentMetrics, sourceText, suppliedDocumentMetrics],
   );
+  const documentMetrics = computedDocumentMetrics;
   const latestSnapshot = useMemo<RendererDiagnosticsSnapshot>(() => ({
     filePath,
     mode,
@@ -165,15 +169,28 @@ export function summarizeSourceTextForDiagnostics(sourceText: string): RendererD
 export const summarizeMarkdownForDiagnostics = summarizeSourceTextForDiagnostics;
 
 function byteLength(value: string): number {
-  if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(value).byteLength;
-  return unescape(encodeURIComponent(value)).length;
+  return utf8SourceBytes(value);
 }
 
 function lineCount(value: string): number {
   if (!value) return 0;
-  return value.split(/\r\n|\r|\n/).length;
+  let lines = 1;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value.charCodeAt(index) === 10) lines += 1;
+    else if (value.charCodeAt(index) === 13) {
+      lines += 1;
+      if (value.charCodeAt(index + 1) === 10) index += 1;
+    }
+  }
+  return lines;
 }
 
 function countMatches(value: string, pattern: RegExp): number {
-  return value.match(pattern)?.length ?? 0;
+  const matcher = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
+  let count = 0;
+  while (matcher.exec(value)) {
+    count += 1;
+    if (matcher.lastIndex === 0) matcher.lastIndex += 1;
+  }
+  return count;
 }

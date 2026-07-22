@@ -18,7 +18,9 @@ proprietary system fonts.
 | Source Serif 4 | Manuscript, journal, and Nature-style prose | SIL Open Font License 1.1 | `public/fonts/vendor/source-serif-4/OFL.txt` |
 | Lora | Science-style long-form reading surface | SIL Open Font License 1.1 | `public/fonts/vendor/lora/OFL.txt` |
 | IBM Plex Sans | Lab-note, technical, and label typography | SIL Open Font License 1.1 | `public/fonts/vendor/ibm-plex-sans/OFL.txt` |
-| JetBrains Mono | Source mode, code blocks, and SVG source labels | SIL Open Font License 1.1 | `public/fonts/vendor/jetbrains-mono/OFL.txt` |
+| IBM Plex Mono | Desktop source mode and VS Code Markdown-source fallback | SIL Open Font License 1.1 | `public/fonts/vendor/ibm-plex-mono/OFL.txt` |
+| Noto Sans Mono (Greek subset) | Greek glyph supplement for the IBM Plex Mono source-family face | SIL Open Font License 1.1 | `public/fonts/vendor/ibm-plex-mono/OFL-Noto-Sans-Mono.txt` |
+| JetBrains Mono | Code blocks, technical UI, structured previews, and SVG source labels | SIL Open Font License 1.1 | `public/fonts/vendor/jetbrains-mono/OFL.txt` |
 | KaTeX math fonts/assets | Equation rendering | MIT license via KaTeX package | `public/fonts/vendor/katex/LICENSE.txt` |
 
 ## Frontend Runtime Dependencies

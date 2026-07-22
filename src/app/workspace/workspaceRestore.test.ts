@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_METADATA } from '../documentState';
+import { createHostReadResponse, DEFAULT_METADATA } from '../documentState';
 import { fallbackFileLocator, sourceRevision, type DocumentId } from '../documentIdentity';
 import { DocumentHostError } from '../host/documentHostError';
 import type { RecoveryCatalogEntry } from '../../services/recoveryCatalog';
@@ -50,7 +50,7 @@ function recovery(documentId: string, path: string, sourceText: string, savedSou
 function reader(values: Record<string, string>) {
   return vi.fn(async (path: string) => {
     if (!(path in values)) throw new DocumentHostError('NOT_FOUND', 'missing');
-    return { content: values[path], metadata: { ...DEFAULT_METADATA, lastKnownSizeBytes: values[path].length } };
+    return createHostReadResponse(values[path], { ...DEFAULT_METADATA, lastKnownSizeBytes: values[path].length });
   });
 }
 
@@ -98,7 +98,7 @@ describe('workspace restart restoration', () => {
     const read = vi.fn(async (path: string) => {
       if (path.endsWith('old.md')) throw new DocumentHostError('NOT_FOUND', 'The stable file moved or is unavailable.');
       if (path.endsWith('denied.md')) throw new DocumentHostError('PERMISSION_DENIED', 'Permission lost.');
-      return { content: 'healthy', metadata: DEFAULT_METADATA };
+      return createHostReadResponse('healthy', DEFAULT_METADATA);
     });
     const first = await restoreWorkspace({ manifest: stored, recoveryEntries: [], capability: enabled, readFile: read });
     const second = await restoreWorkspace({ manifest: stored, recoveryEntries: [], capability: enabled, readFile: read });

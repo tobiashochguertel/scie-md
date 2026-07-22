@@ -179,11 +179,12 @@ describe('formatDiagnostics', () => {
       canRenderVisualSurface: true,
       primaryVisualSurface: expect.objectContaining({
         kind: 'tree',
-        readonly: true,
-        lossy: true,
+        readonly: false,
+        editable: true,
+        lossy: false,
       }),
-      editPolicy: 'lossy-readonly',
-      preservationPolicy: 'lossy-projection',
+      editPolicy: 'format-preserving',
+      preservationPolicy: 'exact-source',
       metrics: {
         nodeCount: 5,
         sourceMappedNodeCount: 5,
@@ -196,8 +197,8 @@ describe('formatDiagnostics', () => {
     });
     expect(result.structuredAnalysis?.parseResult.parsed?.sourceMap.root).toMatchObject({
       format: 'yaml',
-      editable: false,
-      lossy: true,
+      editable: true,
+      lossy: false,
     });
   });
 
@@ -223,7 +224,7 @@ describe('formatDiagnostics', () => {
     }));
   });
 
-  it('parses XML diagnostics into generic read-only structured tree analysis', () => {
+  it('parses XML diagnostics into generic format-preserving structured tree analysis', () => {
     const result = parseSourceFormatDiagnostics('xml', '<study><sample id="S-001">ready</sample></study>\n', 'C:\\lab\\metadata.xml');
 
     expect(result.jsonAnalysis).toBeNull();
@@ -236,12 +237,12 @@ describe('formatDiagnostics', () => {
       canRenderVisualSurface: true,
       primaryVisualSurface: expect.objectContaining({
         kind: 'tree',
-        readonly: true,
-        editable: false,
+        readonly: false,
+        editable: true,
         lossy: false,
       }),
-      editPolicy: 'lossy-readonly',
-      preservationPolicy: 'lossless-parse',
+      editPolicy: 'format-preserving',
+      preservationPolicy: 'exact-source',
       metrics: {
         unsupportedFeatureCount: 0,
       },

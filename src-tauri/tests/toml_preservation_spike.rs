@@ -12,6 +12,7 @@ const VALID_FIXTURES: &[&str] = &[
     "inline-tables.toml",
     "section-ordering.toml",
     "dotted-key-edit-risk.toml",
+    "unicode-and-datetime.toml",
 ];
 
 #[test]
@@ -26,6 +27,13 @@ fn toml_edit_noop_round_trip_preserves_valid_fixture_source() {
             "{fixture_name} should round-trip byte-for-byte without edits"
         );
     }
+}
+
+#[test]
+fn toml_edit_noop_round_trip_preserves_windows_line_endings_and_unicode() {
+    let source = read_fixture("unicode-and-datetime.toml").replace('\n', "\r\n");
+    let document = parse_mut_document(&source, "unicode-and-datetime-crlf.toml");
+    assert_eq!(document.to_string().replace('\n', "\r\n"), source);
 }
 
 #[test]

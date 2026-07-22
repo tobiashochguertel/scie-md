@@ -78,8 +78,11 @@ export function parseFormatDocumentAsync(
 export function cancelFormatDocumentParse(token: EffectToken): boolean {
   for (const [id, pending] of pendingFormatParses) {
     if (pending.effectToken?.operationId !== token.operationId) continue;
+    const cancelledWorker = pending.worker;
     clearPendingFormatParse(id);
     pending.reject(new Error('Format parser worker request superseded by targeted cancellation.'));
+    const relatedPending = Array.from(pendingFormatParses.values()).some((related) => related.worker === cancelledWorker);
+    if (!relatedPending) restartFormatParserWorker(cancelledWorker, new Error('Format parser worker was replaced after targeted cancellation.'));
     return true;
   }
   return false;

@@ -12,6 +12,7 @@ import {
   createDiffHunks,
   createJsonStructuralReview,
   createStructuredExternalConflictReview,
+  createTomlNativeExternalConflictReview,
 } from '@sciemd/core';
 import type { DiffHunk, DocumentFormat, JsonStructuralReviewPlan, StructuredExternalConflictReviewPlan } from '@sciemd/core';
 import { detectProtectedChanges } from '@sciemd/core';
@@ -94,6 +95,20 @@ export function useExternalConflictReviewWorkflow({
     if (!response) throw new Error('The addressed document is no longer available for external conflict review.');
     return response;
   }, [filePath, host.file, readExternalDocument, target.documentId]);
+  const createHostStructuredConflictReview = useCallback(async (
+    reviewFormat: DocumentFormat,
+    base: string,
+    current: string,
+    disk: string,
+  ) => {
+    if (reviewFormat !== 'toml') return createStructuredExternalConflictReview(reviewFormat, base, current, disk);
+    const native = host.structuredMutation;
+    if (!native?.capabilities.tomlNativePlanning) return createStructuredExternalConflictReview(reviewFormat, base, current, disk);
+    const [baseReport, currentReport, diskReport] = await Promise.all([
+      native.inspectToml(base), native.inspectToml(current), native.inspectToml(disk),
+    ]);
+    return createTomlNativeExternalConflictReview(base, current, disk, { base: baseReport, current: currentReport, disk: diskReport });
+  }, [host.structuredMutation]);
 
   const openExternalConflictReview = useCallback(async () => {
     if (!filePath) return;
@@ -107,9 +122,9 @@ export function useExternalConflictReviewWorkflow({
           kind: 'line-review',
           filePath,
           documentEpoch: documentEpochRef.current,
-          hunks: createDiffHunks(lastSavedSourceText, response.content),
+          hunks: createDiffHunks(lastSavedSourceText, response.sourceText),
           baseMarkdown: lastSavedSourceText,
-          diskMarkdown: response.content,
+          diskMarkdown: response.sourceText,
           diskMetadata: response.metadata,
         });
         return;
@@ -121,21 +136,21 @@ export function useExternalConflictReviewWorkflow({
         format,
         baseSource: lastSavedSourceText,
         currentSource: sourceText,
-        diskSource: response.content,
+        diskSource: response.sourceText,
         diskMetadata: response.metadata,
         jsonReview: format === 'json'
-          ? createJsonStructuralReview(lastSavedSourceText, sourceText, response.content)
+          ? createJsonStructuralReview(lastSavedSourceText, sourceText, response.sourceText)
           : null,
         structuredReview: format === 'json'
           ? null
-          : createStructuredExternalConflictReview(format, lastSavedSourceText, sourceText, response.content),
+          : await createHostStructuredConflictReview(format, lastSavedSourceText, sourceText, response.sourceText),
       });
     } catch (error) {
       if (!target.effects.isCurrent(effectToken)) return;
       target.effects.cancel(effectToken);
       pushToast(error instanceof Error ? error.message : 'Could not load disk version for review.', 'error');
     }
-  }, [documentEpochRef, filePath, format, lastSavedSourceText, sourceText, pushToast, readTargetDisk, target.documentId, target.effects]);
+  }, [createHostStructuredConflictReview, documentEpochRef, filePath, format, lastSavedSourceText, sourceText, pushToast, readTargetDisk, target.documentId, target.effects]);
 
   const closeExternalConflictReview = useCallback(() => {
     setExternalConflictReview(null);
@@ -165,14 +180,14 @@ export function useExternalConflictReviewWorkflow({
     }
     if (!target.effects.commit(effectToken, () => undefined).accepted) return;
     if (
-      latestDisk.content !== externalConflictReview.diskMarkdown
+      latestDisk.sourceText !== externalConflictReview.diskMarkdown
       || metadataChanged(externalConflictReview.diskMetadata, latestDisk.metadata)
     ) {
       setExternalConflictReview({
         ...externalConflictReview,
-        hunks: createDiffHunks(lastSavedSourceText, latestDisk.content),
+        hunks: createDiffHunks(lastSavedSourceText, latestDisk.sourceText),
         baseMarkdown: lastSavedSourceText,
-        diskMarkdown: latestDisk.content,
+        diskMarkdown: latestDisk.sourceText,
         diskMetadata: latestDisk.metadata,
       });
       pushToast('Disk changed again while review was open. Review refreshed before applying.', 'warning');
@@ -244,18 +259,18 @@ export function useExternalConflictReviewWorkflow({
     }
     if (!target.effects.commit(effectToken, () => undefined).accepted) return;
     if (
-      latestDisk.content !== externalConflictReview.diskSource
+      latestDisk.sourceText !== externalConflictReview.diskSource
       || metadataChanged(externalConflictReview.diskMetadata, latestDisk.metadata)
     ) {
       const refreshedReview = createJsonStructuralReview(
         externalConflictReview.baseSource,
         sourceText,
-        latestDisk.content,
+        latestDisk.sourceText,
       );
       setExternalConflictReview({
         ...externalConflictReview,
         currentSource: sourceText,
-        diskSource: latestDisk.content,
+        diskSource: latestDisk.sourceText,
         diskMetadata: latestDisk.metadata,
         jsonReview: refreshedReview,
       });
@@ -295,7 +310,7 @@ export function useExternalConflictReviewWorkflow({
           : 'Applied selected disk JSON changes',
       'success',
     );
-  }, [adoptReviewedDiskMerge, documentEpochRef, externalConflictReview, filePath, host.file, sourceText, pushToast, target.documentId, target.effects]);
+  }, [adoptReviewedDiskMerge, createHostStructuredConflictReview, documentEpochRef, externalConflictReview, filePath, sourceText, pushToast, readTargetDisk, target.documentId, target.effects]);
 
   const applyStructuredConflictReview = useCallback(async (rejectedDiskChangeIds: Set<string>) => {
     if (!externalConflictReview || externalConflictReview.kind !== 'structured-source' || externalConflictReview.format === 'json') {
@@ -321,19 +336,19 @@ export function useExternalConflictReviewWorkflow({
     }
     if (!target.effects.commit(effectToken, () => undefined).accepted) return;
     if (
-      latestDisk.content !== externalConflictReview.diskSource
+      latestDisk.sourceText !== externalConflictReview.diskSource
       || metadataChanged(externalConflictReview.diskMetadata, latestDisk.metadata)
     ) {
-      const refreshedReview = createStructuredExternalConflictReview(
+      const refreshedReview = await createHostStructuredConflictReview(
         externalConflictReview.format,
         externalConflictReview.baseSource,
         sourceText,
-        latestDisk.content,
+        latestDisk.sourceText,
       );
       setExternalConflictReview({
         ...externalConflictReview,
         currentSource: sourceText,
-        diskSource: latestDisk.content,
+        diskSource: latestDisk.sourceText,
         diskMetadata: latestDisk.metadata,
         structuredReview: refreshedReview,
       });
@@ -341,7 +356,7 @@ export function useExternalConflictReviewWorkflow({
       return;
     }
 
-    const review = createStructuredExternalConflictReview(
+    const review = await createHostStructuredConflictReview(
       externalConflictReview.format,
       externalConflictReview.baseSource,
       sourceText,

@@ -1,0 +1,325 @@
+{
+  "schemaVersion": 1,
+  "status": "passed",
+  "wave": "document runtime structured editing foundations",
+  "rounds": {
+    "round1": "CLOSED",
+    "round2": "CLOSED",
+    "round3": "CLOSED",
+    "round4": "CLOSED",
+    "round5": "CLOSED",
+    "round6": "CLOSED",
+    "round7": "CLOSED",
+    "round8": "CLOSED",
+    "round9": "CLOSED",
+    "round10": "CLOSED",
+    "round11": "CLOSED"
+  },
+  "candidateIdentity": {
+    "head": "f28bb9cf7abeb504402f702e8d8a78bdf302e03a",
+    "buildInputManifestSha256": "a3b5ce28ccffa7ed04b231051e3aa73c792e65651c015e03fa86ec0d5b3330cc",
+    "fileCount": 1207
+  },
+  "finalIdentity": {
+    "head": "f28bb9cf7abeb504402f702e8d8a78bdf302e03a",
+    "buildInputManifestSha256": "a3b5ce28ccffa7ed04b231051e3aa73c792e65651c015e03fa86ec0d5b3330cc",
+    "fileCount": 1207
+  },
+  "excludedMutableEvidencePaths": [
+    "docs/refactor/document_runtime_structured_editing_foundations_wave.md",
+    "docs/refactor/document_runtime_structured_editing_foundations_wave_certification.v1.json",
+    "src/app/performance/documentPerformanceBaseline.windows.v1.json"
+  ],
+  "artifacts": [
+    {
+      "path": "scie-md-vscode-extension/sciemd-vscode-1.1.0.vsix",
+      "fileName": "sciemd-vscode-1.1.0.vsix",
+      "bytes": 4989898,
+      "sha256": "bd7bf801257199230909c5c668c4910ee7dda466851ee5db0204180dee0d4061"
+    },
+    {
+      "path": "src-tauri/target/release/bundle/msi/ScieMD_1.1.0_x64_en-US.msi",
+      "fileName": "ScieMD_1.1.0_x64_en-US.msi",
+      "bytes": 9478144,
+      "sha256": "bb68cbe59dddacae094270d9587f285926c5e15c81421421cdb0ea989215349a"
+    },
+    {
+      "path": "src-tauri/target/release/bundle/nsis/ScieMD_1.1.0_x64-setup.exe",
+      "fileName": "ScieMD_1.1.0_x64-setup.exe",
+      "bytes": 8027205,
+      "sha256": "b46dc1a5812a8ba15bc130ab007f0fd1f101c5fdb72cf5d5e4fb536ee3659163"
+    },
+    {
+      "path": "src-tauri/target/release/sciemd.exe",
+      "fileName": "sciemd.exe",
+      "bytes": 18243072,
+      "sha256": "f744ca205762fd2d643f0334de01a4884dd7b031e23177d0f3f8a1cd2b813d8c"
+    }
+  ],
+  "commandCount": 32,
+  "expensiveNodeCounts": {
+    "desktopBuild": 1,
+    "vscodePackageBuild": 1,
+    "desktopUiPerformance": 1,
+    "installedVsixSmoke": 1
+  },
+  "commands": [
+    {
+      "id": "font-generator-scie-sans",
+      "command": "npm.cmd run fonts:scie-sans",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:32:20.627Z",
+      "durationMs": 17391,
+      "exitCode": 0
+    },
+    {
+      "id": "font-generator-ibm-plex-mono",
+      "command": "npm.cmd run fonts:ibm-plex-mono",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:32:38.018Z",
+      "durationMs": 380,
+      "exitCode": 0
+    },
+    {
+      "id": "font-verification",
+      "command": "npm.cmd run fonts:verify",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:32:39.088Z",
+      "durationMs": 3105,
+      "exitCode": 0
+    },
+    {
+      "id": "version-changelog",
+      "command": "npm.cmd run validate:version-changelog",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:32:42.607Z",
+      "durationMs": 471,
+      "exitCode": 0
+    },
+    {
+      "id": "distribution-contract",
+      "command": "npm.cmd run validate:distribution",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:32:43.416Z",
+      "durationMs": 485,
+      "exitCode": 0
+    },
+    {
+      "id": "tauri-contract",
+      "command": "npm.cmd run validate:tauri-contract",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:32:44.227Z",
+      "durationMs": 407,
+      "exitCode": 0
+    },
+    {
+      "id": "format-contributions",
+      "command": "npm.cmd run validate:format-contributions",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:32:44.934Z",
+      "durationMs": 425,
+      "exitCode": 0
+    },
+    {
+      "id": "app-boundaries",
+      "command": "npm.cmd run validate:app-boundaries",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:32:45.663Z",
+      "durationMs": 348,
+      "exitCode": 0
+    },
+    {
+      "id": "export-fidelity",
+      "command": "npm.cmd run validate:export",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:32:46.302Z",
+      "durationMs": 17004,
+      "exitCode": 0
+    },
+    {
+      "id": "visual-style-accessibility",
+      "command": "npm.cmd run validate:styles",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:33:03.644Z",
+      "durationMs": 1801,
+      "exitCode": 0
+    },
+    {
+      "id": "ux-workflows",
+      "command": "npm.cmd run validate:ux",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:33:05.792Z",
+      "durationMs": 4033,
+      "exitCode": 0
+    },
+    {
+      "id": "structured-workflows",
+      "command": "npm.cmd run validate:structured-workflows",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:33:10.302Z",
+      "durationMs": 4236,
+      "exitCode": 0
+    },
+    {
+      "id": "desktop-unit-migration-fidelity",
+      "command": "npm.cmd run test:all",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:33:14.889Z",
+      "durationMs": 42366,
+      "exitCode": 0
+    },
+    {
+      "id": "extension-unit-migration-fidelity",
+      "command": "npm.cmd --prefix scie-md-vscode-extension test",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:33:57.457Z",
+      "durationMs": 11443,
+      "exitCode": 0
+    },
+    {
+      "id": "extension-host-smoke",
+      "command": "npm.cmd run validate:vscode-host-smoke",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:34:09.264Z",
+      "durationMs": 2065,
+      "exitCode": 0
+    },
+    {
+      "id": "extension-visual-smoke",
+      "command": "npm.cmd run validate:vscode-visual-smoke",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:34:11.663Z",
+      "durationMs": 3045,
+      "exitCode": 0
+    },
+    {
+      "id": "rust-tests",
+      "command": "cargo.exe test",
+      "cwd": "src-tauri",
+      "startedAt": "2026-07-22T14:34:15.073Z",
+      "durationMs": 6473,
+      "exitCode": 0
+    },
+    {
+      "id": "rust-clippy",
+      "command": "cargo.exe clippy --all-targets -- -D warnings",
+      "cwd": "src-tauri",
+      "startedAt": "2026-07-22T14:34:21.903Z",
+      "durationMs": 770,
+      "exitCode": 0
+    },
+    {
+      "id": "large-document-stress",
+      "command": "npm.cmd run validate:large-document-stress",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:34:22.991Z",
+      "durationMs": 17340,
+      "exitCode": 0
+    },
+    {
+      "id": "desktop-build",
+      "command": "npm.cmd run build:desktop",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:34:40.545Z",
+      "durationMs": 73939,
+      "exitCode": 0
+    },
+    {
+      "id": "vscode-package-build",
+      "command": "npm.cmd run package:vscode",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:35:54.827Z",
+      "durationMs": 15784,
+      "exitCode": 0
+    },
+    {
+      "id": "vscode-package-content",
+      "command": "npm.cmd run validate:vscode-package",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:36:10.975Z",
+      "durationMs": 691,
+      "exitCode": 0
+    },
+    {
+      "id": "package-budgets",
+      "command": "npm.cmd run validate:package-budgets -- --vsix --desktop-bundles",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:36:11.975Z",
+      "durationMs": 384,
+      "exitCode": 0
+    },
+    {
+      "id": "desktop-smoke",
+      "command": "npm.cmd run validate:desktop-smoke -- --required --app C:\\Users\\amin_\\OneDrive\\Desktop\\ScieMd\\src-tauri\\target\\release\\sciemd.exe",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:36:12.678Z",
+      "durationMs": 17395,
+      "exitCode": 0
+    },
+    {
+      "id": "desktop-structured-edit",
+      "command": "npm.cmd run validate:desktop-structured-edit -- --required --format toml",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:36:30.428Z",
+      "durationMs": 3180,
+      "exitCode": 0
+    },
+    {
+      "id": "installed-vsix-smoke",
+      "command": "npm.cmd run validate:vscode-installed-smoke -- --required --vsix C:\\Users\\amin_\\OneDrive\\Desktop\\ScieMd\\scie-md-vscode-extension\\sciemd-vscode-1.1.0.vsix",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:36:34.090Z",
+      "durationMs": 7734,
+      "exitCode": 0
+    },
+    {
+      "id": "desktop-ui-performance",
+      "command": "npm.cmd run validate:desktop-ui-performance -- --required --app C:\\Users\\amin_\\OneDrive\\Desktop\\ScieMd\\src-tauri\\target\\release\\sciemd.exe",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:36:42.185Z",
+      "durationMs": 291295,
+      "exitCode": 0
+    },
+    {
+      "id": "tab-visual-accessibility",
+      "command": "npm.cmd run validate:tab-visuals -- --required",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:41:33.838Z",
+      "durationMs": 14965,
+      "exitCode": 0
+    },
+    {
+      "id": "desktop-artifact-staging",
+      "command": "npm.cmd run copy:exe",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:41:49.119Z",
+      "durationMs": 430,
+      "exitCode": 0
+    },
+    {
+      "id": "vscode-artifact-staging",
+      "command": "npm.cmd run stage:vscode",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:41:49.821Z",
+      "durationMs": 351,
+      "exitCode": 0
+    },
+    {
+      "id": "generated-output-policy",
+      "command": "npm.cmd run validate:generated-outputs",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:41:50.496Z",
+      "durationMs": 386,
+      "exitCode": 0
+    },
+    {
+      "id": "whitespace-guard",
+      "command": "git.exe diff --check",
+      "cwd": ".",
+      "startedAt": "2026-07-22T14:41:51.212Z",
+      "durationMs": 132,
+      "exitCode": 0
+    }
+  ],
+  "priorFailedAttempts": []
+}

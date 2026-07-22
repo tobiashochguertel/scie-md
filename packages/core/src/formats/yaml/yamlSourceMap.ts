@@ -51,12 +51,12 @@ export interface YamlSourceMapInspection {
   spannedNodeCount: number;
   unmappedVisualNodeCount: number;
   sourceTokenNodeCount: number;
-  editableNodeCount: 0;
+  editableNodeCount: number;
   editableCandidateCount: number;
   unsupportedFeatureCount: number;
   unsupportedKinds: YamlSourceMapUnsupportedKind[];
   spanCoverage: 'none' | 'partial' | 'complete';
-  visualWritesEnabled: false;
+  visualWritesEnabled: boolean;
 }
 
 export interface YamlSourceMapResult {
@@ -78,7 +78,7 @@ interface NodeEvidence {
   unsupportedFeatures: YamlSourceMapUnsupportedFeature[];
 }
 
-const YAML_VISUAL_WRITE_BLOCKER = 'YAML visual writes remain disabled until ScieMD has a fixture-backed source-preserving edit planner.';
+const YAML_VISUAL_WRITE_BLOCKER = 'This YAML node is source-only because its source ownership is not safe for a narrow visual patch.';
 
 export function createYamlSourceMap(
   text: string,
@@ -106,7 +106,7 @@ function createYamlSourceMapForCurrentText(
   }
 
   if (document.contents) {
-    collectNodeEvidence(document.contents, [], null);
+    collectNodeEvidence(document.contents, [], null, []);
   }
 
   const nodes = buildVisualNodes(
@@ -130,12 +130,12 @@ function createYamlSourceMapForCurrentText(
       spannedNodeCount,
       unmappedVisualNodeCount: Math.max(0, nodes.length - spannedNodeCount),
       sourceTokenNodeCount,
-      editableNodeCount: 0,
+      editableNodeCount: nodes.filter((node) => node.editable).length,
       editableCandidateCount: nodes.filter((node) => node.span && !hasUnsupportedFeature(node, evidenceByPointer)).length,
       unsupportedFeatureCount: unsupportedFeatures.length,
       unsupportedKinds,
       spanCoverage,
-      visualWritesEnabled: false,
+      visualWritesEnabled: nodes.some((node) => node.editable),
     },
     unsupportedFeatures,
   };
@@ -144,9 +144,10 @@ function createYamlSourceMapForCurrentText(
     node: ParsedNode | null,
     path: StructuredPathSegment[],
     keyNode: ParsedNode | null,
+    inheritedFeatures: YamlSourceMapUnsupportedFeature[],
   ): void {
     const pointer = pointerFromPath(path);
-    const localFeatures: YamlSourceMapUnsupportedFeature[] = [];
+    const localFeatures: YamlSourceMapUnsupportedFeature[] = [...inheritedFeatures];
     if (!node) {
       evidenceByPointer.set(pointer, {
         path,
@@ -195,7 +196,7 @@ function createYamlSourceMapForCurrentText(
             rangeSpan(pair.key),
           ));
         }
-        collectNodeEvidence(pair.value as ParsedNode | null, childPath, pair.key);
+        collectNodeEvidence(pair.value as ParsedNode | null, childPath, pair.key, inheritedFeaturesForChildren(localFeatures));
         if (mergeFeature) evidenceByPointer.get(childPointer)?.unsupportedFeatures.push(mergeFeature);
       }
       return;
@@ -213,7 +214,7 @@ function createYamlSourceMapForCurrentText(
           ));
           return;
         }
-        collectNodeEvidence(item as ParsedNode | null, [...path, index], null);
+        collectNodeEvidence(item as ParsedNode | null, [...path, index], null, inheritedFeaturesForChildren(localFeatures));
       });
     }
   }
@@ -288,7 +289,10 @@ function createYamlSourceMapForCurrentText(
     const pointer = pointerFromPath(path);
     const displayPath = displayPathFromPath(path);
     const evidence = evidenceByPointer.get(pointer);
-    const unsupportedReason = unsupportedReasonForEvidence(evidence);
+    const syntaxEditable = Boolean(evidence?.span && evidence.hasSourceToken && !hasBlockingUnsupportedFeature(evidence));
+    const editableOperations = syntaxEditable ? yamlEditableOperations(value, path, evidence!, text, visualValue) : [];
+    const editable = editableOperations.length > 0;
+    const unsupportedReason = editable ? undefined : unsupportedReasonForEvidence(evidence);
     const node: StructuredNodeRef = {
       format: 'yaml',
       path,
@@ -298,8 +302,9 @@ function createYamlSourceMapForCurrentText(
       span: evidence?.span ?? null,
       valueSpan: evidence?.valueSpan ?? null,
       keySpan: evidence?.keySpan ?? null,
-      lossy: true,
-      editable: false,
+      lossy: !editable,
+      editable,
+      editableOperations,
       unsupportedReason,
       childCount: childCount(value),
     };
@@ -331,6 +336,47 @@ function createYamlSourceMapForCurrentText(
     unsupportedFeatures.push(feature);
     return feature;
   }
+}
+
+function yamlEditableOperations(
+  value: unknown,
+  path: StructuredPathSegment[],
+  evidence: NodeEvidence,
+  text: string,
+  rootValue: unknown,
+): string[] {
+  const operations: string[] = [];
+  const last = path.at(-1);
+  const scalar = value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+  const ownedSpan = evidence.span ? text.slice(evidence.span.offset, evidence.span.offset + evidence.span.length) : '';
+  if (scalar) operations.push('replaceScalar');
+  const parentValue = visualValueAtPath(rootValue, path.slice(0, -1));
+  if (typeof last === 'string' && evidence.keySpan) {
+    operations.push('renameObjectKey');
+    if (!ownedSpan.includes('#') && parentValue && typeof parentValue === 'object' && !Array.isArray(parentValue) && Object.keys(parentValue).length > 1) operations.push('deleteObjectField');
+  }
+  if (typeof last === 'number' && !ownedSpan.includes('#') && Array.isArray(parentValue) && parentValue.length > 1) operations.push('deleteArrayItem');
+  if (Array.isArray(value)) operations.push('addArrayItem');
+  else if (value !== null && typeof value === 'object') operations.push('addObjectField');
+  return operations;
+}
+
+function visualValueAtPath(value: unknown, path: readonly StructuredPathSegment[]): unknown {
+  let current = value;
+  for (const segment of path) {
+    if (typeof segment === 'number' && Array.isArray(current)) current = current[segment];
+    else if (typeof segment === 'string' && current !== null && typeof current === 'object') current = (current as Record<string, unknown>)[segment];
+    else return undefined;
+  }
+  return current;
+}
+
+function inheritedFeaturesForChildren(features: YamlSourceMapUnsupportedFeature[]): YamlSourceMapUnsupportedFeature[] {
+  return features.filter((feature) => feature.kind !== 'comment');
+}
+
+function hasBlockingUnsupportedFeature(evidence: NodeEvidence): boolean {
+  return evidence.unsupportedFeatures.some((feature) => feature.kind !== 'comment');
 }
 
 export function yamlSourceMapDiagnostics(result: YamlSourceMapResult): FormatDiagnostic[] {
@@ -413,16 +459,18 @@ function isSupportedScalarKey(key: unknown): key is Scalar {
 }
 
 function hasUnsupportedFeature(node: StructuredNodeRef, evidenceByPointer: Map<string, NodeEvidence>): boolean {
-  return (evidenceByPointer.get(node.pointer)?.unsupportedFeatures.length ?? 0) > 0;
+  const evidence = evidenceByPointer.get(node.pointer);
+  return evidence ? hasBlockingUnsupportedFeature(evidence) : true;
 }
 
 function unsupportedReasonForEvidence(evidence: NodeEvidence | undefined): string {
   if (!evidence) {
     return `${YAML_VISUAL_WRITE_BLOCKER} This visual node has no local YAML source span, often because it is resolved from an alias, merge key, or normalized parser value.`;
   }
-  if (evidence.unsupportedFeatures.length === 0) return YAML_VISUAL_WRITE_BLOCKER;
-  const kinds = Array.from(new Set(evidence.unsupportedFeatures.map((feature) => feature.kind))).join(', ');
-  return `${YAML_VISUAL_WRITE_BLOCKER} Unsupported source syntax at this node: ${kinds}.`;
+  const blocking = evidence.unsupportedFeatures.filter((feature) => feature.kind !== 'comment');
+  if (blocking.length === 0) return `${YAML_VISUAL_WRITE_BLOCKER} The node has no supported editable scalar or block-collection token.`;
+  const kinds = Array.from(new Set(blocking.map((feature) => feature.kind))).join(', ');
+  return `${YAML_VISUAL_WRITE_BLOCKER} Unsupported source syntax at this node: ${kinds}. Edit it in source mode.`;
 }
 
 function childCount(value: unknown): number {

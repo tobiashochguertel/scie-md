@@ -32,6 +32,24 @@ const proprietaryFontNames = [
 ];
 
 describe('production font stacks', () => {
+  it('uses one invariant IBM Plex Mono token only on desktop source surfaces', () => {
+    const root = process.cwd();
+    const tokens = readFileSync(join(root, 'src/styles/app.tokens.css'), 'utf8');
+    const source = readFileSync(join(root, 'src/styles/app.source-editor.css'), 'utf8');
+    const panels = readFileSync(join(root, 'src/styles/app.panels.css'), 'utf8');
+    const allStyleCss = productionFontFiles
+      .filter((file) => file.endsWith('.css'))
+      .map((file) => readFileSync(join(root, file), 'utf8'))
+      .join('\n');
+
+    expect(tokens.match(/--source-editor-font\s*:/g)).toHaveLength(1);
+    expect(tokens).toContain('--source-editor-font: "IBM Plex Mono", monospace;');
+    expect(source).toContain('font-family: var(--source-editor-font);');
+    expect(panels).toContain('font: 14px/1.65 var(--source-editor-font);');
+    expect(allStyleCss.match(/--source-editor-font\s*:/g)).toHaveLength(1);
+    expect(tokens.match(/:root\[data-visual-style=[\s\S]*?--source-editor-font\s*:/g)).toBeNull();
+  });
+
   it('do not reference proprietary named fonts', () => {
     const root = process.cwd();
     const failures: string[] = [];

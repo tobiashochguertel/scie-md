@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { createDocumentRecord } from '../documentRecord';
 import { fallbackFileLocator } from '../documentIdentity';
 import { createWorkspaceState, workspaceReducer } from './workspaceState';
-import { createWorkspaceTabsModel, PRODUCTION_WORKSPACE_CAPABILITY } from './workspaceTabs';
+import { createWorkspaceTabsModel, middleEllipsis, PRODUCTION_WORKSPACE_CAPABILITY, WORKSPACE_TAB_ACTIVATION_POLICY } from './workspaceTabs';
 
 describe('workspace tabs contract', () => {
   it('enables the production flag and activation surface atomically', () => {
@@ -32,12 +32,18 @@ describe('workspace tabs contract', () => {
 
     const model = createWorkspaceTabsModel(state);
     expect(model.tabs.map((tab) => tab.formatLabel)).toEqual(['MARKDOWN', 'JSON', 'Text']);
-    expect(model.tabs[0].label).toContain('papers');
-    expect(model.tabs[1].label).toContain('data');
-    expect(model.tabs[0].statuses).toEqual(expect.arrayContaining(['Unsaved', 'Save failed', 'Recovery pending']));
-    expect(model.tabs[1].statuses).toEqual(expect.arrayContaining(['Changed on disk', 'Read only']));
+    expect(model.tabs[0].qualifier).toBe('papers');
+    expect(model.tabs[1].qualifier).toBe('data');
+    expect(model.tabs[0].accessibleStates).toEqual(expect.arrayContaining(['Unsaved', 'Save failed', 'Recovery pending']));
+    expect(model.tabs[0].visualState.kind).toBe('danger');
+    expect(model.tabs[1].accessibleStates).toEqual(expect.arrayContaining(['Changed on disk', 'Read only']));
     expect(model.tabs[2].accessibleName).toContain('tab 3 of 3');
     expect(model.mruDocumentId).toBe(json.id);
+  });
+
+  it('freezes automatic activation from the numeric warm evidence and preserves long extensions', () => {
+    expect(WORKSPACE_TAB_ACTIVATION_POLICY).toEqual({ kind: 'automatic', warmActivationP95Ms: 24.6, limitMs: 100 });
+    expect(middleEllipsis('a-very-long-common-prefix-experiment-results.markdown')).toMatch(/^a-very.*….*\.markdown$/);
   });
 
   it('projects many tabs without creating editor or panel instances', () => {

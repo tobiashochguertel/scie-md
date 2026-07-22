@@ -1,7 +1,7 @@
 import type { ComponentProps, ReactNode } from 'react';
 import { AppTopbar, type AppTopbarMenuId } from '../components/AppTopbar';
 import { StatusBar } from '../components/StatusBar';
-import type { ActiveDocumentProjection } from './workspace';
+import { workspaceTabId, workspaceTabPanelId, type ActiveDocumentProjection, type WorkspaceTabsModel } from './workspace';
 
 type ShellTopbarProps = Omit<ComponentProps<typeof AppTopbar>,
   'activeMenu' | 'onToggleMenu' | 'onCloseMenus' | 'format' | 'formatCapabilities' | 'documentChrome'>;
@@ -16,6 +16,7 @@ export interface WorkspaceShellProps {
   topbar: ShellTopbarProps;
   statusBar: ComponentProps<typeof StatusBar>;
   tabStrip: ReactNode;
+  workspaceTabsModel: WorkspaceTabsModel;
   children: ReactNode;
   overlays?: ReactNode;
 }
@@ -31,6 +32,7 @@ export function WorkspaceShell({
   topbar,
   statusBar,
   tabStrip,
+  workspaceTabsModel,
   children,
   overlays,
 }: WorkspaceShellProps) {
@@ -47,14 +49,19 @@ export function WorkspaceShell({
         onCloseMenus={onCloseTopbarMenus}
       />
       {tabStrip}
-      <div
-        className="workspace-active-panel"
-        role="tabpanel"
-        id={`workspace-panel-${encodeURIComponent(activeProjection.documentId)}`}
-        aria-labelledby={`workspace-tab-${encodeURIComponent(activeProjection.documentId)}`}
-      >
-        {children}
-      </div>
+      {workspaceTabsModel.tabs.map((tab) => (
+        <div
+          key={tab.documentId}
+          className="workspace-active-panel"
+          role="tabpanel"
+          id={workspaceTabPanelId(tab.documentId)}
+          aria-labelledby={workspaceTabId(tab.documentId)}
+          hidden={!tab.active}
+          tabIndex={tab.active ? 0 : -1}
+        >
+          {tab.active ? children : null}
+        </div>
+      ))}
       <StatusBar {...statusBar} />
       {overlays}
     </div>

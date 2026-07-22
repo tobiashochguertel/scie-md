@@ -19,10 +19,18 @@ export async function loadFileDraftWithTimeout(recoveryHost: RecoveryHost, path:
   }
 }
 
-export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+export function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+  onTimeout?: () => void,
+): Promise<T> {
   let timeoutId: number | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timeoutId = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    timeoutId = window.setTimeout(() => {
+      onTimeout?.();
+      reject(new Error(message));
+    }, timeoutMs);
   });
   return Promise.race([promise, timeout]).finally(() => {
     if (timeoutId !== undefined) window.clearTimeout(timeoutId);

@@ -2,7 +2,7 @@ import { act } from 'react';
 import type { ComponentProps } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createJsonContent, createYamlContent, parseJsonDocument, parseYamlDocument, validateJsonValueAgainstSchema } from '@sciemd/core';
+import { createJsonContent, createXmlContent, createYamlContent, parseJsonDocument, parseXmlDocument, parseYamlDocument, validateJsonValueAgainstSchema } from '@sciemd/core';
 import {
   buildJsonTreeModel,
   findJsonTreeNode,
@@ -305,6 +305,41 @@ describe('JsonTreeView', () => {
     expect(container.textContent).toContain('Edit JSON value');
   });
 
+  it('exposes guarded YAML node actions and labels the shared review form as YAML', () => {
+    const onEditIntent = vi.fn();
+    const text = "name: 'Alpha' # keep\nitems:\n  - one\n";
+    const parsed = parseYamlDocument(createYamlContent(text)).parsed;
+    renderTree(parsed?.value, {
+      label: 'YAML tree', sourceMap: parsed?.sourceMap, sourceText: text, editable: true, onEditIntent,
+    });
+
+    rightClickTreeRow('name');
+    expect(findContextMenuButton('Edit value')).not.toBeNull();
+    expect(findContextMenuButton('Rename key')).not.toBeNull();
+    expect(findContextMenuButton('Delete field')).toBeNull();
+    clickContextMenuButton('Edit value');
+    expect(container.textContent).toContain('Edit YAML value');
+  });
+
+  it('exposes only source-map-approved XML scalar actions', () => {
+    const onEditIntent = vi.fn();
+    const text = '<lab:root xmlns:lab="urn:lab"><lab:sample id="A">Alpha</lab:sample><!-- keep --></lab:root>';
+    const parsed = parseXmlDocument(createXmlContent(text)).parsed;
+    renderTree(parsed?.value, { label: 'XML tree', sourceMap: parsed?.sourceMap, sourceText: text, editable: true, onEditIntent });
+    clickTreeToggle('Expand $.children');
+    clickTreeToggle('Expand $.children[0]');
+    clickTreeToggle('Expand $.children[0].children');
+    clickTreeToggle('Expand $.children[0].children[0]');
+    clickTreeToggle('Expand $.children[0].children[0].attributes');
+    clickTreeToggle('Expand $.children[0].children[0].attributes[0]');
+    rightClickTreeRow('value');
+    expect(findContextMenuButton('Edit value')).not.toBeNull();
+    expect(findContextMenuButton('Rename key')).toBeNull();
+    expect(findContextMenuButton('Delete field')).toBeNull();
+    clickContextMenuButton('Edit value');
+    expect(container.textContent).toContain('Edit XML value');
+  });
+
   it('keeps read-only structured projections safe in context menus while allowing source reveal for mapped nodes', () => {
     const onRevealSource = vi.fn();
     const parsed = parseYamlDocument(createYamlContent('name: Alpha # source-only comment\n')).parsed;
@@ -419,7 +454,7 @@ describe('JsonTreeView', () => {
     expect(container.textContent).toContain('YAML tree');
     expect(container.textContent).toContain('Read-only - 1 preservation warning');
     expect(container.textContent).toContain('comments');
-    expect(container.textContent).toContain('Lossy');
+    expect(container.textContent).not.toContain('Lossy');
 
     await clickButtonAsync('Copy JSON preview');
     expect(writeText).toHaveBeenCalledWith('{\n  "name": "Alpha"\n}\n');

@@ -1,5 +1,6 @@
 import type { DocumentId, SourceRevision } from '../documentIdentity';
 import { sourceRevision } from '../documentIdentity';
+import type { SourceSnapshotLease } from '../source/sourceSnapshotService';
 
 export type DocumentEffectKind =
   | 'open'
@@ -9,6 +10,8 @@ export type DocumentEffectKind =
   | 'bibliography-refresh'
   | 'linked-variable-refresh'
   | 'document-validation'
+  | 'document-metrics'
+  | 'markdown-artifacts'
   | 'json-schema-discovery'
   | 'conflict-review'
   | 'locator-resolution'
@@ -25,6 +28,9 @@ export interface EffectToken {
 export interface DocumentEffectTarget {
   documentId: DocumentId;
   effects: DocumentEffectCoordinator;
+  sourceRevision?: SourceRevision;
+  sourceByteLength?: number;
+  leaseSource?: (revision: SourceRevision) => SourceSnapshotLease | null;
 }
 
 export interface EffectDiagnostic {
@@ -48,6 +54,7 @@ export interface DocumentEffectCoordinator {
   apply<T>(token: EffectToken, mutation: () => T): EffectCommitResult<T>;
   commit<T>(token: EffectToken, mutation: () => T): EffectCommitResult<T>;
   cancel(token: EffectToken): boolean;
+  cancelDocument(documentId: DocumentId): number;
   diagnostics(): readonly EffectDiagnostic[];
 }
 
@@ -153,6 +160,15 @@ export function createDocumentEffectCoordinator(
       if (channels.size === 0) activeByDocument.delete(token.documentId);
       record('CANCELLED', active, getSourceRevision(token.documentId));
       return true;
+    },
+    cancelDocument(documentId) {
+      const channels = activeByDocument.get(documentId);
+      if (!channels) return 0;
+      const revision = getSourceRevision(documentId);
+      for (const active of channels.values()) record('CANCELLED', active, revision);
+      const count = channels.size;
+      activeByDocument.delete(documentId);
+      return count;
     },
     diagnostics: () => diagnostics.slice(),
   };

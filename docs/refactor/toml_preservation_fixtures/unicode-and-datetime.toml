@@ -1,0 +1,6 @@
+# Unicode and date/time operation gating
+title = "Δοκιμή 数据"
+measured_at = 2026-07-22T08:30:45-04:00
+local_date = 2026-07-22
+local_time = 08:30:45
+enabled = true

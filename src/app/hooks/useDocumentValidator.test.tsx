@@ -5,6 +5,7 @@ import { safeParseScienfyDocument } from '@sciemd/core';
 import { createDocumentEffectCoordinator } from '../effects/documentEffectCoordinator';
 import { createDocumentId, sourceRevision, type DocumentId } from '../documentIdentity';
 import { useDocumentValidator } from './useDocumentValidator';
+import { documentAnalysisRuntime } from '../runtime/documentAnalysisRuntime';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -21,6 +22,7 @@ describe('useDocumentValidator', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     latest = null;
+    documentAnalysisRuntime.resetForTests();
   });
 
   afterEach(() => {
@@ -30,7 +32,7 @@ describe('useDocumentValidator', () => {
     vi.useRealTimers();
   });
 
-  it('does not project a delayed validation result onto another document', () => {
+  it('does not project a delayed validation result onto another document', async () => {
     const first = createDocumentId();
     const second = createDocumentId();
     revisions.set(first, sourceRevision(0));
@@ -38,20 +40,26 @@ describe('useDocumentValidator', () => {
     render(first, 'one two three');
     render(second, 'second');
 
-    act(() => vi.advanceTimersByTime(500));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+      await Promise.resolve();
+    });
 
     expect(latest?.validation.wordCount).toBe(1);
     expect(latest?.validationPending).toBe(false);
   });
 
-  it('rejects the old timer when the same document revision advances', () => {
+  it('rejects the old timer when the same document revision advances', async () => {
     const documentId = createDocumentId();
     revisions.set(documentId, sourceRevision(0));
     render(documentId, 'old words');
     revisions.set(documentId, sourceRevision(1));
     render(documentId, 'new');
 
-    act(() => vi.advanceTimersByTime(500));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+      await Promise.resolve();
+    });
 
     expect(latest?.validation.wordCount).toBe(1);
     expect(effects.diagnostics()).toEqual(expect.arrayContaining([

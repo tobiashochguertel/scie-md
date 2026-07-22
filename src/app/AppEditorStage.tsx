@@ -41,8 +41,11 @@ import { structuredOperationSectionsForTarget } from './structuredOperationRegis
 import { structuredOperationSectionsToContextMenuSections } from '../components/structuredOperationMenu';
 import { StartupOpenFailureBanner } from './StartupOpenFailureBanner';
 import type { StartupOpenFailureState } from './startupOpenFailure';
+import type { DocumentId, SourceRevision } from './documentIdentity';
+import type { SourceChangeResult, SourceChangeSet } from './source/revisionedSourceBuffer';
 
 interface AppEditorStageProps {
+  documentId: DocumentId;
   editorStageRef: RefObject<HTMLElement | null>;
   format: DocumentFormat;
   formatCapabilities: FormatUiCapabilities;
@@ -80,6 +83,9 @@ interface AppEditorStageProps {
   tabularAnalysis?: TabularDocumentAnalysis | null;
   selectedJsonPath?: string | null;
   onJsonEditIntent?: (intent: JsonVisualEditIntent) => void;
+  onYamlEditIntent?: (intent: JsonVisualEditIntent) => void;
+  onTomlEditIntent?: (intent: JsonVisualEditIntent) => void;
+  onXmlEditIntent?: (intent: JsonVisualEditIntent) => void;
   onJsonlEditIntent?: (intent: JsonlVisualEditIntent) => void;
   onJsonlCopyText?: (content: string, label: string) => void;
   onTabularEditIntent?: (intent: TabularVisualEditIntent) => void;
@@ -94,6 +100,9 @@ interface AppEditorStageProps {
   onDragOver: DragEventHandler<HTMLElement>;
   onJumpToHeading: ComponentProps<typeof QuickOutlineHover>['onJump'];
   onMarkdownChange: (markdown: string) => void;
+  sourceRevision?: SourceRevision;
+  onSourceChangeSet?: (changeSet: SourceChangeSet) => SourceChangeResult;
+  reconcileSource?: () => { sourceText: string; revision: SourceRevision };
   onEditorReset: () => void;
   onVisualEditorReady: ComponentProps<typeof VisualMarkdownEditor>['onEditorReady'];
   onVisualAdapterReady: ComponentProps<typeof VisualMarkdownEditor>['onAdapterReady'];
@@ -164,6 +173,7 @@ interface SourceContextMenuState {
 }
 
 export function AppEditorStage({
+  documentId,
   editorStageRef,
   format,
   formatCapabilities,
@@ -201,6 +211,9 @@ export function AppEditorStage({
   tabularAnalysis = null,
   selectedJsonPath = null,
   onJsonEditIntent,
+  onYamlEditIntent,
+  onTomlEditIntent,
+  onXmlEditIntent,
   onJsonlEditIntent,
   onJsonlCopyText,
   onTabularEditIntent,
@@ -215,6 +228,9 @@ export function AppEditorStage({
   onDragOver,
   onJumpToHeading,
   onMarkdownChange,
+  sourceRevision,
+  onSourceChangeSet,
+  reconcileSource,
   onEditorReset,
   onVisualEditorReady,
   onVisualAdapterReady,
@@ -812,6 +828,8 @@ export function AppEditorStage({
       >
         {renderedMode === 'visual' && formatCapabilities.canUseVisualMarkdown ? (
           <VisualMarkdownEditor
+            performanceDocumentId={documentId}
+            revision={sourceRevision}
             markdown={markdown}
             filePath={filePath}
             onChange={onMarkdownChange}
@@ -846,7 +864,7 @@ export function AppEditorStage({
           <JsonArrayTableView
             model={jsonArrayTableModel}
             sourceText={activeSourceText}
-            editable={formatCapabilities.canEditJsonVisualTree && !sourceParsingPending}
+            editable={formatCapabilities.canEditStructuredVisualTree && !sourceParsingPending}
             onEditIntent={onJsonEditIntent}
             onRevealSource={onRevealStructuredSource}
             onCopyText={(content, label) => copyContextText(content, label)}
@@ -859,7 +877,7 @@ export function AppEditorStage({
             sourceMap={jsonAnalysis.parseResult.parsed.sourceMap}
             sourceText={activeSourceText}
             schemaValidation={jsonAnalysis.parseResult.parsed.schemaValidation}
-            editable={formatCapabilities.canEditJsonVisualTree && !sourceParsingPending}
+            editable={formatCapabilities.canEditStructuredVisualTree && !sourceParsingPending}
             selectedPath={selectedJsonPath}
             onSelectedPathChange={onJsonSelectedPathChange}
             onEditIntent={onJsonEditIntent}
@@ -872,10 +890,13 @@ export function AppEditorStage({
             value={structuredAnalysis.parseResult.parsed.value}
             label={`${formatLabel(format)} tree`}
             sourceMap={structuredAnalysis.parseResult.parsed.sourceMap}
+            sourceText={activeSourceText}
             preservationWarnings={structuredAnalysis.parseResult.parsed.warnings}
             jsonPreview={structuredAnalysis.parseResult.parsed.jsonPreview}
             selectedPath={selectedJsonPath}
+            editable={(format === 'yaml' || format === 'toml' || format === 'xml') && formatCapabilities.canEditStructuredVisualTree && !sourceParsingPending}
             onSelectedPathChange={onJsonSelectedPathChange}
+            onEditIntent={format === 'yaml' ? onYamlEditIntent : format === 'toml' ? onTomlEditIntent : format === 'xml' ? onXmlEditIntent : undefined}
             onRevealSource={onRevealStructuredSource}
           />
         ) : renderedMode === 'visual' && canRenderJsonlRecords ? (
@@ -904,8 +925,12 @@ export function AppEditorStage({
           <StructuredVisualPreparingView format={format} capabilities={formatCapabilities} />
         ) : formatCapabilities.canUseVisualMarkdown ? (
           <SourceMarkdownEditor
+            performanceDocumentId={documentId}
             markdown={markdown}
             onChange={onMarkdownChange}
+            revision={sourceRevision}
+            onChangeSet={onSourceChangeSet}
+            reconcileSource={reconcileSource}
             onInsertReady={onSourceInsertReady}
             onJumpReady={onSourceJumpReady}
             onFindReady={onSourceFindReady}
@@ -915,6 +940,7 @@ export function AppEditorStage({
             onContextMenuRequest={handleSourceContextMenuRequest}
             onCursorLineChange={onCursorLineChange}
             onViewportLineChange={onViewportLineChange}
+            onRuntimeAdmissionRefused={(message) => onToast?.(message, 'warning')}
             authorshipMarks={authorshipMarks}
             citationKeys={citationCompletionKeys}
             citationEntries={layerTwoDocument.citations.bibtexEntries}
@@ -927,8 +953,12 @@ export function AppEditorStage({
           />
         ) : (
           <SourceTextEditor
+            performanceDocumentId={documentId}
             value={activeSourceText}
             onChange={onMarkdownChange}
+            revision={sourceRevision}
+            onChangeSet={onSourceChangeSet}
+            reconcileSource={reconcileSource}
             language={formatCapabilities.sourceLanguage}
             diagnostics={sourceDiagnostics}
             parsingPending={sourceParsingPending}
@@ -942,6 +972,7 @@ export function AppEditorStage({
             onContextMenuRequest={handleSourceContextMenuRequest}
             onCursorLineChange={onCursorLineChange}
             onViewportLineChange={onViewportLineChange}
+            onRuntimeAdmissionRefused={(message) => onToast?.(message, 'warning')}
           />
         )}
       </EditorErrorBoundary>

@@ -2,7 +2,7 @@ import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_METADATA } from '../documentState';
-import type { FileMetadata, ReadTextFileResponse } from '../documentState';
+import { createHostReadResponse, type FileMetadata, type ReadTextFileResponse } from '../documentState';
 import type { DocumentHost } from '../host/documentHost';
 import { DocumentHostError } from '../host/documentHostError';
 import { loadSettings } from '../../services/settingsService';
@@ -17,6 +17,7 @@ import { resetRecoveryCatalogForTests } from '../../services/recoveryCatalog';
 import type { WorkspaceCapabilityState } from '../workspace/workspaceState';
 import { HIDDEN_WORKSPACE_ACTIVATION_SURFACE } from '../workspace/hiddenWorkspaceHarness';
 import { PRODUCTION_WORKSPACE_CAPABILITY } from '../workspace/workspaceTabs';
+import type { DocumentSourceResidencyBudgets } from '../runtime/documentSourceResidency';
 
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
@@ -273,7 +274,7 @@ describe('useDocumentSession startup fallback', () => {
 
     await flushAsync();
 
-    expect(host.file.readTextFileForEdit).toHaveBeenCalledWith(startupPath);
+    expect(host.file.readTextFileForEdit).toHaveBeenCalledWith(startupPath, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(host.recovery.loadUntitledDraft).not.toHaveBeenCalled();
     expect(confirmText).not.toHaveBeenCalled();
     expect(latestState?.filePath).toBe(startupPath);
@@ -289,7 +290,7 @@ describe('useDocumentSession startup fallback', () => {
 
     await flushAsync();
 
-    expect(host.file.readTextFileForEdit).toHaveBeenCalledWith(startupPath);
+    expect(host.file.readTextFileForEdit).toHaveBeenCalledWith(startupPath, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(host.recovery.loadUntitledDraft).not.toHaveBeenCalled();
     expect(latestState?.filePath).toBe(startupPath);
     expect(latestState?.format).toBe('json');
@@ -321,7 +322,7 @@ describe('useDocumentSession startup fallback', () => {
     await flushAsync();
 
     expect(host.launch.takePendingDocumentOpen).toHaveBeenCalled();
-    expect(host.file.readTextFileForEdit).toHaveBeenCalledWith(pendingPath);
+    expect(host.file.readTextFileForEdit).toHaveBeenCalledWith(pendingPath, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(host.launch.clearPendingDocumentOpen).not.toHaveBeenCalledWith(pendingPath);
     expect(latestState?.filePath).toBe(pendingPath);
     expect(latestState?.markdown).toBe('# Pending launch\n');
@@ -454,6 +455,76 @@ describe('useDocumentSession startup fallback', () => {
     expect(latestState?.workspaceState.activeDocumentId).toBe(initialId);
   });
 
+  it('keeps above-threshold Markdown on the source surface without layer-two parsing', async () => {
+    const host = createHost();
+    host.launch.getInitialDocumentPath.mockResolvedValue(null);
+    host.file.readTextFileForEdit.mockResolvedValue(readResponse('# Hidden Large Title', {
+      lastKnownSizeBytes: (5 * 1024 * 1024) + 1,
+    }));
+    renderSession(host, PRODUCTION_WORKSPACE_CAPABILITY);
+    await flushAsync();
+
+    await act(async () => { await latestState?.handleOpen('C:\\docs\\large.md', { draftRestore: 'skip' }); });
+    await flushAsync();
+
+    expect(latestState?.markdown).toBe('# Hidden Large Title');
+    expect(latestState?.layerTwoDocument.title).toBeNull();
+    expect(latestState?.documentParsingPending).toBe(false);
+  });
+
+  it('drops clean inactive source bytes and baseline-verifies reacquisition before activation', async () => {
+    const host = createHost();
+    host.launch.getInitialDocumentPath.mockResolvedValue(null);
+    host.file.readTextFileForEdit.mockImplementation(async (path) => readResponse(path.endsWith('first.md') ? '# First source' : '# Second source'));
+    renderSession(host, PRODUCTION_WORKSPACE_CAPABILITY, TINY_SOURCE_RESIDENCY_BUDGETS);
+    await flushAsync();
+    await act(async () => { await latestState?.handleOpen('C:\\docs\\first.md', { draftRestore: 'skip' }); });
+    await act(async () => { await latestState?.handleOpen('C:\\docs\\second.md', { draftRestore: 'skip' }); });
+    await flushAsync();
+
+    const [, firstId, secondId] = latestState!.workspaceState.tabOrder;
+    const cold = latestState!.workspaceState.documentsById[firstId];
+    expect(cold.source.residency.kind).toBe('coldClean');
+    expect(cold.source.sourceText).toBe('');
+    expect(cold.source.buffer.current.text).toEqual({ segments: [], length: 0 });
+
+    await act(async () => { await latestState?.activateWorkspaceDocument(firstId); });
+    await flushAsync();
+
+    expect(latestState?.workspaceState.activeDocumentId).toBe(firstId);
+    expect(latestState?.workspaceState.documentsById[firstId].source.sourceText).toBe('# First source');
+    expect(latestState?.workspaceState.documentsById[firstId].source.residency.kind).toBe('resident');
+    expect(latestState?.workspaceState.documentsById[secondId].source.residency.kind).toBe('coldClean');
+    expect(host.file.readTextFileForEdit).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    ['baseline mismatch', async () => readResponse('# Changed source')],
+    ['missing file', async () => { throw new DocumentHostError('NOT_FOUND', 'File is missing'); }],
+    ['permission failure', async () => { throw new DocumentHostError('PERMISSION_DENIED', 'File access denied'); }],
+  ])('keeps a cold document inactive on %s during reacquisition', async (_caseName, failedRead) => {
+    const host = createHost();
+    host.launch.getInitialDocumentPath.mockResolvedValue(null);
+    host.file.readTextFileForEdit.mockImplementation(async (path) => readResponse(path.endsWith('first.md') ? '# First source' : '# Second source'));
+    renderSession(host, PRODUCTION_WORKSPACE_CAPABILITY, TINY_SOURCE_RESIDENCY_BUDGETS);
+    await flushAsync();
+    await act(async () => { await latestState?.handleOpen('C:\\docs\\first.md', { draftRestore: 'skip' }); });
+    await act(async () => { await latestState?.handleOpen('C:\\docs\\second.md', { draftRestore: 'skip' }); });
+    await flushAsync();
+    const [, firstId, secondId] = latestState!.workspaceState.tabOrder;
+    host.file.readTextFileForEdit.mockImplementationOnce(failedRead);
+
+    let activated: boolean | undefined;
+    await act(async () => { activated = await latestState?.activateWorkspaceDocument(firstId); });
+    await flushAsync();
+
+    expect(activated).toBe(false);
+    expect(latestState?.workspaceState.activeDocumentId).toBe(secondId);
+    expect(latestState?.workspaceState.documentsById[firstId].source.residency.kind).toBe('coldClean');
+    expect(latestState?.workspaceState.documentsById[firstId].source.sourceText).toBe('');
+    expect(pushToast).toHaveBeenCalledWith(expect.stringContaining('cold document'), 'warning');
+  });
+
   it('focuses an alias duplicate without rereading or duplicating its record', async () => {
     const host = createHost();
     host.launch.getInitialDocumentPath.mockResolvedValue(null);
@@ -551,7 +622,11 @@ describe('useDocumentSession startup fallback', () => {
     expect(new Set(latestState?.workspaceState.tabOrder).size).toBe(3);
   });
 
-  function renderSession(host: MockDocumentHost, workspaceCapability?: Partial<WorkspaceCapabilityState>) {
+  function renderSession(
+    host: MockDocumentHost,
+    workspaceCapability?: Partial<WorkspaceCapabilityState>,
+    sourceResidencyBudgets?: Readonly<DocumentSourceResidencyBudgets>,
+  ) {
     act(() => {
       root.render(
         <Harness
@@ -559,6 +634,7 @@ describe('useDocumentSession startup fallback', () => {
           confirmText={confirmText}
           pushToast={pushToast}
           workspaceCapability={workspaceCapability}
+          sourceResidencyBudgets={sourceResidencyBudgets}
           onState={(state) => {
             latestState = state;
           }}
@@ -599,12 +675,14 @@ function Harness({
   pushToast,
   onState,
   workspaceCapability,
+  sourceResidencyBudgets,
 }: {
   host: DocumentHost;
   confirmText: (state: ConfirmState) => Promise<boolean>;
   pushToast: (text: string, tone?: 'info' | 'success' | 'warning' | 'error') => void;
   onState: (state: SessionState) => void;
   workspaceCapability?: Partial<WorkspaceCapabilityState>;
+  sourceResidencyBudgets?: Readonly<DocumentSourceResidencyBudgets>;
 }) {
   const [settings, setSettings] = useState<PersistedSettings>(() => loadSettings());
   const [_authorshipMarks, setAuthorshipMarks] = useState<AuthorshipMark[]>([]);
@@ -615,11 +693,19 @@ function Harness({
     pushToast,
     host,
     workspaceCapability,
+    sourceResidencyBudgets,
   });
   void settings;
   onState(state);
   return null;
 }
+
+const TINY_SOURCE_RESIDENCY_BUDGETS: Readonly<DocumentSourceResidencyBudgets> = Object.freeze({
+  lowWatermarkBytes: 1,
+  highWatermarkBytes: 10,
+  hardCeilingBytes: 10,
+  minimumResidencyMs: 0,
+});
 
 function createHost(): MockDocumentHost {
   let settings = loadSettings();
@@ -693,15 +779,12 @@ function createHost(): MockDocumentHost {
 }
 
 function readResponse(content: string, metadataPatch: Partial<FileMetadata> = {}): ReadTextFileResponse {
-  return {
-    content,
-    metadata: {
+  return createHostReadResponse(content, {
       ...DEFAULT_METADATA,
       lastKnownSizeBytes: content.length,
       contentHash: `hash:${content.length}`,
       ...metadataPatch,
-    },
-  };
+  });
 }
 
 async function flushAsync() {

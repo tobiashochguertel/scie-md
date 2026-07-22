@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDocumentId, createUntitledLocator, fallbackFileLocator } from '../documentIdentity';
+import { createDocumentId, createUntitledLocator, fallbackFileLocator, sourceRevision } from '../documentIdentity';
 import { createDocumentRecord } from '../documentRecord';
 import type { RecoveryCatalogEntry, RecoveryCheckpointInput } from '../../services/recoveryCatalog';
 import { createWorkspaceState } from './workspaceState';
@@ -8,6 +8,7 @@ import { createHiddenWorkspaceHarness } from './hiddenWorkspaceHarness';
 import type { WorkspaceRecoveryBackend } from './workspaceRecoveryCoordinator';
 import { loadUntitledDraft, resetDraftRecoveryForTests, saveUntitledDraft } from '../../services/draftRecoveryService';
 import { loadRecoveryCatalog, resetRecoveryCatalogForTests } from '../../services/recoveryCatalog';
+import { sourceSnapshotService } from '../source/sourceSnapshotService';
 
 describe('WorkspaceRecoveryCoordinator', () => {
   beforeEach(() => {
@@ -15,6 +16,7 @@ describe('WorkspaceRecoveryCoordinator', () => {
     localStorage.clear();
     resetDraftRecoveryForTests();
     resetRecoveryCatalogForTests();
+    sourceSnapshotService.resetForTests();
   });
   afterEach(() => vi.useRealTimers());
 
@@ -80,6 +82,31 @@ describe('WorkspaceRecoveryCoordinator', () => {
     expect(store.recovery.metrics()).toMatchObject({ checkpointCount: 1, checkpointLagMaxMs: 600, lastCheckpointLagMs: 600 });
   });
 
+  it('coalesces concurrent checkpoint barriers for the same revision', async () => {
+    const backend = fakeBackend();
+    let release!: () => void;
+    const checkpointReady = new Promise<void>((resolve) => { release = resolve; });
+    backend.checkpoint.mockImplementationOnce(async (input) => {
+      backend.checkpoints.push(input);
+      await checkpointReady;
+      return entryFor(input, 1);
+    });
+    const document = dirtyRecord('markdown', '# dirty', '# saved', createUntitledLocator());
+    const store = createWorkspaceStore(createWorkspaceState(document, capability()), { backend });
+    store.recovery.configureEditorFlush(() => undefined);
+
+    const first = store.recovery.flushDocument(document.id, 'deactivation');
+    const second = store.recovery.flushDocument(document.id, 'destructive-barrier');
+    const third = store.recovery.flushDocument(document.id, 'visibility-hidden');
+    await Promise.resolve();
+    expect(backend.checkpoint).toHaveBeenCalledTimes(1);
+
+    release();
+    await Promise.all([first, second, third]);
+    expect(backend.checkpoint).toHaveBeenCalledTimes(1);
+    expect(store.getState().documentsById[document.id].lifecycle.recovery).toBe('current');
+  });
+
   it('registers one lifecycle listener set and abrupt unload synchronously targets every dirty record', () => {
     const backend = fakeBackend();
     const first = dirtyRecord('markdown', '# first', '# saved', createUntitledLocator());
@@ -124,6 +151,27 @@ describe('WorkspaceRecoveryCoordinator', () => {
     expect(backend.checkpoints).toHaveLength(2);
     expect(committed?.sourceText).toBe('revision two');
     expect(committed?.sourceRevision).toBe(store.getState().documentsById[document.id].source.revision);
+  });
+
+  it('checkpoints the buffer authority after an incremental edit and releases leases when the backend fails', async () => {
+    const backend = fakeBackend();
+    backend.checkpoint.mockImplementationOnce(async (input) => {
+      backend.checkpoints.push(input);
+      throw new Error('storage failed');
+    });
+    const document = createDocumentRecord({ sourceText: 'saved', mode: 'source' });
+    const store = createWorkspaceStore(createWorkspaceState(document, capability()), { backend });
+    store.recovery.configureEditorFlush(() => undefined);
+    store.dispatch({
+      type: 'updateDocument', documentId: document.id,
+      action: {
+        type: 'sourceChangeSetApplied',
+        changeSet: { documentId: document.id, expectedRevision: sourceRevision(0), changes: [{ from: 0, to: 5, insert: 'draft', expectedText: 'saved' }] },
+      },
+    });
+    await expect(store.recovery.flushDocument(document.id)).rejects.toThrow('storage failed');
+    expect(backend.checkpoints[0]).toMatchObject({ sourceText: 'draft', savedSourceText: 'saved', sourceRevision: 1 });
+    expect(sourceSnapshotService.metrics().activeLeaseCount).toBe(0);
   });
 
   it('awaits current-revision recovery before a destructive workspace removal', async () => {

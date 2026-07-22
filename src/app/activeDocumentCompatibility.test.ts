@@ -7,7 +7,6 @@ describe('active document compatibility state', () => {
     const previousDocumentId = createDocumentId();
     const nextDocumentId = createDocumentId();
     const clearers = {
-      clearRuntimeDocument: vi.fn(),
       clearEditorRuntime: vi.fn(),
       clearReviewOverlays: vi.fn(),
       clearPendingDecisions: vi.fn(),
@@ -15,7 +14,6 @@ describe('active document compatibility state', () => {
     };
 
     expect(clearActiveDocumentCompatibilityState(previousDocumentId, nextDocumentId, clearers)).toBe(true);
-    expect(clearers.clearRuntimeDocument).toHaveBeenCalledWith(previousDocumentId);
     expect(clearers.clearEditorRuntime).toHaveBeenCalledOnce();
     expect(clearers.clearReviewOverlays).toHaveBeenCalledOnce();
     expect(clearers.clearPendingDecisions).toHaveBeenCalledOnce();
@@ -25,7 +23,6 @@ describe('active document compatibility state', () => {
   it('preserves active-only state while the document identity is unchanged', () => {
     const documentId = createDocumentId();
     const clearers = {
-      clearRuntimeDocument: vi.fn(),
       clearEditorRuntime: vi.fn(),
       clearReviewOverlays: vi.fn(),
       clearPendingDecisions: vi.fn(),
@@ -33,7 +30,6 @@ describe('active document compatibility state', () => {
     };
 
     expect(clearActiveDocumentCompatibilityState(documentId, documentId, clearers)).toBe(false);
-    expect(clearers.clearRuntimeDocument).not.toHaveBeenCalled();
     expect(clearers.clearEditorRuntime).not.toHaveBeenCalled();
     expect(clearers.clearReviewOverlays).not.toHaveBeenCalled();
     expect(clearers.clearPendingDecisions).not.toHaveBeenCalled();

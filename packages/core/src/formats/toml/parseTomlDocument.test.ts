@@ -136,7 +136,7 @@ describe('parseTomlDocument', () => {
       { name: 'products', line: 7, kind: 'array-table' },
     ]);
     expect(result.parsed?.sourceMap.nodes.every((node) => node.span === null && node.lossy && !node.editable)).toBe(true);
-    expect(result.parsed?.preservation.blockers.join('\n')).toContain('lossless parser');
+    expect(result.parsed?.preservation.blockers.join('\n')).toContain('non-authoritative preview fallback');
     expect(result.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'toml-comments-readonly' }),
       expect.objectContaining({ code: 'toml-dotted-key-readonly' }),

@@ -7,6 +7,9 @@ import { fileWatchRetryDelayMs, type FileWatchChangeEvent } from '../../services
 import type { WorkspaceCommand, WorkspaceState } from './workspaceState';
 import type { WorkspaceRecoveryCoordinator } from './workspaceRecoveryCoordinator';
 import type { WorkspaceSaveCoordinator } from './workspaceSaveCoordinator';
+import { documentPerformance } from '../performance/documentPerformance';
+import { sourceSnapshotService } from '../source/sourceSnapshotService';
+import { documentEditorGateway } from '../documentEditorGateway';
 
 export type WorkspaceExternalNotificationKind = 'changed' | 'missing' | 'renamed' | 'permissionLost' | 'readOnly' | 'cloudUnavailable' | 'fallback';
 
@@ -226,12 +229,19 @@ export function createWorkspaceExternalChangeCoordinator(
       const access: DocumentAccessState = metadata.readOnly ? 'readOnly' : 'writable';
       if (!metadataChanged(current.fileBaseline, metadata) && current.fileBaseline.contentHash) {
         metadata = await configured.file.statFile(record.locator.displayPath, { contentHash: true });
+        documentPerformance.trace({
+          name: 'byte-acquisition',
+          documentId,
+          acquisitionReason: 'watcherHash',
+          byteCount: metadata.lastKnownSizeBytes,
+          phase: 'stat-with-content-hash',
+        });
       }
       const echo = selfSaveEchoes.get(documentId);
       if (echo && echo.expiresAt >= now() && !metadataChanged(echo.metadata, metadata)) {
         selfSaveEchoes.delete(documentId);
         transition(current, 'inSync', access, null, null);
-        emit({ documentId, type: 'synced', path: record.locator.displayPath, sourceText: current.source.sourceText, metadata });
+        emit({ documentId, type: 'synced', path: record.locator.displayPath, metadata });
         return;
       }
       if (!metadataChanged(current.fileBaseline, metadata)) {
@@ -239,21 +249,42 @@ export function createWorkspaceExternalChangeCoordinator(
         return;
       }
       const disk = await configured.file.readTextFile(record.locator.displayPath);
+      documentPerformance.trace({
+        name: 'byte-acquisition',
+        documentId,
+        acquisitionReason: 'externalVerification',
+        byteCount: disk.nativeTimings?.byteCount ?? disk.metadata.lastKnownSizeBytes,
+        phase: 'external-read',
+      });
       const diskSource = readSourceEnvelope(disk).sourceText;
       const latest = getState().documentsById[documentId];
       if (!latest || !sameDocumentLocator(latest.locator, record.locator)) return;
-      const currentSource = readCurrentSource?.(documentId) ?? latest.source.sourceText;
-      if (diskSource === currentSource) {
-        dispatch({ type: 'updateDocument', documentId, action: { type: 'externalDiskAdopted', sourceText: diskSource, fileBaseline: disk.metadata } });
-        clearNotification(documentId);
-        emit({ documentId, type: 'synced', path: record.locator.displayPath, sourceText: diskSource, metadata: disk.metadata });
-      } else if (diskSource === latest.source.savedSourceText) {
-        dispatch({ type: 'updateDocument', documentId, action: { type: 'fileBaselineChanged', fileBaseline: disk.metadata } });
-        transition(latest, 'inSync', access, null, null);
-        emit({ documentId, type: 'synced', path: record.locator.displayPath, sourceText: diskSource, metadata: disk.metadata });
-      } else {
-        transition(latest, 'changed', access, disk.metadata, 'changed');
-        emit({ documentId, type: 'conflict', path: record.locator.displayPath, sourceText: diskSource, metadata: disk.metadata });
+      if (latest.source.residency.kind === 'coldClean') {
+        transition(latest, 'changed', access, disk.metadata, 'changed', 'The cold document changed on disk and must be reviewed before activation.');
+        emit({ documentId, type: 'conflict', path: record.locator.displayPath, metadata: disk.metadata, detail: 'cold-baseline-mismatch' });
+        return;
+      }
+      const currentLease = sourceSnapshotService.lease(latest.id, latest.source.buffer.current, 'external-conflict-base');
+      const savedLease = sourceSnapshotService.lease(latest.id, latest.source.buffer.saved, 'external-conflict-base', 'saved');
+      try {
+        const currentSource = currentLease.sourceText;
+        if (diskSource === currentSource) {
+          documentEditorGateway.clearRuntime(documentId);
+          dispatch({ type: 'updateDocument', documentId, action: { type: 'externalDiskAdopted', sourceText: diskSource, fileBaseline: disk.metadata } });
+          sourceSnapshotService.evictSaved(documentId, getState().documentsById[documentId]?.source.savedRevision);
+          clearNotification(documentId);
+          emit({ documentId, type: 'synced', path: record.locator.displayPath, sourceText: diskSource, metadata: disk.metadata });
+        } else if (diskSource === savedLease.sourceText) {
+          dispatch({ type: 'updateDocument', documentId, action: { type: 'fileBaselineChanged', fileBaseline: disk.metadata } });
+          transition(latest, 'inSync', access, null, null);
+          emit({ documentId, type: 'synced', path: record.locator.displayPath, sourceText: diskSource, metadata: disk.metadata });
+        } else {
+          transition(latest, 'changed', access, disk.metadata, 'changed');
+          emit({ documentId, type: 'conflict', path: record.locator.displayPath, sourceText: diskSource, metadata: disk.metadata });
+        }
+      } finally {
+        currentLease?.release();
+        savedLease.release();
       }
     } catch (error) {
       const latest = getState().documentsById[documentId];
@@ -281,7 +312,15 @@ export function createWorkspaceExternalChangeCoordinator(
   const compareDocument = async (documentId: DocumentId): Promise<ReadTextFileResponse | null> => {
     const record = getState().documentsById[documentId];
     if (!host || !record || record.locator.kind !== 'file') return null;
-    return host.file.readTextFile(record.locator.displayPath);
+    const disk = await host.file.readTextFile(record.locator.displayPath);
+    documentPerformance.trace({
+      name: 'byte-acquisition',
+      documentId,
+      acquisitionReason: 'externalVerification',
+      byteCount: disk.nativeTimings?.byteCount ?? disk.metadata.lastKnownSizeBytes,
+      phase: 'explicit-compare-read',
+    });
+    return disk;
   };
 
   return {
@@ -315,7 +354,9 @@ export function createWorkspaceExternalChangeCoordinator(
         return false;
       }
       if (!disk) return false;
+      documentEditorGateway.clearRuntime(documentId);
       dispatch({ type: 'updateDocument', documentId, action: { type: 'externalDiskAdopted', sourceText: readSourceEnvelope(disk).sourceText, fileBaseline: disk.metadata } });
+      sourceSnapshotService.evictSaved(documentId, getState().documentsById[documentId]?.source.savedRevision);
       await recovery.clearDocument(documentId, getState().documentsById[documentId]?.source.revision ?? record.source.revision);
       clearNotification(documentId);
       return true;

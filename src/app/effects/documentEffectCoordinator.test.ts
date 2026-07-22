@@ -43,4 +43,17 @@ describe('DocumentEffectCoordinator', () => {
     expect(effects.isCurrent(secondToken)).toBe(true);
     expect(JSON.stringify(effects.diagnostics())).not.toContain('markdown');
   });
+
+  it('cancels every reconstructible job for one document without touching another owner', () => {
+    const first = createDocumentId();
+    const second = createDocumentId();
+    const effects = createDocumentEffectCoordinator(() => sourceRevision(0));
+    const parse = effects.begin(first, 'layer-two-parse')!;
+    const validate = effects.begin(first, 'document-validation')!;
+    const other = effects.begin(second, 'layer-two-parse')!;
+    expect(effects.cancelDocument(first)).toBe(2);
+    expect(effects.isCurrent(parse)).toBe(false);
+    expect(effects.isCurrent(validate)).toBe(false);
+    expect(effects.isCurrent(other)).toBe(true);
+  });
 });

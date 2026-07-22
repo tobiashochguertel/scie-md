@@ -69,6 +69,7 @@ export function parseTomlDocument(content: DocumentContent): FormatParseResult<P
     parsed: {
       value,
       stats: analyzeStructuredValue(value),
+      // Host-neutral/browser preview only. Desktop production identity and writes come from tomlNative.ts.
       sourceMap: createLossyStructuredSourceMap('toml', value),
       warnings: featureWarnings,
       preservation: createStructuredPreservationSummary({
@@ -77,9 +78,9 @@ export function parseTomlDocument(content: DocumentContent): FormatParseResult<P
         sourceMapFeasibility: 'requires-lossless-parser',
         candidateLibraries: ['taplo', 'toml_edit'],
         blockers: [
-          'Current smol-toml integration returns normalized values only, without spans, comments, whitespace, dotted-key syntax, or array-of-table source identity.',
-          'Round F5 toml_edit fixture tests preserve representative source text and expose spans in an immutable parse tree, but ScieMD has not adopted a production TOML adapter or edit planner.',
-          'A writeable TOML tree needs a lossless parser/editor layer before source patches can be planned safely.',
+          'This smol-toml path is a non-authoritative preview fallback for hosts without native TOML planning.',
+          'Desktop production display, navigation, conflict review, and guarded mutation use the versioned toml_edit host boundary.',
+          'Fallback hosts remain source-editable and visually read-only.',
         ],
       }),
       jsonPreview,

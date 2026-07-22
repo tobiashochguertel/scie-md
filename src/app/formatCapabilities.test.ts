@@ -6,7 +6,7 @@ describe('formatCapabilitiesFor', () => {
   it('derives structured surfaces from core adapter declarations', () => {
     expect(formatCapabilitiesFor('json')).toMatchObject({
       canUseStructuredVisualMode: true,
-      canEditJsonVisualTree: true,
+      canEditStructuredVisualTree: true,
       canUseRecordList: false,
       canUseTablePreview: false,
       sourceLanguage: 'json',
@@ -37,7 +37,7 @@ describe('formatCapabilitiesFor', () => {
     });
     expect(formatCapabilitiesFor('xml')).toMatchObject({
       canUseStructuredVisualMode: true,
-      canEditJsonVisualTree: false,
+      canEditStructuredVisualTree: true,
       canUseRecordList: false,
       canUseTablePreview: false,
       sourceLanguage: 'xml',
@@ -64,5 +64,10 @@ describe('formatCapabilitiesFor', () => {
       canUseTablePreview: false,
       sourceLanguage: 'plainText',
     });
+  });
+
+  it('intersects the TOML catalog writer with the current host capability', () => {
+    expect(formatCapabilitiesFor('toml').canEditStructuredVisualTree).toBe(false);
+    expect(formatCapabilitiesFor('toml', { tomlNativePlanning: true }).canEditStructuredVisualTree).toBe(true);
   });
 });

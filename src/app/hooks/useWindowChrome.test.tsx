@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useWindowChrome } from './useWindowChrome';
+import { isExplicitWindowDragTarget, useWindowChrome } from './useWindowChrome';
 
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
@@ -40,6 +40,19 @@ describe('useWindowChrome', () => {
     });
 
     expect(closeWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts only positively marked empty chrome and excludes interactive descendants', () => {
+    const region = document.createElement('div');
+    region.dataset.windowDragRegion = 'true';
+    const text = document.createElement('span');
+    const button = document.createElement('button');
+    region.append(text, button);
+    document.body.append(region);
+    expect(isExplicitWindowDragTarget(text)).toBe(true);
+    expect(isExplicitWindowDragTarget(button)).toBe(false);
+    expect(isExplicitWindowDragTarget(document.body)).toBe(false);
+    region.remove();
   });
 
   function renderChrome(props: {

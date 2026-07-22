@@ -72,7 +72,7 @@ export const STRUCTURED_DOCUMENT_OPERATIONS: Record<StructuredDocumentOperationI
 };
 
 export const STRUCTURED_JSON_EDIT_OPERATIONS: Record<StructuredJsonEditOperationId, Omit<StructuredOperationMetadata, 'enabled' | 'disabledReason'>> = {
-  replaceScalar: { id: 'replaceScalar', label: 'Edit value', group: 'edit', requiresReview: true },
+  replaceScalar: { id: 'replaceScalar', label: 'Edit value', group: 'edit', requiresReview: false },
   renameObjectKey: { id: 'renameObjectKey', label: 'Rename key', group: 'edit', requiresReview: true },
   addObjectField: { id: 'addObjectField', label: 'Add field', group: 'add', requiresReview: true },
   deleteObjectField: { id: 'deleteObjectField', label: 'Delete field', group: 'delete', destructive: true, requiresReview: true },

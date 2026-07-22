@@ -4,9 +4,17 @@ import { App } from './App';
 import '../scie-md/styles/app.css';
 import '../scie-md/styles/scientific-document.css';
 import './styles.css';
+import ibmPlexMonoLicenseUrl from '../scie-md/styles/fonts/vendor/ibm-plex-mono/OFL.txt?url';
+import notoSansMonoLicenseUrl from '../scie-md/styles/fonts/vendor/ibm-plex-mono/OFL-Noto-Sans-Mono.txt?url';
+import sourceFontManifestUrl from '../scie-md/styles/fonts/vendor/ibm-plex-mono/manifest.json?url';
 
 const root = document.getElementById('root');
 document.documentElement.dataset.scieMdBoot = 'running';
+document.documentElement.dataset.sourceFontEvidence = JSON.stringify({
+  ibmPlexMonoLicenseUrl,
+  notoSansMonoLicenseUrl,
+  sourceFontManifestUrl,
+});
 setBootMessage('ScieMD script loaded. Mounting React app...');
 
 window.addEventListener('error', (event) => {

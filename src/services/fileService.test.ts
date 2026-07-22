@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
+import { DEFAULT_METADATA } from '../app/documentState';
 import {
   clearPendingDocumentOpen,
   clearPendingMarkdownOpen,
@@ -25,6 +26,9 @@ import {
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
+  Channel: class MockChannel<T> {
+    onmessage: (event: T) => void = () => undefined;
+  },
 }));
 
 describe('fileService', () => {
@@ -140,9 +144,11 @@ describe('fileService', () => {
   });
 
   it('keeps generic text reads separate from edit-open text reads', async () => {
-    const nativeResponse = {
-      sourceText: 'alpha\nbeta\n',
-      content: 'alpha\nbeta\n',
+    const nativeComplete = {
+      kind: 'complete' as const,
+      contractVersion: 2,
+      chunkCount: 1,
+      snapshot: { method: 'windows-write-excluding-handle-v1', attempts: 1, identityVerified: true },
       metadata: {
         lineEnding: 'cr' as const,
         lineEndings: 'cr' as const,
@@ -159,27 +165,74 @@ describe('fileService', () => {
         cloudState: 'local' as const,
       },
     };
-    vi.mocked(invoke).mockResolvedValueOnce(nativeResponse).mockResolvedValueOnce(nativeResponse);
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === 'read_text_file' || command === 'read_text_file_for_edit') {
+        const channel = (args as { onEvent: { onmessage(event: unknown): void } }).onEvent;
+        setTimeout(() => {
+          channel.onmessage({ kind: 'sourceChunk', sequence: 0, sourceChunk: 'alpha\nbeta\n' });
+          channel.onmessage(nativeComplete);
+        }, 0);
+      }
+      return undefined as never;
+    });
 
     const read = await readTextFile('C:\\docs\\paper.md');
     const editRead = await readTextFileForEdit('C:\\docs\\paper.md');
 
-    expect(read.sourceEnvelope).toMatchObject({
+    expect(read).toMatchObject({
       sourceText: 'alpha\nbeta\n',
-      savedSourceText: 'alpha\nbeta\n',
-      dominantLineEnding: 'cr',
-      lineEndings: 'cr',
-      originalByteHash: 'hash',
-      losslessWrite: 'yes',
+      contractVersion: 2,
+      snapshot: { identityVerified: true },
     });
     expect(editRead.sourceText).toBe('alpha\nbeta\n');
 
     expect(invoke).toHaveBeenNthCalledWith(1, 'read_text_file', {
       path: 'C:\\docs\\paper.md',
+      operationId: expect.any(String),
+      onEvent: expect.any(Object),
     });
     expect(invoke).toHaveBeenNthCalledWith(2, 'read_text_file_for_edit', {
       path: 'C:\\docs\\paper.md',
+      operationId: expect.any(String),
+      onEvent: expect.any(Object),
     });
+  });
+
+  it('sends operation-ID cancellation and rejects a completed native value before renderer commit', async () => {
+    const nativeComplete = {
+      kind: 'complete' as const,
+      contractVersion: 2,
+      chunkCount: 1,
+      snapshot: { method: 'windows-write-excluding-handle-v1', attempts: 1, identityVerified: true },
+      metadata: { ...DEFAULT_METADATA },
+    };
+    let resolveRead!: () => void;
+    let readChannel!: { onmessage(event: unknown): void };
+    const nativeRead = new Promise<void>((resolve) => { resolveRead = resolve; });
+    const onNativeCancellation = vi.fn();
+    vi.mocked(invoke).mockImplementation((command, args) => {
+      if (command === 'read_text_file_for_edit') {
+        readChannel = (args as { onEvent: { onmessage(event: unknown): void } }).onEvent;
+        return nativeRead as never;
+      }
+      if (command === 'cancel_text_file_read') return Promise.resolve({ accepted: true, stopped: true, stopMs: 4 }) as never;
+      return Promise.resolve(DEFAULT_METADATA) as never;
+    });
+    const controller = new AbortController();
+
+    const read = readTextFileForEdit('C:\\docs\\paper.md', {
+      operationId: 'read-cancel-test',
+      signal: controller.signal,
+      onNativeCancellation,
+    });
+    controller.abort();
+    readChannel.onmessage({ kind: 'sourceChunk', sequence: 0, sourceChunk: 'never commit' });
+    readChannel.onmessage(nativeComplete);
+    resolveRead();
+
+    await expect(read).rejects.toMatchObject({ code: 'CANCELLED' });
+    expect(invoke).toHaveBeenCalledWith('cancel_text_file_read', { operationId: 'read-cancel-test' });
+    await vi.waitFor(() => expect(onNativeCancellation).toHaveBeenCalledWith({ accepted: true, stopped: true, stopMs: 4 }));
   });
 
   it('uses generic sourceText and CR fidelity metadata for atomic writes', async () => {

@@ -29,14 +29,16 @@ export function useWindowChrome({ closeWindow }: WindowChromeParams) {
   }, [closeWindow]);
 
   const handleTitlebarMouseDown = useCallback((event: ReactMouseEvent<HTMLElement>) => {
-    if (event.button !== 0 || !isTauriRuntime() || isInteractiveTitlebarTarget(event.target)) return;
+    if (event.button !== 0 || !isTauriRuntime() || !isExplicitWindowDragTarget(event.target)) return;
+    recordWindowChromeAction('drag');
     void getCurrentWindow().startDragging().catch((error) => {
       console.warn('Window drag failed.', error);
     });
   }, []);
 
   const handleTitlebarDoubleClick = useCallback((event: ReactMouseEvent<HTMLElement>) => {
-    if (event.button !== 0 || !isTauriRuntime() || isInteractiveTitlebarTarget(event.target)) return;
+    if (event.button !== 0 || !isTauriRuntime() || !isExplicitWindowDragTarget(event.target)) return;
+    recordWindowChromeAction('toggle-maximize');
     void getCurrentWindow().toggleMaximize().catch((error) => {
       console.warn('Window maximize failed.', error);
     });
@@ -51,7 +53,15 @@ export function useWindowChrome({ closeWindow }: WindowChromeParams) {
   };
 }
 
-function isInteractiveTitlebarTarget(target: EventTarget | null): boolean {
+function recordWindowChromeAction(action: 'drag' | 'toggle-maximize'): void {
+  const root = document.documentElement;
+  root.dataset.windowChromeAction = action;
+  root.dataset.windowChromeSequence = String(Number(root.dataset.windowChromeSequence ?? '0') + 1);
+}
+
+export function isExplicitWindowDragTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
-  return Boolean(target.closest('button, input, textarea, select, a, [role="button"], [role="menu"], [role="menuitem"]'));
+  const region = target.closest('[data-window-drag-region="true"]');
+  if (!region) return false;
+  return !target.closest('button, input, textarea, select, a, [role="button"], [role="menu"], [role="menuitem"], [data-window-drag-exclude="true"]');
 }

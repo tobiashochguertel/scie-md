@@ -1,12 +1,24 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     fs::{self, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::OnceLock,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, OnceLock,
+    },
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+use tauri::ipc::Channel;
+
+#[cfg(windows)]
+use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+#[cfg(windows)]
+use windows_sys::Win32::Storage::FileSystem::{
+    FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO, FILE_SHARE_READ,
 };
 
 use super::host_error::{HostError, HostErrorCode, HostResult};
@@ -25,9 +37,15 @@ use text_encoding::{
 };
 
 static LAST_TEMP_CLEANUP_AT: OnceLock<Mutex<Option<SystemTime>>> = OnceLock::new();
+static ACTIVE_TEXT_READS: OnceLock<Mutex<HashMap<String, Arc<ReadCancellation>>>> = OnceLock::new();
 const MAX_BINARY_IPC_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_TEXT_IPC_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_TEXT_HASH_BYTES: u64 = 25 * 1024 * 1024;
+const TEXT_READ_CHUNK_BYTES: usize = 256 * 1024;
+const TEXT_READ_IPC_CHUNK_BYTES: usize = 2 * 1024 * 1024;
+const COHERENT_READ_ATTEMPTS: u8 = 3;
+const COHERENT_READ_RETRY_DELAY: Duration = Duration::from_millis(15);
+const NATIVE_CANCEL_WAIT_BOUND: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,9 +70,63 @@ pub struct FileMetadata {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadTextFileResponse {
+    pub contract_version: u16,
     pub source_text: String,
-    pub content: String,
     pub metadata: FileMetadata,
+    pub native_timings: NativeDocumentReadTimings,
+    pub snapshot: NativeDocumentSnapshotEvidence,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind")]
+pub enum NativeTextReadEvent {
+    #[serde(rename = "sourceChunk")]
+    SourceChunk {
+        sequence: u32,
+        #[serde(rename = "sourceChunk")]
+        source_chunk: String,
+    },
+    #[serde(rename = "complete")]
+    Complete {
+        #[serde(rename = "contractVersion")]
+        contract_version: u16,
+        #[serde(rename = "chunkCount")]
+        chunk_count: u32,
+        metadata: Box<FileMetadata>,
+        #[serde(rename = "nativeTimings")]
+        native_timings: NativeDocumentReadTimings,
+        snapshot: NativeDocumentSnapshotEvidence,
+    },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeDocumentSnapshotEvidence {
+    pub method: &'static str,
+    pub attempts: u8,
+    pub identity_verified: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeReadCancellationResponse {
+    pub accepted: bool,
+    pub stopped: bool,
+    pub stop_ms: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeDocumentReadTimings {
+    pub clock: &'static str,
+    pub permission_cloud_grant_ms: f64,
+    pub stat_ms: f64,
+    pub read_ms: f64,
+    pub decode_fidelity_ms: f64,
+    pub hash_ms: f64,
+    pub image_grant_discovery_ms: f64,
+    pub total_ms: f64,
+    pub byte_count: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -82,33 +154,223 @@ pub struct FileExplorerEntry {
 }
 
 #[tauri::command]
-pub fn read_text_file(path: String) -> HostResult<ReadTextFileResponse> {
-    let path = PathBuf::from(path);
-    assert_file_read_allowed(&path)?;
-    ensure_cloud_file_available(&path)?;
-    Ok(read_text_file_checked(&path)?)
+pub async fn read_text_file(
+    path: String,
+    operation_id: String,
+    on_event: Channel<NativeTextReadEvent>,
+) -> HostResult<()> {
+    run_text_read(path, operation_id, false, on_event).await
 }
 
 #[tauri::command]
-pub fn read_text_file_for_edit(path: String) -> HostResult<ReadTextFileResponse> {
-    let path = PathBuf::from(path);
-    assert_file_read_allowed(&path)?;
-    ensure_cloud_file_available(&path)?;
-    grant_file(&path)?;
-    Ok(read_text_file_checked(&path)?)
+pub async fn read_text_file_for_edit(
+    path: String,
+    operation_id: String,
+    on_event: Channel<NativeTextReadEvent>,
+) -> HostResult<()> {
+    run_text_read(path, operation_id, true, on_event).await
 }
 
-fn read_text_file_checked(path: &Path) -> Result<ReadTextFileResponse, String> {
-    let file_metadata =
-        fs::metadata(path).map_err(|error| format!("Could not read file metadata: {error}"))?;
-    if file_metadata.len() > MAX_TEXT_IPC_BYTES {
-        return Err("Text file is too large to open safely in ScieMD.".to_string());
+#[tauri::command]
+pub async fn cancel_text_file_read(operation_id: String) -> NativeReadCancellationResponse {
+    let state = active_text_reads().lock().get(&operation_id).cloned();
+    let Some(state) = state else {
+        return NativeReadCancellationResponse {
+            accepted: false,
+            stopped: true,
+            stop_ms: 0.0,
+        };
+    };
+    let started = Instant::now();
+    state.cancelled.store(true, Ordering::Release);
+    let waiter = state.clone();
+    let stopped = tauri::async_runtime::spawn_blocking(move || {
+        waiter.wait_until_finished(NATIVE_CANCEL_WAIT_BOUND)
+    })
+    .await
+    .unwrap_or(false);
+    NativeReadCancellationResponse {
+        accepted: true,
+        stopped,
+        stop_ms: elapsed_ms(started),
     }
-    let bytes = fs::read(path).map_err(|error| format!("Could not read file: {error}"))?;
+}
+
+async fn run_text_read(
+    path: String,
+    operation_id: String,
+    grant_for_edit: bool,
+    on_event: Channel<NativeTextReadEvent>,
+) -> HostResult<()> {
+    let cancellation = Arc::new(ReadCancellation::default());
+    {
+        let mut active = active_text_reads().lock();
+        if active.contains_key(&operation_id) {
+            return Err(HostError::from(
+                "Document read operation ID is already active.".to_string(),
+            ));
+        }
+        active.insert(operation_id.clone(), cancellation.clone());
+    }
+    let worker_cancellation = cancellation.clone();
+    let worker = tauri::async_runtime::spawn_blocking(move || {
+        let response =
+            read_text_file_blocking(PathBuf::from(path), grant_for_edit, &worker_cancellation)?;
+        stream_text_read_response(response, &worker_cancellation, &on_event)
+    })
+    .await;
+    cancellation.mark_finished();
+    active_text_reads().lock().remove(&operation_id);
+    let result = worker
+        .map_err(|error| HostError::from(format!("Native document read worker failed: {error}")))?;
+    result.map_err(native_read_host_error)
+}
+
+fn stream_text_read_response(
+    response: ReadTextFileResponse,
+    cancellation: &ReadCancellation,
+    on_event: &Channel<NativeTextReadEvent>,
+) -> Result<(), String> {
+    let ReadTextFileResponse {
+        contract_version,
+        source_text,
+        metadata,
+        native_timings,
+        snapshot,
+    } = response;
+    let chunks = text_ipc_chunks(&source_text);
+    let chunk_count = u32::try_from(chunks.len())
+        .map_err(|_| "Document read transport produced too many chunks.".to_string())?;
+    for (sequence, source_chunk) in chunks.into_iter().enumerate() {
+        cancellation.checkpoint("transport")?;
+        on_event
+            .send(NativeTextReadEvent::SourceChunk {
+                sequence: sequence as u32,
+                source_chunk: source_chunk.to_string(),
+            })
+            .map_err(|error| format!("Document read transport failed: {error}"))?;
+    }
+    cancellation.checkpoint("transport")?;
+    on_event
+        .send(NativeTextReadEvent::Complete {
+            contract_version,
+            chunk_count,
+            metadata: Box::new(metadata),
+            native_timings,
+            snapshot,
+        })
+        .map_err(|error| format!("Document read transport failed: {error}"))?;
+    Ok(())
+}
+
+fn text_ipc_chunks(source_text: &str) -> Vec<&str> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < source_text.len() {
+        let mut end = (start + TEXT_READ_IPC_CHUNK_BYTES).min(source_text.len());
+        while end > start && !source_text.is_char_boundary(end) {
+            end -= 1;
+        }
+        chunks.push(&source_text[start..end]);
+        start = end;
+    }
+    chunks
+}
+
+pub(crate) fn read_text_file_for_edit_blocking(path: String) -> HostResult<ReadTextFileResponse> {
+    read_text_file_blocking(PathBuf::from(path), true, &ReadCancellation::default())
+        .map_err(native_read_host_error)
+}
+
+#[cfg(test)]
+fn read_text_file_blocking_for_test(path: String) -> HostResult<ReadTextFileResponse> {
+    read_text_file_blocking(PathBuf::from(path), false, &ReadCancellation::default())
+        .map_err(native_read_host_error)
+}
+
+fn native_read_host_error(message: String) -> HostError {
+    let normalized = message.to_ascii_lowercase();
+    let phase = if normalized.contains("preflight")
+        || normalized.contains("grant")
+        || normalized.contains("cloud")
+    {
+        "preflight"
+    } else if normalized.contains("snapshot")
+        || normalized.contains("metadata")
+        || normalized.contains("identity")
+        || normalized.contains("write-excluding")
+    {
+        "coherent-snapshot"
+    } else if normalized.contains("decode") || normalized.contains("encoding") {
+        "decode"
+    } else if normalized.contains("fidelity") || normalized.contains("line ending") {
+        "fidelity"
+    } else if normalized.contains("transport") {
+        "transport"
+    } else if normalized.contains("image") {
+        "image-grants"
+    } else if normalized.contains("hash") {
+        "hash"
+    } else {
+        "read"
+    };
+    HostError::from(message).with_phase(phase)
+}
+
+fn read_text_file_blocking(
+    path: PathBuf,
+    grant_for_edit: bool,
+    cancellation: &ReadCancellation,
+) -> Result<ReadTextFileResponse, String> {
+    let total_started = Instant::now();
+    let preflight_started = Instant::now();
+    cancellation.checkpoint("preflight")?;
+    assert_file_read_allowed(&path)
+        .map_err(|error| format!("Document read preflight failed: {error}"))?;
+    ensure_cloud_file_available(&path)
+        .map_err(|error| format!("Document read preflight failed: {}", error.message))?;
+    if grant_for_edit {
+        grant_file(&path).map_err(|error| format!("Document read grant failed: {error}"))?;
+    }
+    cancellation.checkpoint("preflight")?;
+    read_text_file_checked(
+        &path,
+        elapsed_ms(preflight_started),
+        total_started,
+        cancellation,
+    )
+}
+
+fn read_text_file_checked(
+    path: &Path,
+    permission_cloud_grant_ms: f64,
+    total_started: Instant,
+    cancellation: &ReadCancellation,
+) -> Result<ReadTextFileResponse, String> {
+    cancellation.checkpoint("stat")?;
+    let coherent = read_coherent_snapshot(path, cancellation)?;
+    let file_metadata = coherent.metadata;
+    let stat_ms = coherent.stat_ms;
+    let bytes = coherent.bytes;
+    let read_ms = coherent.read_ms;
+    let decode_started = Instant::now();
+    cancellation.scan_checkpoints("decode", bytes.len())?;
     let decoded = decode_text_bytes(&bytes)?;
+    cancellation.checkpoint("decode")?;
     let line_endings = detect_line_endings(&decoded.raw);
+    cancellation.checkpoint("fidelity")?;
     let content = normalize_to_lf(&decoded.raw);
+    cancellation.checkpoint("fidelity")?;
+    let decode_fidelity_ms = elapsed_ms(decode_started);
+    let image_grant_started = Instant::now();
     sync_markdown_image_grants_if_markdown(path, &content)?;
+    cancellation.checkpoint("image-grants")?;
+    let image_grant_discovery_ms = elapsed_ms(image_grant_started);
+    let hash_started = Instant::now();
+    cancellation.scan_checkpoints("hash", bytes.len())?;
+    let byte_hash = content_hash(&bytes);
+    cancellation.checkpoint("hash")?;
+    let hash_ms = elapsed_ms(hash_started);
     let metadata = metadata_from_file_metadata(
         path,
         &file_metadata,
@@ -120,14 +382,276 @@ fn read_text_file_checked(path: &Path) -> Result<ReadTextFileResponse, String> {
             decode_lossy: decoded.decode_lossy,
             fidelity_known: true,
         },
-        Some(content_hash(&bytes)),
+        Some(byte_hash),
     );
 
+    let native_timings = NativeDocumentReadTimings {
+        clock: "native-monotonic-duration",
+        permission_cloud_grant_ms,
+        stat_ms,
+        read_ms,
+        decode_fidelity_ms,
+        hash_ms,
+        image_grant_discovery_ms,
+        total_ms: elapsed_ms(total_started),
+        byte_count: bytes.len() as u64,
+    };
+
     Ok(ReadTextFileResponse {
-        source_text: content.clone(),
-        content,
+        contract_version: 2,
+        source_text: content,
         metadata,
+        native_timings,
+        snapshot: NativeDocumentSnapshotEvidence {
+            method: coherent.method,
+            attempts: coherent.attempts,
+            identity_verified: true,
+        },
     })
+}
+
+#[derive(Default)]
+struct ReadCancellation {
+    cancelled: AtomicBool,
+    finished: Mutex<bool>,
+    finished_changed: Condvar,
+    #[cfg(test)]
+    chunk_delay: Duration,
+}
+
+impl ReadCancellation {
+    fn checkpoint(&self, phase: &str) -> Result<(), String> {
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(format!("Document read cancelled during {phase}."));
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn with_chunk_delay(chunk_delay: Duration) -> Self {
+        Self {
+            chunk_delay,
+            ..Self::default()
+        }
+    }
+
+    fn scan_checkpoints(&self, phase: &str, byte_count: usize) -> Result<(), String> {
+        for _ in (0..byte_count).step_by(TEXT_READ_CHUNK_BYTES) {
+            self.checkpoint(phase)?;
+            #[cfg(test)]
+            if !self.chunk_delay.is_zero() {
+                std::thread::sleep(self.chunk_delay);
+            }
+        }
+        Ok(())
+    }
+
+    fn mark_finished(&self) {
+        *self.finished.lock() = true;
+        self.finished_changed.notify_all();
+    }
+
+    fn wait_until_finished(&self, timeout: Duration) -> bool {
+        let mut finished = self.finished.lock();
+        if !*finished {
+            self.finished_changed.wait_for(&mut finished, timeout);
+        }
+        *finished
+    }
+}
+
+fn active_text_reads() -> &'static Mutex<HashMap<String, Arc<ReadCancellation>>> {
+    ACTIVE_TEXT_READS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+struct CoherentSnapshot {
+    bytes: Vec<u8>,
+    metadata: fs::Metadata,
+    stat_ms: f64,
+    read_ms: f64,
+    method: &'static str,
+    attempts: u8,
+}
+
+#[cfg(windows)]
+fn read_coherent_snapshot(
+    path: &Path,
+    cancellation: &ReadCancellation,
+) -> Result<CoherentSnapshot, String> {
+    let stat_started = Instant::now();
+    let mut last_error = None;
+    for attempt in 1..=COHERENT_READ_ATTEMPTS {
+        cancellation.checkpoint("snapshot-acquisition")?;
+        let mut options = OpenOptions::new();
+        options.read(true).share_mode(FILE_SHARE_READ);
+        match options.open(path) {
+            Ok(mut file) => {
+                let before_metadata = file
+                    .metadata()
+                    .map_err(|error| format!("Could not read acquired file metadata: {error}"))?;
+                if before_metadata.len() > MAX_TEXT_IPC_BYTES {
+                    return Err("Text file is too large to open safely in ScieMD.".to_string());
+                }
+                let before_identity = windows_file_identity(&file)?;
+                let read_started = Instant::now();
+                let bytes = read_file_in_chunks(&mut file, before_metadata.len(), cancellation)?;
+                let read_ms = elapsed_ms(read_started);
+                let after_metadata = file
+                    .metadata()
+                    .map_err(|error| format!("Could not verify acquired file metadata: {error}"))?;
+                let after_identity = windows_file_identity(&file)?;
+                let path_file = options.open(path).map_err(|error| {
+                    format!("Document changed on disk during coherent read: {error}")
+                })?;
+                let path_identity = windows_file_identity(&path_file)?;
+                if before_identity != after_identity
+                    || before_identity != path_identity
+                    || !same_relevant_metadata(&before_metadata, &after_metadata)
+                    || bytes.len() as u64 != after_metadata.len()
+                {
+                    last_error = Some("Document changed on disk during coherent read.".to_string());
+                } else {
+                    return Ok(CoherentSnapshot {
+                        bytes,
+                        metadata: after_metadata,
+                        stat_ms: (elapsed_ms(stat_started) - read_ms).max(0.0),
+                        read_ms,
+                        method: "windows-write-excluding-handle-v1",
+                        attempts: attempt,
+                    });
+                }
+            }
+            Err(error) => {
+                last_error = Some(format!(
+                    "Could not acquire write-excluding document read handle: {error}"
+                ))
+            }
+        }
+        if attempt < COHERENT_READ_ATTEMPTS {
+            std::thread::sleep(COHERENT_READ_RETRY_DELAY);
+        }
+    }
+    Err(format!(
+        "Document changed on disk or remained write-locked after {COHERENT_READ_ATTEMPTS} coherent read attempts: {}",
+        last_error.unwrap_or_else(|| "unknown acquisition failure".to_string())
+    ))
+}
+
+#[cfg(windows)]
+fn windows_file_identity(file: &fs::File) -> Result<(u64, [u8; 16]), String> {
+    let mut info = FILE_ID_INFO::default();
+    let result = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            (&mut info as *mut FILE_ID_INFO).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    if result == 0 {
+        return Err(format!(
+            "Could not verify acquired file identity: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok((info.VolumeSerialNumber, info.FileId.Identifier))
+}
+
+#[cfg(not(windows))]
+fn read_coherent_snapshot(
+    path: &Path,
+    cancellation: &ReadCancellation,
+) -> Result<CoherentSnapshot, String> {
+    let stat_started = Instant::now();
+    for attempt in 1..=COHERENT_READ_ATTEMPTS {
+        let read_started = Instant::now();
+        let (first_bytes, first_metadata) = read_snapshot_once(path, cancellation)?;
+        cancellation.checkpoint("snapshot-verify")?;
+        let (second_bytes, second_metadata) = read_snapshot_once(path, cancellation)?;
+        let read_ms = elapsed_ms(read_started);
+        if first_bytes == second_bytes
+            && same_file_identity(&first_metadata, &second_metadata)
+            && same_relevant_metadata(&first_metadata, &second_metadata)
+        {
+            return Ok(CoherentSnapshot {
+                bytes: second_bytes,
+                metadata: second_metadata,
+                stat_ms: (elapsed_ms(stat_started) - read_ms).max(0.0),
+                read_ms,
+                method: "verified-double-read-v1",
+                attempts: attempt,
+            });
+        }
+        if attempt < COHERENT_READ_ATTEMPTS {
+            std::thread::sleep(COHERENT_READ_RETRY_DELAY);
+        }
+    }
+    Err(format!(
+        "Document changed on disk during {COHERENT_READ_ATTEMPTS} coherent read attempts."
+    ))
+}
+
+#[cfg(not(windows))]
+fn read_snapshot_once(
+    path: &Path,
+    cancellation: &ReadCancellation,
+) -> Result<(Vec<u8>, fs::Metadata), String> {
+    let mut file = fs::File::open(path).map_err(|error| format!("Could not read file: {error}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("Could not read file metadata: {error}"))?;
+    if metadata.len() > MAX_TEXT_IPC_BYTES {
+        return Err("Text file is too large to open safely in ScieMD.".to_string());
+    }
+    let bytes = read_file_in_chunks(&mut file, metadata.len(), cancellation)?;
+    Ok((bytes, metadata))
+}
+
+fn read_file_in_chunks(
+    file: &mut fs::File,
+    expected_len: u64,
+    cancellation: &ReadCancellation,
+) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::with_capacity(expected_len.min(MAX_TEXT_IPC_BYTES) as usize);
+    let mut chunk = vec![0_u8; TEXT_READ_CHUNK_BYTES];
+    loop {
+        cancellation.checkpoint("read")?;
+        #[cfg(test)]
+        if !cancellation.chunk_delay.is_zero() {
+            std::thread::sleep(cancellation.chunk_delay);
+        }
+        let count = file
+            .read(&mut chunk)
+            .map_err(|error| format!("Could not read file: {error}"))?;
+        if count == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+        if bytes.len() as u64 > MAX_TEXT_IPC_BYTES {
+            return Err("Text file is too large to open safely in ScieMD.".to_string());
+        }
+    }
+    cancellation.checkpoint("read")?;
+    Ok(bytes)
+}
+
+fn same_relevant_metadata(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    left.len() == right.len() && metadata_mtime_ms(left) == metadata_mtime_ms(right)
+}
+
+#[cfg(unix)]
+fn same_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn same_file_identity(_left: &fs::Metadata, _right: &fs::Metadata) -> bool {
+    true
+}
+
+fn elapsed_ms(started: Instant) -> f64 {
+    started.elapsed().as_secs_f64() * 1000.0
 }
 
 #[tauri::command]
@@ -157,7 +681,19 @@ pub fn read_text_file_preview(
 }
 
 #[tauri::command]
-pub fn stat_file(path: String, include_content_hash: Option<bool>) -> HostResult<FileMetadata> {
+pub async fn stat_file(
+    path: String,
+    include_content_hash: Option<bool>,
+) -> HostResult<FileMetadata> {
+    tauri::async_runtime::spawn_blocking(move || stat_file_blocking(path, include_content_hash))
+        .await
+        .map_err(|error| HostError::from(format!("Native file metadata worker failed: {error}")))?
+}
+
+fn stat_file_blocking(
+    path: String,
+    include_content_hash: Option<bool>,
+) -> HostResult<FileMetadata> {
     let path = PathBuf::from(path);
     assert_file_read_allowed(&path)?;
     ensure_cloud_file_available(&path)?;
@@ -770,7 +1306,11 @@ fn atomic_replace(temp_path: &Path, target_path: &Path) -> Result<(), String> {
     };
     if result == 0 {
         let error = std::io::Error::last_os_error();
-        if error.raw_os_error() == Some(17) {
+        // ReplaceFileW can refuse to unlink its implicit backup on some Windows
+        // filesystems/providers even though a same-volume replace is supported.
+        // Keep the operation atomic by using the existing synced sibling +
+        // MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH) path for both cases.
+        if should_use_windows_same_volume_replace(error.raw_os_error()) {
             return copy_sync_and_replace_windows(temp_path, target_path);
         }
         Err(format!(
@@ -780,6 +1320,11 @@ fn atomic_replace(temp_path: &Path, target_path: &Path) -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+#[cfg(windows)]
+fn should_use_windows_same_volume_replace(raw_os_error: Option<i32>) -> bool {
+    matches!(raw_os_error, Some(17) | Some(1175))
 }
 
 #[cfg(windows)]
@@ -899,6 +1444,15 @@ fn sync_parent_dir(parent: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_atomic_replace_falls_back_for_cross_device_and_provider_unlink_errors() {
+        assert!(should_use_windows_same_volume_replace(Some(17)));
+        assert!(should_use_windows_same_volume_replace(Some(1175)));
+        assert!(!should_use_windows_same_volume_replace(Some(5)));
+        assert!(!should_use_windows_same_volume_replace(None));
+    }
     use crate::commands::path_grants::{
         assert_file_read_allowed, assert_file_write_allowed, grant_directory,
         grant_document_image_asset, grant_file, grant_file_and_parent, isolate_test_path_grants,
@@ -947,8 +1501,8 @@ mod tests {
         assert_eq!(metadata.encoding, "utf8");
         assert!(metadata.has_bom);
 
-        let read = read_text_file(path.to_string_lossy().to_string()).unwrap();
-        assert_eq!(read.content, "alpha\nbeta\n");
+        let read = read_text_file_blocking_for_test(path.to_string_lossy().to_string()).unwrap();
+        assert_eq!(read.source_text, "alpha\nbeta\n");
         assert_eq!(read.metadata.line_ending, "crlf");
         assert_eq!(read.metadata.encoding, "utf8");
         assert!(read.metadata.has_bom);
@@ -1068,9 +1622,10 @@ mod tests {
             fs::write(&path, &original_bytes).unwrap();
             grant_file_and_parent(&path).unwrap();
 
-            let read = read_text_file_for_edit(path.to_string_lossy().to_string()).unwrap();
+            let read =
+                read_text_file_for_edit_blocking(path.to_string_lossy().to_string()).unwrap();
             assert_eq!(read.source_text, case.source_text, "{} source", case.id);
-            assert_eq!(read.content, case.source_text, "{} compatibility", case.id);
+            assert_eq!(read.contract_version, 2, "{} contract", case.id);
             assert_eq!(
                 read.metadata.encoding, case.encoding,
                 "{} encoding",
@@ -1235,7 +1790,8 @@ mod tests {
         let path = dir.join("private.md");
         fs::write(&path, b"# Private").unwrap();
 
-        let error = read_text_file(path.to_string_lossy().to_string()).unwrap_err();
+        let error =
+            read_text_file_blocking_for_test(path.to_string_lossy().to_string()).unwrap_err();
 
         assert_eq!(error.code, HostErrorCode::PermissionDenied);
 
@@ -1251,9 +1807,9 @@ mod tests {
         fs::write(&path, b"# Paper").unwrap();
         grant_directory(&dir).unwrap();
 
-        let read = read_text_file(path.to_string_lossy().to_string()).unwrap();
+        let read = read_text_file_blocking_for_test(path.to_string_lossy().to_string()).unwrap();
 
-        assert_eq!(read.content, "# Paper");
+        assert_eq!(read.source_text, "# Paper");
         assert!(assert_file_write_allowed(&path).is_err());
 
         let _ = fs::remove_dir_all(dir);
@@ -1270,9 +1826,9 @@ mod tests {
         fs::write(&sibling, b"# Sibling").unwrap();
         grant_directory(&dir).unwrap();
 
-        let read = read_text_file_for_edit(path.to_string_lossy().to_string()).unwrap();
+        let read = read_text_file_for_edit_blocking(path.to_string_lossy().to_string()).unwrap();
 
-        assert_eq!(read.content, "# Paper");
+        assert_eq!(read.source_text, "# Paper");
         assert!(assert_file_write_allowed(&path).is_ok());
         assert!(assert_file_write_allowed(&sibling).is_err());
 
@@ -1301,9 +1857,9 @@ mod tests {
         .unwrap();
         grant_file(&path).unwrap();
 
-        let read = read_text_file_for_edit(path.to_string_lossy().to_string()).unwrap();
+        let read = read_text_file_for_edit_blocking(path.to_string_lossy().to_string()).unwrap();
 
-        assert!(read.content.contains("assets/figure.png"));
+        assert!(read.source_text.contains("assets/figure.png"));
         assert!(assert_file_read_allowed(&referenced).is_ok());
         assert!(assert_file_read_allowed(&unreferenced).is_err());
         assert!(assert_file_write_allowed(&referenced).is_err());
@@ -1329,9 +1885,9 @@ mod tests {
         grant_document_image_asset(&path, &referenced).unwrap();
         assert!(assert_file_read_allowed(&referenced).is_ok());
 
-        let read = read_text_file_for_edit(path.to_string_lossy().to_string()).unwrap();
+        let read = read_text_file_for_edit_blocking(path.to_string_lossy().to_string()).unwrap();
 
-        assert!(read.content.contains("assets/figure.png"));
+        assert!(read.source_text.contains("assets/figure.png"));
         assert!(assert_file_read_allowed(&referenced).is_err());
         assert!(assert_file_write_allowed(&path).is_ok());
 
@@ -1351,7 +1907,7 @@ mod tests {
         fs::write(&first, [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]).unwrap();
         fs::write(&second, [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]).unwrap();
         grant_file_and_parent(&path).unwrap();
-        let opened = read_text_file(path.to_string_lossy().to_string()).unwrap();
+        let opened = read_text_file_blocking_for_test(path.to_string_lossy().to_string()).unwrap();
         assert!(assert_file_read_allowed(&first).is_ok());
 
         write_text_file_atomic(
@@ -1410,8 +1966,8 @@ mod tests {
         fs::write(&path, b"alpha\r\nbeta\ngamma\r\n").unwrap();
         grant_file(&path).unwrap();
 
-        let read = read_text_file(path.to_string_lossy().to_string()).unwrap();
-        assert_eq!(read.content, "alpha\nbeta\ngamma\n");
+        let read = read_text_file_blocking_for_test(path.to_string_lossy().to_string()).unwrap();
+        assert_eq!(read.source_text, "alpha\nbeta\ngamma\n");
         assert!(read.metadata.has_mixed_line_endings);
 
         let _ = fs::remove_dir_all(dir);
@@ -1430,7 +1986,7 @@ mod tests {
         permissions.set_readonly(true);
         fs::set_permissions(&path, permissions).unwrap();
 
-        let observed = stat_file(path.to_string_lossy().to_string(), Some(false)).unwrap();
+        let observed = stat_file_blocking(path.to_string_lossy().to_string(), Some(false)).unwrap();
         assert!(observed.read_only);
 
         #[cfg(windows)]
@@ -1473,8 +2029,9 @@ mod tests {
         fs::write(&utf16_path, utf16_bytes).unwrap();
         grant_file_and_parent(&utf16_path).unwrap();
 
-        let utf16 = read_text_file(utf16_path.to_string_lossy().to_string()).unwrap();
-        assert_eq!(utf16.content, "alpha\nbeta");
+        let utf16 =
+            read_text_file_blocking_for_test(utf16_path.to_string_lossy().to_string()).unwrap();
+        assert_eq!(utf16.source_text, "alpha\nbeta");
         assert_eq!(utf16.metadata.encoding, "utf16le");
         assert!(utf16.metadata.has_bom);
 
@@ -1482,10 +2039,150 @@ mod tests {
         fs::write(&cp1252_path, b"caf\xe9 \x97 quote").unwrap();
         grant_file_and_parent(&cp1252_path).unwrap();
 
-        let cp1252 = read_text_file(cp1252_path.to_string_lossy().to_string()).unwrap();
-        assert_eq!(cp1252.content, "café — quote");
+        let cp1252 =
+            read_text_file_blocking_for_test(cp1252_path.to_string_lossy().to_string()).unwrap();
+        assert_eq!(cp1252.source_text, "café — quote");
         assert_eq!(cp1252.metadata.encoding, "windows1252");
 
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn coherent_reader_preserves_a_24_mib_fidelity_envelope() {
+        let _grants = isolate_test_path_grants();
+        let dir = env::temp_dir().join(format!("scie-md-coherent-24mib-{}", temp_suffix()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("large.md");
+        let mut bytes = Vec::with_capacity(24 * 1024 * 1024);
+        while bytes.len() < 24 * 1024 * 1024 {
+            bytes.extend_from_slice(b"alpha\r\nbeta\r\n");
+        }
+        bytes.truncate(24 * 1024 * 1024);
+        fs::write(&path, &bytes).unwrap();
+        grant_file(&path).unwrap();
+
+        let read = read_text_file_blocking_for_test(path.to_string_lossy().to_string()).unwrap();
+
+        assert_eq!(read.contract_version, 2);
+        assert_eq!(read.native_timings.byte_count, 24 * 1024 * 1024);
+        assert!(read.snapshot.identity_verified);
+        assert_eq!(read.snapshot.attempts, 1);
+        assert_eq!(read.metadata.original_byte_hash, Some(content_hash(&bytes)));
+        assert_eq!(read.metadata.line_ending, "crlf");
+        assert!(!read.source_text.contains('\r'));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn cancellation_stops_before_read_and_during_staged_decode() {
+        let before = ReadCancellation::default();
+        before.cancelled.store(true, Ordering::Release);
+        assert!(before
+            .checkpoint("preflight")
+            .unwrap_err()
+            .contains("preflight"));
+
+        let during = Arc::new(ReadCancellation::with_chunk_delay(Duration::from_millis(2)));
+        let worker_state = during.clone();
+        let worker =
+            std::thread::spawn(move || worker_state.scan_checkpoints("decode", 24 * 1024 * 1024));
+        std::thread::sleep(Duration::from_millis(15));
+        let started = Instant::now();
+        during.cancelled.store(true, Ordering::Release);
+        let error = worker.join().unwrap().unwrap_err();
+        assert!(error.contains("decode"));
+        assert!(started.elapsed() < NATIVE_CANCEL_WAIT_BOUND);
+    }
+
+    #[test]
+    fn text_ipc_chunks_are_bounded_and_preserve_unicode_source() {
+        let source = format!(
+            "{}🧪{}",
+            "a".repeat(TEXT_READ_IPC_CHUNK_BYTES - 1),
+            "z".repeat(TEXT_READ_IPC_CHUNK_BYTES)
+        );
+        let chunks = text_ipc_chunks(&source);
+
+        assert!(chunks.len() >= 2);
+        assert!(chunks
+            .iter()
+            .all(|chunk| chunk.len() <= TEXT_READ_IPC_CHUNK_BYTES));
+        assert_eq!(chunks.concat(), source);
+    }
+
+    #[test]
+    fn cancellation_stops_a_staged_native_file_read_within_budget() {
+        let _grants = isolate_test_path_grants();
+        let dir = env::temp_dir().join(format!("scie-md-cancel-read-{}", temp_suffix()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("large.md");
+        fs::write(&path, vec![b'a'; 24 * 1024 * 1024]).unwrap();
+        grant_file(&path).unwrap();
+        let cancellation = Arc::new(ReadCancellation::with_chunk_delay(Duration::from_millis(2)));
+        let worker_state = cancellation.clone();
+        let worker_path = path.clone();
+        let worker =
+            std::thread::spawn(move || read_text_file_blocking(worker_path, false, &worker_state));
+        std::thread::sleep(Duration::from_millis(15));
+        let started = Instant::now();
+        cancellation.cancelled.store(true, Ordering::Release);
+        let error = worker.join().unwrap().unwrap_err();
+        let stop_ms = elapsed_ms(started);
+
+        assert!(error.contains("cancelled"));
+        assert!(
+            stop_ms <= NATIVE_CANCEL_WAIT_BOUND.as_secs_f64() * 1000.0,
+            "stop_ms={stop_ms}"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_coherent_handle_excludes_writers_and_replacement() {
+        let dir = env::temp_dir().join(format!("scie-md-share-read-{}", temp_suffix()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("document.md");
+        fs::write(&path, b"same-size").unwrap();
+        let mut reader_options = OpenOptions::new();
+        reader_options.read(true).share_mode(FILE_SHARE_READ);
+        let reader = reader_options.open(&path).unwrap();
+
+        assert!(OpenOptions::new().write(true).open(&path).is_err());
+        assert!(fs::remove_file(&path).is_err());
+        drop(reader);
+        fs::write(&path, b"new-bytes").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new-bytes");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_coherent_reader_exhausts_bounded_retries_while_writer_is_active() {
+        let _grants = isolate_test_path_grants();
+        let dir = env::temp_dir().join(format!("scie-md-share-retry-{}", temp_suffix()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("document.md");
+        fs::write(&path, b"same-size").unwrap();
+        grant_file(&path).unwrap();
+        let writer = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let started = Instant::now();
+
+        let error =
+            read_text_file_blocking_for_test(path.to_string_lossy().to_string()).unwrap_err();
+
+        assert_eq!(error.code, HostErrorCode::FileChanged);
+        assert_eq!(error.phase.as_deref(), Some("coherent-snapshot"));
+        assert!(
+            started.elapsed() >= COHERENT_READ_RETRY_DELAY * u32::from(COHERENT_READ_ATTEMPTS - 1)
+        );
+        drop(writer);
         let _ = fs::remove_dir_all(dir);
     }
 

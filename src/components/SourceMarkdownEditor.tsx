@@ -23,6 +23,9 @@ import {
 } from './SourceTextEditor';
 import type { EditorHistoryControls } from './editorControls';
 import type { EditorAdapterReady } from './editorAdapter';
+import type { DocumentId } from '../app/documentIdentity';
+import type { SourceRevision } from '../app/documentIdentity';
+import type { SourceChangeResult, SourceChangeSet } from '../app/source/revisionedSourceBuffer';
 
 export type SourceMarkdownInsert = SourceTextInsert;
 export type SourceMarkdownJump = SourceTextJump;
@@ -31,8 +34,12 @@ export type SourceMarkdownSelection = SourceTextSelection;
 export type SourceMarkdownContextMenuRequest = SourceTextContextMenuRequest;
 
 interface SourceMarkdownEditorProps {
+  performanceDocumentId?: DocumentId;
   markdown: string;
   onChange: (markdown: string) => void;
+  revision?: SourceRevision;
+  onChangeSet?: (changeSet: SourceChangeSet) => SourceChangeResult;
+  reconcileSource?: () => { sourceText: string; revision: SourceRevision };
   onInsertReady?: (insert: SourceMarkdownInsert | undefined) => void;
   onJumpReady?: (jump: SourceMarkdownJump | undefined) => void;
   onFindReady?: (find: SourceMarkdownFind | undefined) => void;
@@ -42,6 +49,7 @@ interface SourceMarkdownEditorProps {
   onContextMenuRequest?: SourceTextContextMenuRequestHandler;
   onCursorLineChange?: (line: number, column: number) => void;
   onViewportLineChange?: (line: number) => void;
+  onRuntimeAdmissionRefused?: (message: string) => void;
   authorshipMarks?: AuthorshipMark[];
   citationKeys?: string[];
   citationEntries?: BibtexEntry[];
@@ -75,8 +83,12 @@ interface SourceMarkdownInsertTransaction extends TransactionSpec {
 }
 
 export function SourceMarkdownEditor({
+  performanceDocumentId,
   markdown,
   onChange,
+  revision,
+  onChangeSet,
+  reconcileSource,
   onInsertReady,
   onJumpReady,
   onFindReady,
@@ -86,6 +98,7 @@ export function SourceMarkdownEditor({
   onContextMenuRequest,
   onCursorLineChange,
   onViewportLineChange,
+  onRuntimeAdmissionRefused,
   authorshipMarks = [],
   citationKeys = [],
   citationEntries = [],
@@ -135,8 +148,12 @@ export function SourceMarkdownEditor({
 
   return (
     <SourceTextEditor
+      performanceDocumentId={performanceDocumentId}
       value={markdown}
       onChange={onChange}
+      revision={revision}
+      onChangeSet={onChangeSet}
+      reconcileSource={reconcileSource}
       language="markdown"
       diagnostics={diagnostics}
       markers={markers}
@@ -152,6 +169,7 @@ export function SourceMarkdownEditor({
       onContextMenuRequest={onContextMenuRequest}
       onCursorLineChange={onCursorLineChange}
       onViewportLineChange={onViewportLineChange}
+      onRuntimeAdmissionRefused={onRuntimeAdmissionRefused}
     />
   );
 }

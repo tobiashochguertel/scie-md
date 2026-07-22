@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DragEvent as ReactDragEvent, SetStateAction } from 'react';
 import type { Editor } from '@milkdown/kit/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -17,6 +17,7 @@ import type { SourceMarkdownFind, SourceMarkdownInsert, SourceMarkdownJump, Sour
 import type { VisualMarkdownFind, VisualMarkdownInsert, VisualMarkdownJump, VisualMarkdownSelection } from '../components/VisualMarkdownEditor';
 import type { EditorAdapter } from '../components/editorAdapter';
 import { documentEditorGateway } from './documentEditorGateway';
+import { sourceSnapshotService } from './source/sourceSnapshotService';
 import { useDialogs } from './hooks/useDialogs';
 import {
   initialDocumentMarkdownForLaunch,
@@ -42,20 +43,15 @@ import { useJsonSchemaDiscovery } from './hooks/useJsonSchemaDiscovery';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useLayoutAttributes, useThemeAttribute } from './hooks/useResolvedTheme';
 import { useRendererDiagnostics } from './hooks/useRendererDiagnostics';
+import { useRevisionedDocumentMetrics } from './hooks/useRevisionedDocumentMetrics';
+import { useRevisionedMarkdownArtifacts } from './hooks/useRevisionedMarkdownArtifacts';
 import { useExportActions } from './hooks/useExportActions';
 import { useExportWorkflow } from './hooks/useExportWorkflow';
 import { useExternalConflictReviewWorkflow } from './hooks/useExternalConflictReviewWorkflow';
 import { useSourceFormatDiagnostics } from './hooks/useSourceFormatDiagnostics';
-import {
-  createJsonEditReviewState,
-  jsonVisualEditNeedsReview,
-  resolveJsonEditReviewApply,
-  type JsonEditReviewState,
-} from './jsonEditReview';
-import {
-  appendStructuredEditJournalEntry,
-  createStructuredEditJournalEntry,
-} from './structuredEditJournal';
+import { createStructuredEditJournalEntry } from './structuredEditJournal';
+import { executeStructuredMutation } from './structured/structuredMutationExecutor';
+import { createStructuredMutationReviewState, type StructuredMutationReviewState } from './structured/structuredMutationReview';
 import {
   canCreateStructuredContextPackets,
   canCreateStructuredTableSamplePacket,
@@ -92,37 +88,45 @@ import { useWindowChrome } from './hooks/useWindowChrome';
 import { desktopDocumentHost } from './host/desktopDocumentHost';
 import { desktopPlatformHost } from './host/desktopPlatformHost';
 import { exportDiagnosticsBundle } from '../services/nativeRecoveryService';
+import { documentPerformance, documentPerformanceReportText } from './performance/documentPerformance';
 import { loadSettings, normalizeSidebarWidth, updateSettings } from '../services/settingsService';
 import type { DocumentType, SidebarView, ThemeMode } from '../services/settingsService';
 import { getVisualStyleOption, nextVisualStyle } from '../services/visualStyleService';
 import type { VisualStyleId } from '../services/visualStyleService';
-import { analyzeMarkdownDocument } from '../markdown/documentIntelligence';
 import { assessManuscriptReadiness } from '../markdown/manuscriptReadiness';
 import {
   createJsonArrayTableModel,
-  extractHeadings,
+  createStructuredMutationPlan,
   jsonlSourceHash,
   planJsonVisualEdit,
   planJsonlVisualEdit,
   planTabularVisualEdit,
+  planYamlVisualEdit,
+  planXmlVisualEdit,
+  parseJsonDocument,
+  structuredMutationFingerprint,
   structuredAnalysisCanRenderSurface,
   structuredEditTransactionFromJsonEdit,
   structuredEditTransactionFromJsonlEdit,
   structuredEditTransactionFromTabularEdit,
+  structuredEditTransactionFromYamlEdit,
+  structuredEditTransactionFromTomlNativePlan,
+  structuredEditTransactionFromXmlEdit,
   tabularSourceHash,
   validateStructuredPasteBack,
+  validateTomlNativeMutationPlan,
 } from '@sciemd/core';
-import type { JsonVisualEditIntent, JsonlVisualEditIntent, StructuredContextFormat, StructuredContextPacket, StructuredEditTransaction, StructuredNodeRef, TabularVisualEditIntent } from '@sciemd/core';
+import type { JsonVisualEditIntent, JsonlVisualEditIntent, StructuredContextFormat, StructuredContextPacket, StructuredEditTransaction, StructuredNodeRef, TabularVisualEditIntent, TomlNativeMutationIntent, XmlVisualEditIntent, YamlScalarValue, YamlVisualEditIntent } from '@sciemd/core';
 import type { DelimitedTextConversionFormat } from '@sciemd/core';
 import { normalizeScientificTypography } from '../markdown/scientificTypography';
 import { toggleMarkdownHeadingSelection } from '../markdown/headingToggle';
 import { createSemanticBlockMarkdown } from '@sciemd/core';
 import { insertStandaloneMarkdownBlockNearSelection, wrapMarkdownBlockSelection, wrapMarkdownSelection } from '@sciemd/core';
-import { insertEditorNote, parseEditorComments } from '@sciemd/core';
+import { insertEditorNote } from '@sciemd/core';
 import type { EditorNoteKind } from '@sciemd/core';
-import { createTargetedInstructionSnippet, parseTargetedInstructions } from '@sciemd/core';
-import { createAnchoredVariantGroupSnippet, createVariantGroupSnippet, parseVariantGroups } from '@sciemd/core';
-import { createProtectedAnchorSnippet, createProtectedBlockSnippet, detectProtectedChanges, parseProtectedBlocks } from '@sciemd/core';
+import { createTargetedInstructionSnippet } from '@sciemd/core';
+import { createAnchoredVariantGroupSnippet, createVariantGroupSnippet } from '@sciemd/core';
+import { createProtectedAnchorSnippet, createProtectedBlockSnippet, detectProtectedChanges } from '@sciemd/core';
 import { syncGeneratedBibliography } from '@sciemd/core';
 import type { ScienfyTemplateId } from '../domain/document/templates';
 import type { StructuredConversionRequest } from './structuredConversionActions';
@@ -201,6 +205,58 @@ function isStructuredSurfaceFormat(format: string): boolean {
     || format === 'tsv';
 }
 
+function yamlIntentFromTreeIntent(intent: JsonVisualEditIntent): YamlVisualEditIntent | null {
+  const scalar = (value: unknown): YamlScalarValue | null | undefined => {
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+    if (value && typeof value === 'object' && (value as { kind?: unknown }).kind === 'raw-json-number') {
+      const parsed = Number((value as { raw: string }).raw);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+  };
+  if (intent.kind === 'replaceScalar') {
+    const nextValue = scalar(intent.nextValue);
+    return nextValue === undefined ? null : { ...intent, nextValue };
+  }
+  if (intent.kind === 'addObjectField' || intent.kind === 'addArrayItem') {
+    const value = scalar(intent.value);
+    if (value === undefined) return null;
+    const { schemaGeneratedValueExplanation: _ignored, ...rest } = intent;
+    return { ...rest, value } as YamlVisualEditIntent;
+  }
+  return intent as YamlVisualEditIntent;
+}
+
+function tomlIntentFromTreeIntent(intent: JsonVisualEditIntent): TomlNativeMutationIntent | null {
+  const scalar = (input: unknown): string | number | boolean | undefined => {
+    if (typeof input === 'string' || typeof input === 'boolean') return input;
+    if (typeof input === 'number') return Number.isFinite(input) ? input : undefined;
+    if (input && typeof input === 'object' && (input as { kind?: unknown }).kind === 'raw-json-number') {
+      const parsed = Number((input as { raw: string }).raw);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+  };
+  if (intent.kind === 'replaceScalar') {
+    const newValue = scalar(intent.nextValue); return newValue === undefined ? null : { kind: intent.kind, path: [...intent.path], newValue };
+  }
+  if (intent.kind === 'addObjectField') {
+    const newValue = scalar(intent.value); return newValue === undefined ? null : { kind: intent.kind, path: [...intent.path], key: intent.key, newValue };
+  }
+  if (intent.kind === 'addArrayItem') {
+    const newValue = scalar(intent.value); return newValue === undefined ? null : { kind: intent.kind, path: [...intent.path], newValue };
+  }
+  if (intent.kind === 'renameObjectKey') return { kind: intent.kind, path: [...intent.path], newKey: intent.newKey };
+  return { kind: intent.kind, path: [...intent.path] };
+}
+
+function xmlIntentFromTreeIntent(intent: JsonVisualEditIntent): XmlVisualEditIntent | null {
+  return intent.kind === 'replaceScalar' && typeof intent.nextValue === 'string'
+    ? { kind: 'replaceScalar', path: [...intent.path], nextValue: intent.nextValue, expectedSourceHash: intent.expectedSourceHash }
+    : null;
+}
+
 export function App() {
   const [settings, setSettings] = useState(loadSettings);
   const [sidebarWidth, setSidebarWidth] = useState(settings.sidebarWidth);
@@ -208,13 +264,13 @@ export function App() {
   const { toasts, pushToast, dismissToast, pauseToast, resumeToast } = useToasts();
   const [pasteReview, setPasteReview] = useState<PasteReviewState | null>(null);
   const [tabularPaste, setTabularPaste] = useState<TabularPasteState | null>(null);
-  const [jsonEditReview, setJsonEditReview] = useState<JsonEditReviewState | null>(null);
+  const [structuredEditReview, setStructuredEditReview] = useState<StructuredMutationReviewState | null>(null);
   const documentEpochRef = useRef(0);
   const handleDocumentReplaced = useCallback(() => {
     documentEpochRef.current += 1;
     setPasteReview(null);
     setTabularPaste(null);
-    setJsonEditReview(null);
+    setStructuredEditReview(null);
   }, []);
   const {
     workspaceState,
@@ -226,6 +282,9 @@ export function App() {
     format,
     commitSourceTextEdit,
     commitEditorSourceTextEdit,
+    commitEditorSourceChangeSet,
+    commitStructuredMutation,
+    reconcileEditorSource,
     undoDocumentEdit,
     redoDocumentEdit,
     lastSavedSourceText,
@@ -308,11 +367,6 @@ export function App() {
   const explicitJsonSchemaPath = documentRecord.view.explicitJsonSchemaPath;
   const preferredStructuredSurface = documentRecord.view.preferredStructuredSurface;
   const selectedVariableName = documentRecord.view.selectedVariableName;
-  const setStructuredEditJournal = useCallback((action: SetStateAction<typeof structuredEditJournal>) => {
-    updateDocumentView((current) => ({
-      structuredEditJournal: typeof action === 'function' ? action(current.structuredEditJournal) : action,
-    }));
-  }, [updateDocumentView]);
   const setSelectedJsonPath = useCallback((action: SetStateAction<string | null>) => {
     updateDocumentView((current) => ({
       selectedStructuredPath: typeof action === 'function' ? action(current.selectedStructuredPath) : action,
@@ -379,14 +433,13 @@ export function App() {
   useEffect(() => {
     const previousDocumentId = activeOverlayDocumentIdRef.current;
     const changed = clearActiveDocumentCompatibilityState(previousDocumentId, documentId, {
-      clearRuntimeDocument: (id) => documentEditorGateway.clearRuntime(id),
       clearEditorRuntime: () => {
         setVisualEditor(undefined);
       },
       clearReviewOverlays: () => {
         setPasteReview(null);
         setTabularPaste(null);
-        setJsonEditReview(null);
+        setStructuredEditReview(null);
         setCitationDialogOpen(false);
       },
       clearPendingDecisions: () => {
@@ -423,12 +476,6 @@ export function App() {
     sourceTextRef.current = next;
     commitSourceTextEdit(next);
   }, [commitSourceTextEdit]);
-  const recordStructuredEdit = useCallback((transaction: StructuredEditTransaction, sourceBefore: string) => {
-    setStructuredEditJournal((current) => appendStructuredEditJournalEntry(
-      current,
-      createStructuredEditJournalEntry({ transaction, sourceBefore }),
-    ));
-  }, []);
   const getEditorSelectionSnapshot = useCallback((): EditorSelectionSnapshot => {
     const snapshot = (mode === 'visual' ? visualSelectionGetter : sourceSelectionGetter)?.();
     if (snapshot) {
@@ -441,6 +488,17 @@ export function App() {
   }, [mode, sourceSelectionGetter, visualSelectionGetter]);
   const getSelectedEditorText = useCallback(() => getEditorSelectionSnapshot().text.trim(), [getEditorSelectionSnapshot]);
   const formatCapabilities = shellProjection.active.formatCapabilities;
+  const analysisTarget = useMemo(() => ({
+    documentId,
+    effects: documentEffects,
+    sourceRevision: documentRecord.source.revision,
+    sourceByteLength: fileMetadata.lastKnownSizeBytes,
+    leaseSource: (revision: typeof documentRecord.source.revision) => {
+      if (documentRecord.source.residency.kind !== 'resident' || documentRecord.source.revision !== revision) return null;
+      return sourceSnapshotService.lease(documentId, documentRecord.source.buffer.current, 'analysis');
+    },
+  }), [documentEffects, documentId, documentRecord.source, fileMetadata.lastKnownSizeBytes]);
+  const revisionedDocumentMetrics = useRevisionedDocumentMetrics(analysisTarget, sourceText);
   const jsonSchemaDiscovery = useJsonSchemaDiscovery({
     target: { documentId, effects: documentEffects },
     format,
@@ -448,9 +506,69 @@ export function App() {
     explicitSchemaPath: explicitJsonSchemaPath,
     fileHost: desktopDocumentHost.file,
   });
-  const sourceFormatDiagnosticState = useSourceFormatDiagnostics({ documentId, effects: documentEffects }, format, sourceText, filePath, {
+  const sourceFormatDiagnosticState = useSourceFormatDiagnostics(analysisTarget, format, sourceText, filePath, {
     jsonSchema: jsonSchemaDiscovery.schemaSource,
+    inspectToml: desktopDocumentHost.structuredMutation?.inspectToml,
   });
+  const currentStructuredValidatorFingerprint = useCallback(() => structuredMutationFingerprint(JSON.stringify({
+    format,
+    schema: format === 'json' ? jsonSchemaDiscovery.schemaSource : null,
+  })), [format, jsonSchemaDiscovery.schemaSource]);
+  const executeCurrentStructuredPlan = useCallback((
+    plan: ReturnType<typeof createStructuredMutationPlan>,
+    approval?: StructuredMutationReviewState['approval'],
+  ) => {
+    const sourceBefore = sourceTextRef.current;
+    const journalEntry = createStructuredEditJournalEntry({ plan, sourceBefore });
+    return executeStructuredMutation({
+      plan,
+      current: {
+        documentId,
+        sourceRevision: documentRecord.source.revision,
+        source: sourceBefore,
+        validatorFingerprint: currentStructuredValidatorFingerprint(),
+        catalogAdvertised: true,
+        plannerAvailable: true,
+        hostWriteAvailable: true,
+        runtimeAllowsVisualEditing: format === plan.format,
+        nodeAllowsEditing: true,
+      },
+      ...(approval ? { approval } : {}),
+      journalEntry,
+      commitPort: { commit: commitStructuredMutation },
+      validateSchema: plan.format === 'json' && jsonSchemaDiscovery.schemaSource
+        ? (nextSource) => !parseJsonDocument(
+          { format: 'json', text: nextSource, path: filePath },
+          { schema: jsonSchemaDiscovery.schemaSource },
+        ).diagnostics.some((diagnostic) => diagnostic.blocking || diagnostic.severity === 'error')
+        : undefined,
+    });
+  }, [commitStructuredMutation, currentStructuredValidatorFingerprint, documentId, documentRecord.source.revision, filePath, format, jsonSchemaDiscovery.schemaSource]);
+  const submitStructuredTransaction = useCallback((
+    transaction: StructuredEditTransaction,
+    sourceBefore: string,
+    schemaGeneratedValueExplanation?: string,
+  ) => {
+    const plan = createStructuredMutationPlan({
+      documentId,
+      sourceRevision: documentRecord.source.revision,
+      source: sourceBefore,
+      transaction,
+      validatorFingerprint: currentStructuredValidatorFingerprint(),
+    });
+    if (plan.review === 'required') {
+      const review = createStructuredMutationReviewState({
+        source: sourceBefore,
+        documentEpoch: documentEpochRef.current,
+        plan,
+        ...(schemaGeneratedValueExplanation ? { schemaGeneratedValueExplanation } : {}),
+      });
+      if (!review) return { status: 'rejected' as const, reason: 'A guarded source preview could not be created.' };
+      setStructuredEditReview(review);
+      return { status: 'review-required' as const };
+    }
+    return executeCurrentStructuredPlan(plan);
+  }, [currentStructuredValidatorFingerprint, documentId, documentRecord.source.revision, executeCurrentStructuredPlan]);
   useEffect(() => {
     setActiveStructuredNavigationTargetKey(null);
   }, [documentId, setActiveStructuredNavigationTargetKey]);
@@ -565,7 +683,6 @@ export function App() {
   const activeDocumentType = documentRecord.presentation.documentType ?? settings.documentType;
   const currentVisualStyle = getVisualStyleOption(activeVisualStyle);
   const recentPreviews = useRecentFilePreviews(settings.recentFiles);
-  const deferredMarkdownForPanels = useDeferredValue(markdown);
   const citationCompletionKeys = useMemo(() => Array.from(new Set([
     ...layerTwoDocument.citations.bibtexKeys,
     ...layerTwoDocument.citations.usages.map((usage) => usage.key),
@@ -575,20 +692,10 @@ export function App() {
     () => nextReferenceLabel('fig', layerTwoDocument.references.labels.map((label) => label.id)),
     [layerTwoDocument.references.labels],
   );
-  const parsedMarkdownGraph = useMemo(() => ({
-    baseDocumentInsights: formatCapabilities.canUseManuscriptReadiness
-      ? analyzeMarkdownDocument(deferredMarkdownForPanels)
-      : analyzeMarkdownDocument(''),
-    navigationHeadings: formatCapabilities.canUseManuscriptReadiness
-      ? extractHeadings(deferredMarkdownForPanels)
-      : [],
-  }), [deferredMarkdownForPanels, formatCapabilities]);
-  const liveAnnotationGraph = useMemo(() => ({
-    editorComments: formatCapabilities.canUseLLMMarkdownMarkers ? parseEditorComments(markdown) : [],
-    targetedInstructions: formatCapabilities.canUseLLMMarkdownMarkers ? parseTargetedInstructions(markdown) : [],
-    protectedBlocks: formatCapabilities.canUseLLMMarkdownMarkers ? parseProtectedBlocks(markdown) : [],
-    variantGroups: formatCapabilities.canUseLLMMarkdownMarkers ? parseVariantGroups(markdown) : [],
-  }), [formatCapabilities, markdown]);
+  const markdownArtifacts = useRevisionedMarkdownArtifacts(analysisTarget, markdown, {
+    manuscript: formatCapabilities.canUseManuscriptReadiness,
+    annotations: formatCapabilities.canUseLLMMarkdownMarkers,
+  });
   const readExternalConflictDocument = useCallback(
     (targetDocumentId: typeof documentId) => workspaceExternalChanges.compareDocument(targetDocumentId),
     [workspaceExternalChanges],
@@ -596,13 +703,13 @@ export function App() {
   const {
     baseDocumentInsights,
     navigationHeadings,
-  } = parsedMarkdownGraph;
+  } = markdownArtifacts;
   const {
     editorComments,
     targetedInstructions,
     protectedBlocks,
     variantGroups,
-  } = liveAnnotationGraph;
+  } = markdownArtifacts;
   const {
     currentLine,
     currentColumn,
@@ -662,43 +769,96 @@ export function App() {
       pushToast('JSON edit transaction could not be created.', 'warning');
       return;
     }
-    if (jsonVisualEditNeedsReview(intent)) {
-      const review = createJsonEditReviewState({
-        source: currentSource,
-        intent,
-        plan,
-        documentEpoch: documentEpochRef.current,
-      });
-      if (!review) {
-        pushToast('JSON source preview could not be created for this edit.', 'warning');
+    const schemaExplanation = intent.kind === 'addObjectField' || intent.kind === 'addArrayItem'
+      ? intent.schemaGeneratedValueExplanation
+      : undefined;
+    const result = submitStructuredTransaction(transaction, currentSource, schemaExplanation);
+    if (result.status === 'rejected') pushToast(result.reason, 'warning');
+    else if (result.status === 'committed') pushToast(plan.previewLabel, 'success');
+  }, [format, pushToast, sourceFormatDiagnosticState.jsonAnalysis, submitStructuredTransaction]);
+  const applyYamlVisualEdit = useCallback((treeIntent: JsonVisualEditIntent) => {
+    if (format !== 'yaml' || sourceFormatDiagnosticState.structuredAnalysis?.status !== 'valid') {
+      pushToast('YAML visual edits are available only for valid YAML tree mode.', 'warning');
+      return;
+    }
+    const intent = yamlIntentFromTreeIntent(treeIntent);
+    if (!intent) {
+      pushToast('YAML visual edits accept scalar values only; use source mode for collections.', 'warning');
+      return;
+    }
+    const sourceBefore = sourceTextRef.current;
+    const plan = planYamlVisualEdit(sourceBefore, intent);
+    if (!plan.ok || plan.nextSource === undefined) {
+      pushToast(plan.unsupportedReason ?? plan.diagnostics[0]?.message ?? 'YAML visual edit is not available for this node.', 'warning');
+      return;
+    }
+    const transaction = structuredEditTransactionFromYamlEdit(sourceBefore, intent, plan);
+    if (!transaction) {
+      pushToast('YAML edit transaction could not be created.', 'warning');
+      return;
+    }
+    const result = submitStructuredTransaction(transaction, sourceBefore);
+    if (result.status === 'rejected') pushToast(result.reason, 'warning');
+  }, [format, pushToast, sourceFormatDiagnosticState.structuredAnalysis, submitStructuredTransaction]);
+  const applyTomlVisualEdit = useCallback(async (treeIntent: JsonVisualEditIntent) => {
+    const nativeHost = desktopDocumentHost.structuredMutation;
+    if (format !== 'toml' || sourceFormatDiagnosticState.structuredAnalysis?.status !== 'valid' || !nativeHost?.capabilities.tomlNativePlanning) {
+      pushToast('TOML visual edits require the desktop native TOML planner and a valid document.', 'warning');
+      return;
+    }
+    const intent = tomlIntentFromTreeIntent(treeIntent);
+    if (!intent) {
+      pushToast('TOML visual edits accept string, number, and boolean values only; use source mode for this value.', 'warning');
+      return;
+    }
+    const sourceBefore = sourceTextRef.current;
+    try {
+      const nativePlan = await nativeHost.planToml(sourceBefore, intent);
+      if (sourceTextRef.current !== sourceBefore) {
+        pushToast('TOML source changed while the native edit was being planned. Re-select the target and try again.', 'warning');
         return;
       }
-      setJsonEditReview(review);
+      const invalid = validateTomlNativeMutationPlan(nativePlan);
+      if (invalid) { pushToast(invalid, 'warning'); return; }
+      const transaction = structuredEditTransactionFromTomlNativePlan(sourceBefore, intent, nativePlan);
+      if (!transaction) { pushToast('The native TOML edit transaction could not be created.', 'warning'); return; }
+      const result = submitStructuredTransaction(transaction, sourceBefore);
+      if (result.status === 'rejected') pushToast(result.reason, 'warning');
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'The desktop TOML planner could not complete.', 'warning');
+    }
+  }, [format, pushToast, sourceFormatDiagnosticState.structuredAnalysis, submitStructuredTransaction]);
+  const applyXmlVisualEdit = useCallback((treeIntent: JsonVisualEditIntent) => {
+    if (format !== 'xml' || sourceFormatDiagnosticState.structuredAnalysis?.status !== 'valid') {
+      pushToast('XML visual edits are available only for valid, security-approved XML tree mode.', 'warning');
       return;
     }
-    commitSourceText(plan.nextSource);
-    recordStructuredEdit(transaction, currentSource);
-    pushToast(plan.previewLabel, 'success');
-  }, [commitSourceText, format, pushToast, recordStructuredEdit, sourceFormatDiagnosticState.jsonAnalysis]);
-  const applyReviewedJsonEdit = useCallback(() => {
-    if (!jsonEditReview) return;
+    const intent = xmlIntentFromTreeIntent(treeIntent);
+    if (!intent) {
+      pushToast('XML visual edits accept string text and attribute values only; use source mode for this node.', 'warning');
+      return;
+    }
     const sourceBefore = sourceTextRef.current;
-    const result = resolveJsonEditReviewApply(sourceBefore, documentEpochRef.current, jsonEditReview);
-    if (!result.ok) {
-      setJsonEditReview(null);
-      pushToast(result.reason, 'warning');
+    const plan = planXmlVisualEdit(sourceBefore, intent);
+    if (!plan.ok || plan.nextSource === undefined) {
+      pushToast(plan.unsupportedReason ?? plan.diagnostics[0]?.message ?? 'XML visual edit is not available for this node.', 'warning');
       return;
     }
-    if (result.nextSource === sourceBefore) {
-      setJsonEditReview(null);
-      pushToast(result.previewLabel, 'info');
+    const transaction = structuredEditTransactionFromXmlEdit(sourceBefore, intent, plan);
+    if (!transaction) {
+      pushToast('XML edit transaction could not be created.', 'warning');
       return;
     }
-    commitSourceText(result.nextSource);
-    recordStructuredEdit(result.transaction, sourceBefore);
-    setJsonEditReview(null);
-    pushToast(result.previewLabel, 'success');
-  }, [commitSourceText, jsonEditReview, pushToast, recordStructuredEdit]);
+    const result = submitStructuredTransaction(transaction, sourceBefore);
+    if (result.status === 'rejected') pushToast(result.reason, 'warning');
+  }, [format, pushToast, sourceFormatDiagnosticState.structuredAnalysis, submitStructuredTransaction]);
+  const applyReviewedStructuredEdit = useCallback(() => {
+    if (!structuredEditReview) return;
+    const result = executeCurrentStructuredPlan(structuredEditReview.plan, structuredEditReview.approval);
+    setStructuredEditReview(null);
+    if (result.status === 'rejected') pushToast(result.reason, 'warning');
+    else if (result.status === 'committed') pushToast(structuredEditReview.plan.transaction.previewLabel, 'success');
+  }, [executeCurrentStructuredPlan, pushToast, structuredEditReview]);
   const applyJsonlVisualEdit = useCallback((intent: JsonlVisualEditIntent) => {
     if (format !== 'jsonl' || !sourceFormatDiagnosticState.jsonlAnalysis?.parseResult.parsed) {
       pushToast('JSONL record edits are available only in JSONL Records mode.', 'warning');
@@ -715,10 +875,14 @@ export function App() {
       return;
     }
     const transaction = structuredEditTransactionFromJsonlEdit(sourceBefore, intent, plan);
-    commitSourceText(plan.nextSource);
-    if (transaction) recordStructuredEdit(transaction, sourceBefore);
-    pushToast(plan.previewLabel, 'success');
-  }, [commitSourceText, format, pushToast, recordStructuredEdit, sourceFormatDiagnosticState.jsonlAnalysis]);
+    if (!transaction) {
+      pushToast('JSONL edit transaction could not be created.', 'warning');
+      return;
+    }
+    const result = submitStructuredTransaction(transaction, sourceBefore);
+    if (result.status === 'rejected') pushToast(result.reason, 'warning');
+    else if (result.status === 'committed') pushToast(plan.previewLabel, 'success');
+  }, [format, pushToast, sourceFormatDiagnosticState.jsonlAnalysis, submitStructuredTransaction]);
   const applyTabularVisualEdit = useCallback((intent: TabularVisualEditIntent) => {
     if ((format !== 'csv' && format !== 'tsv') || !sourceFormatDiagnosticState.tabularAnalysis?.parseResult.parsed) {
       pushToast('Table edits are available only in CSV or TSV table preview mode.', 'warning');
@@ -735,10 +899,14 @@ export function App() {
       return;
     }
     const transaction = structuredEditTransactionFromTabularEdit(sourceBefore, intent, plan);
-    commitSourceText(plan.nextSource);
-    if (transaction) recordStructuredEdit(transaction, sourceBefore);
-    pushToast(plan.previewLabel, 'success');
-  }, [commitSourceText, format, pushToast, recordStructuredEdit, sourceFormatDiagnosticState.tabularAnalysis]);
+    if (!transaction) {
+      pushToast('Table edit transaction could not be created.', 'warning');
+      return;
+    }
+    const result = submitStructuredTransaction(transaction, sourceBefore);
+    if (result.status === 'rejected') pushToast(result.reason, 'warning');
+    else if (result.status === 'committed') pushToast(plan.previewLabel, 'success');
+  }, [format, pushToast, sourceFormatDiagnosticState.tabularAnalysis, submitStructuredTransaction]);
   const copyStructuredText = useCallback((content: string, label: string) => {
     const copyPromise = navigator.clipboard?.writeText(content);
     if (!copyPromise) {
@@ -866,6 +1034,19 @@ export function App() {
       ? createCurrentStructuredHealthContext(structuredContextCommandState)
       : null);
   }, [copyStructuredContextPacket, structuredContextCommandState]);
+  const copyDocumentPerformanceReport = useCallback(() => {
+    const copyPromise = navigator.clipboard?.writeText(documentPerformanceReportText());
+    if (!copyPromise) {
+      pushToast('Clipboard is not available in this window.', 'warning');
+      return;
+    }
+    void copyPromise
+      .then(() => pushToast('Document performance report copied.', 'success'))
+      .catch((error) => {
+        console.warn('Could not copy document performance report.', error);
+        pushToast('Could not copy document performance report.', 'error');
+      });
+  }, [pushToast]);
   const copyRedactedStructuredPreview = useCallback(() => {
     copyStructuredContextPacket(structuredContextCommandState
       ? createCurrentRedactedStructuredPreview(structuredContextCommandState)
@@ -945,8 +1126,8 @@ export function App() {
     missingImageCount,
   });
   const manuscriptReadiness = useMemo(
-    () => assessManuscriptReadiness(deferredMarkdownForPanels, layerTwoDocument, documentInsights, missingImageCount, navigationHeadings),
-    [deferredMarkdownForPanels, documentInsights, layerTwoDocument, missingImageCount, navigationHeadings],
+    () => assessManuscriptReadiness(markdown, layerTwoDocument, documentInsights, missingImageCount, navigationHeadings),
+    [markdown, documentInsights, layerTwoDocument, missingImageCount, navigationHeadings],
   );
   const nextVariantGroupId = useMemo(
     () => nextReferenceLabel('variant', variantGroups.map((group) => group.id)),
@@ -963,7 +1144,7 @@ export function App() {
     if (format === 'json') return;
     setSelectedJsonPath('$');
     setExplicitJsonSchemaPath(null);
-    setJsonEditReview(null);
+    setStructuredEditReview((current) => current && current.plan.format !== format ? null : current);
   }, [format, setExplicitJsonSchemaPath, setSelectedJsonPath]);
 
   useEffect(() => {
@@ -1788,6 +1969,21 @@ export function App() {
     validationPending,
   ]);
   const backgroundJobs = useBackgroundJobTracker(backgroundJobSignals);
+  useEffect(() => {
+    const queueDepth = backgroundJobs.activeJobs.length;
+    documentPerformance.trace({
+      name: 'analysis-state',
+      documentId,
+      cache: queueDepth === 0 ? 'miss' : 'pending',
+      queueDepth,
+      phase: queueDepth === 0 ? 'quiescent' : 'pending',
+    });
+    if (queueDepth === 0) documentPerformance.trace({
+      name: 'background-ready',
+      documentId,
+      queueDepth: 0,
+    });
+  }, [backgroundJobs, documentId]);
   const handlePreviousRendererCrashDetected = useCallback(() => {
     pushToast(
       'Previous ScieMD session ended unexpectedly. A local diagnostics marker and raw recovery snapshot are available if needed.',
@@ -1802,6 +1998,7 @@ export function App() {
     errorCount: errors.length,
     visualAtomCount,
     backgroundJobs,
+    documentMetrics: revisionedDocumentMetrics,
     onPreviousSessionCrashDetected: handlePreviousRendererCrashDetected,
   });
 
@@ -2253,6 +2450,9 @@ export function App() {
     onOpenFolder: () => void handleChooseExplorerFolder(),
     onSave: () => void saveCurrent(),
     onSaveAs: () => void saveCurrent({ forceSaveAs: true }),
+    onSaveAllDocuments: () => void saveAllWorkspaceDocuments(),
+    onReopenClosedDocument: reopenWorkspaceDocument,
+    onSwitchToMostRecentlyUsedDocument: () => workspaceTabsModel.mruDocumentId && activateWorkspaceDocument(workspaceTabsModel.mruDocumentId),
     onFind: () => setFindOpen(true),
     onOpenSlashMenu: () => openSlashMenu(),
     onOpenTemplates: openTemplateDialog,
@@ -2282,6 +2482,7 @@ export function App() {
     onCopyStructuredContext: copyWholeStructuredContext,
     onCopySelectedStructureContext: copySelectedStructureContext,
     onCopyParserDiagnostics: copyStructuredParserDiagnostics,
+    onCopyDocumentPerformanceReport: copyDocumentPerformanceReport,
     onCopyStructuredSchemaSummary: copyStructuredSchemaSummary,
     onCopyStructuredTableSample: copyStructuredTableSample,
     onCopyStructuredHealthReport: copyStructuredHealthReport,
@@ -2475,6 +2676,7 @@ export function App() {
         onCopyFeedback: pushToast,
       }}
       editorStage={{
+        documentId,
         editorStageRef,
         format,
         formatCapabilities,
@@ -2512,6 +2714,9 @@ export function App() {
         tabularAnalysis: sourceFormatDiagnosticState.tabularAnalysis,
         selectedJsonPath,
         onJsonEditIntent: applyJsonVisualEdit,
+        onYamlEditIntent: applyYamlVisualEdit,
+        onTomlEditIntent: (intent) => void applyTomlVisualEdit(intent),
+        onXmlEditIntent: applyXmlVisualEdit,
         onJsonlEditIntent: applyJsonlVisualEdit,
         onJsonlCopyText: copyStructuredText,
         onTabularEditIntent: applyTabularVisualEdit,
@@ -2526,6 +2731,9 @@ export function App() {
         onDragOver: handleEditorDragOver,
         onJumpToHeading: jumpToHeading,
         onMarkdownChange: commitEditorSourceTextEdit,
+        sourceRevision: documentRecord.source.revision,
+        onSourceChangeSet: commitEditorSourceChangeSet,
+        reconcileSource: reconcileEditorSource,
         onEditorReset: () => setEditorResetToken((current) => current + 1),
         onVisualEditorReady: setVisualEditor,
         onVisualAdapterReady: handleVisualAdapterReady,
@@ -2730,11 +2938,11 @@ export function App() {
         onCopyTabularPaste={copyTabularPaste}
         onStructuredConversionAction={(request) => void handleStructuredConversionAction(request)}
         onCancelTabularPaste={() => setTabularPaste(null)}
-        jsonEditReviewPreview={jsonEditReview?.preview ?? null}
-        jsonEditReviewPlan={jsonEditReview?.reviewPlan ?? null}
-        jsonEditReviewSchemaExplanation={jsonEditReview?.schemaGeneratedValueExplanation}
-        onApplyJsonEditReview={applyReviewedJsonEdit}
-        onCancelJsonEditReview={() => setJsonEditReview(null)}
+        structuredEditReviewPreview={structuredEditReview?.preview ?? null}
+        structuredEditReviewPlan={structuredEditReview?.reviewPlan ?? null}
+        structuredEditReviewSchemaExplanation={structuredEditReview?.schemaGeneratedValueExplanation}
+        onApplyStructuredEditReview={applyReviewedStructuredEdit}
+        onCancelStructuredEditReview={() => setStructuredEditReview(null)}
         externalConflictOpen={Boolean(lineExternalConflictReview)}
         externalConflictHunks={lineExternalConflictReview?.hunks ?? []}
         externalProtectedChanges={externalProtectedChanges}

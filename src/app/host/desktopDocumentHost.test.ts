@@ -77,6 +77,9 @@ describe('desktopDocumentHost', () => {
     expect(desktopDocumentHost.settings.rememberRecentFile).toEqual(expect.any(Function));
     expect(desktopDocumentHost.watcher.updateWatchedFiles).toEqual(expect.any(Function));
     expect(desktopDocumentHost.identity?.resolveFileLocator).toEqual(expect.any(Function));
+    expect(desktopDocumentHost.structuredMutation?.capabilities.tomlNativePlanning).toBe(true);
+    expect(desktopDocumentHost.structuredMutation?.inspectToml).toEqual(expect.any(Function));
+    expect(desktopDocumentHost.structuredMutation?.planToml).toEqual(expect.any(Function));
   });
 
   it('normalizes the native locator while preserving the requested display path', async () => {
@@ -101,7 +104,7 @@ describe('desktopDocumentHost', () => {
     vi.mocked(readTextFileForEdit).mockRejectedValueOnce(payload);
 
     await expect(desktopDocumentHost.file.readTextFileForEdit('C:\\docs\\paper.md')).rejects.toMatchObject({
-      contractVersion: 1,
+      contractVersion: 2,
       code: payload.code,
       message: payload.message,
     });

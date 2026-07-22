@@ -126,7 +126,16 @@ interface XmlNodeWithSpan {
   value: unknown;
   path: StructuredPathSegment[];
   span: SourceSpan;
+  valueSpan?: SourceSpan | null;
+  keySpan?: SourceSpan | null;
   childCount?: number;
+  editableOperations?: string[];
+  unsupportedReason?: string;
+  nodeKind?: string;
+  qualifiedName?: string | null;
+  localName?: string | null;
+  namespaceUri?: string | null;
+  namespaceContext?: Record<string, string>;
 }
 
 interface XmlDiagnosticCollector {
@@ -156,12 +165,23 @@ interface XmlTagInfo {
   localName: string;
   attributes: XmlAttributeNode[];
   namespaceDeclarations: XmlNamespaceDeclarationNode[];
+  attributeSources: XmlAttributeSource[];
+  namespaceDeclarationSources: XmlAttributeSource[];
+  nameSpan: SourceSpan | null;
   selfClosing: boolean;
+}
+
+interface XmlAttributeSource {
+  span: SourceSpan;
+  keySpan: SourceSpan;
+  valueSpan: SourceSpan;
+  rawValue: string;
 }
 
 type NamespaceScope = Map<string, string>;
 
 const XML_NAMESPACE_URI = 'http://www.w3.org/XML/1998/namespace';
+const XMLNS_NAMESPACE_URI = 'http://www.w3.org/2000/xmlns/';
 
 export function parseXmlDocument(content: DocumentContent): FormatParseResult<ParsedXmlDocument> {
   const text = content.text;
@@ -207,6 +227,14 @@ export function parseXmlDocument(content: DocumentContent): FormatParseResult<Pa
 
   const builder = createXmlProjectionBuilder(text);
   const value = createDocumentProjection(tree.cursor(), builder);
+  const namespaceDiagnostics = collectXmlNamespaceDiagnostics(value, builder);
+  if (namespaceDiagnostics.length > 0) {
+    return {
+      format: 'xml', content, parsed: null,
+      diagnostics: [...namespaceDiagnostics, ...diagnostics.preservationWarnings],
+      sourceOnly: false,
+    };
+  }
   const warnings = [...diagnostics.preservationWarnings];
   const sourceMap = createXmlSourceMap(value, builder.nodes);
   const jsonPreview = createStructuredJsonPreview(value, warnings, 'xml');
@@ -223,13 +251,14 @@ export function parseXmlDocument(content: DocumentContent): FormatParseResult<Pa
       preservation: createStructuredPreservationSummary({
         format: 'xml',
         warnings,
-        sourceMapFeasibility: 'syntax-tree-readonly',
+        visualWritesEnabled: true,
+        sourceMapFeasibility: 'cst-source-preserving',
         nodeSpanCoverage: 'partial',
         candidateLibraries: ['@lezer/xml'],
         blockers: [
-          'XML visual writes are disabled because namespace scope, attributes versus elements, whitespace-significant text, comments, CDATA, and processing instructions need a source-preserving edit planner before mutation is safe.',
-          'Entity references are preserved as raw read-only source nodes. Built-in and numeric character references expose a decoded display value, but DTD declarations are blocked and external entities are never loaded or expanded.',
-          'The current adapter projects XML into a read-only tree and JSON preview only. It does not canonicalize or serialize XML.',
+          'Only ordinary attribute values without existing entity tokens and sole non-whitespace text content expose reviewed visual replacement.',
+          'Mixed content, whitespace-only text, comments, CDATA, processing instructions, entity references, namespace declarations, and structural element operations remain source-only.',
+          'DTD declarations remain blocking and external entities are never loaded, resolved, or expanded. XML is patched locally and is never canonicalized or serialized wholesale.',
         ],
       }),
       jsonPreview,
@@ -357,6 +386,8 @@ function createDocumentProjection(cursor: XmlCursor, builder: XmlProjectionBuild
     path: [],
     span: sourceSpanFromOffset(builder.text, cursor.from, Math.max(1, cursor.to - cursor.from)),
     childCount: 0,
+    nodeKind: 'xml-document',
+    unsupportedReason: 'The XML document container is source-only; edit a proven attribute or simple text value.',
   });
 
   const children: XmlVisualNode[] = [];
@@ -369,6 +400,36 @@ function createDocumentProjection(cursor: XmlCursor, builder: XmlProjectionBuild
   value.children = children;
   builder.nodes[0].childCount = children.length;
   return value;
+}
+
+function collectXmlNamespaceDiagnostics(value: XmlDocumentValue, builder: XmlProjectionBuilder): FormatDiagnostic[] {
+  const diagnostics: FormatDiagnostic[] = [];
+  const visit = (node: XmlVisualNode): void => {
+    if (node.kind !== 'element') return;
+    if (node.prefix && node.namespaceUri === null) add(node, 'xml-undeclared-element-prefix', `XML element prefix "${node.prefix}" is not declared.`);
+    const expandedAttributes = new Set<string>();
+    for (const attribute of node.attributes) {
+      if (attribute.prefix && attribute.namespaceUri === null) add(attribute, 'xml-undeclared-attribute-prefix', `XML attribute prefix "${attribute.prefix}" is not declared.`);
+      const expandedName = `${attribute.namespaceUri ?? ''}\u0000${attribute.localName}`;
+      if (expandedAttributes.has(expandedName)) add(attribute, 'xml-duplicate-expanded-attribute', `XML attribute "${attribute.name}" duplicates an expanded namespace name.`);
+      expandedAttributes.add(expandedName);
+    }
+    for (const declaration of node.namespaceDeclarations) {
+      const invalid = declaration.prefix === 'xmlns'
+        || declaration.uri === XMLNS_NAMESPACE_URI
+        || (declaration.prefix === 'xml' && declaration.uri !== XML_NAMESPACE_URI)
+        || (declaration.prefix !== 'xml' && declaration.uri === XML_NAMESPACE_URI)
+        || (declaration.prefix !== null && declaration.uri === '');
+      if (invalid) add(declaration, 'xml-invalid-namespace-binding', 'XML namespace declaration uses a reserved or invalid prefix/URI binding.');
+    }
+    node.children.forEach(visit);
+  };
+  const add = (node: XmlElementNode | XmlAttributeNode | XmlNamespaceDeclarationNode, code: string, message: string): void => {
+    const mapped = builder.nodes.find((candidate) => candidate.value === node);
+    diagnostics.push(xmlDiagnostic('error', code, message, builder.text, mapped?.span.offset ?? 0, mapped?.span.length ?? 1, true));
+  };
+  value.children.forEach(visit);
+  return diagnostics;
 }
 
 function xmlVisualNodeFromCursor(
@@ -393,7 +454,7 @@ function xmlElementFromCursor(
   namespaceScope: NamespaceScope,
   builder: XmlProjectionBuilder,
 ): XmlElementNode {
-  const tagInfo = tagInfoFromElement(cursor, path, builder);
+  const tagInfo = tagInfoFromElement(cursor, builder);
   const childNamespaceScope = new Map(namespaceScope);
   for (const declaration of tagInfo.namespaceDeclarations) {
     childNamespaceScope.set(declaration.prefix ?? '', declaration.uri);
@@ -412,6 +473,59 @@ function xmlElementFromCursor(
     children: [],
     selfClosing: tagInfo.selfClosing,
   };
+  const namespaceContext = Object.fromEntries(childNamespaceScope);
+  value.namespaceDeclarations.forEach((declaration, index) => {
+    const source = tagInfo.namespaceDeclarationSources[index];
+    if (!source) return;
+    const declarationPath = [...path, 'namespaceDeclarations', index];
+    recordXmlNode(builder, declaration, declarationPath, source.span.offset, source.span.offset + source.span.length, 0, {
+      keySpan: source.keySpan,
+      valueSpan: source.valueSpan,
+      nodeKind: 'namespace-declaration',
+      qualifiedName: declaration.prefix ? `xmlns:${declaration.prefix}` : 'xmlns',
+      localName: declaration.prefix,
+      namespaceUri: declaration.uri,
+      namespaceContext,
+      unsupportedReason: 'Namespace declarations are source-only because changing them can rebind descendant names.',
+    });
+    recordXmlNode(builder, declaration.uri, [...declarationPath, 'uri'], source.valueSpan.offset, source.valueSpan.offset + source.valueSpan.length, 0, {
+      valueSpan: source.valueSpan,
+      nodeKind: 'namespace-value',
+      qualifiedName: declaration.prefix ? `xmlns:${declaration.prefix}` : 'xmlns',
+      localName: declaration.prefix,
+      namespaceUri: declaration.uri,
+      namespaceContext,
+      unsupportedReason: 'Namespace declaration values are source-only because changing them can rebind descendant names.',
+    });
+  });
+  value.attributes.forEach((attribute, index) => {
+    const source = tagInfo.attributeSources[index];
+    if (!source) return;
+    const attributePath = [...path, 'attributes', index];
+    const hasEntityToken = /&(?:#(?:x[0-9A-Fa-f]+|\d+)|[A-Za-z_][\w.-]*);/.test(stripXmlAttributeQuotes(source.rawValue));
+    recordXmlNode(builder, attribute, attributePath, source.span.offset, source.span.offset + source.span.length, 0, {
+      keySpan: source.keySpan,
+      valueSpan: source.valueSpan,
+      nodeKind: 'attribute',
+      qualifiedName: attribute.name,
+      localName: attribute.localName,
+      namespaceUri: attribute.namespaceUri,
+      namespaceContext,
+      unsupportedReason: 'Select the attribute value to edit it; attribute add, delete, and rename remain source-only.',
+    });
+    recordXmlNode(builder, attribute.value, [...attributePath, 'value'], source.valueSpan.offset, source.valueSpan.offset + source.valueSpan.length, 0, {
+      valueSpan: source.valueSpan,
+      nodeKind: 'attribute-value',
+      qualifiedName: attribute.name,
+      localName: attribute.localName,
+      namespaceUri: attribute.namespaceUri,
+      namespaceContext,
+      editableOperations: hasEntityToken ? [] : ['replaceScalar'],
+      unsupportedReason: hasEntityToken
+        ? 'Attribute values containing entity-reference tokens remain source-only to avoid changing their source representation.'
+        : undefined,
+    });
+  });
   const children: XmlVisualNode[] = [];
   forEachChild(cursor, (child) => {
     if (!isVisualXmlNodeName(child.name)) return;
@@ -420,12 +534,28 @@ function xmlElementFromCursor(
     if (childNode) children.push(childNode);
   });
   value.children = children;
+  if (children.length === 1 && children[0]?.kind === 'text' && !children[0].whitespaceOnly) {
+    markXmlTextNodeEditable(builder, [...path, 'children', 0, 'text'], {
+      qualifiedName: value.name,
+      localName: value.localName,
+      namespaceUri: value.namespaceUri,
+      namespaceContext,
+    });
+  }
   builder.counts.elements += 1;
-  recordXmlNode(builder, value, path, cursor.from, cursor.to, value.attributes.length + value.namespaceDeclarations.length + value.children.length);
+  recordXmlNode(builder, value, path, cursor.from, cursor.to, value.attributes.length + value.namespaceDeclarations.length + value.children.length, {
+    keySpan: tagInfo.nameSpan,
+    nodeKind: 'element',
+    qualifiedName: value.name,
+    localName: value.localName,
+    namespaceUri: value.namespaceUri,
+    namespaceContext,
+    unsupportedReason: 'Element add, delete, and rename remain source-only until layout and namespace effects are proven.',
+  });
   return value;
 }
 
-function tagInfoFromElement(cursor: XmlCursor, elementPath: StructuredPathSegment[], builder: XmlProjectionBuilder): XmlTagInfo {
+function tagInfoFromElement(cursor: XmlCursor, builder: XmlProjectionBuilder): XmlTagInfo {
   let tagCursor: XmlCursor | null = null;
   let selfClosing = false;
   forEachChild(cursor, (child) => {
@@ -441,15 +571,24 @@ function tagInfoFromElement(cursor: XmlCursor, elementPath: StructuredPathSegmen
       localName: '',
       attributes: [],
       namespaceDeclarations: [],
+      attributeSources: [],
+      namespaceDeclarationSources: [],
+      nameSpan: null,
       selfClosing: false,
     };
   }
 
   let name = '';
+  let nameSpan: SourceSpan | null = null;
   const attributes: XmlAttributeNode[] = [];
   const namespaceDeclarations: XmlNamespaceDeclarationNode[] = [];
+  const attributeSources: XmlAttributeSource[] = [];
+  const namespaceDeclarationSources: XmlAttributeSource[] = [];
   forEachChild(tagCursor, (child) => {
-    if (child.name === 'TagName') name = builder.text.slice(child.from, child.to);
+    if (child.name === 'TagName') {
+      name = builder.text.slice(child.from, child.to);
+      nameSpan = sourceSpanFromOffset(builder.text, child.from, child.to - child.from);
+    }
     if (child.name !== 'Attribute') return;
     const rawAttribute = attributeFromCursor(child, builder.text);
     if (!rawAttribute) return;
@@ -461,15 +600,8 @@ function tagInfoFromElement(cursor: XmlCursor, elementPath: StructuredPathSegmen
         rawValue: rawAttribute.rawValue,
       };
       namespaceDeclarations.push(declaration);
+      namespaceDeclarationSources.push(rawAttribute.source);
       builder.counts.namespaces += 1;
-      recordXmlNode(
-        builder,
-        declaration,
-        [...elementPath, 'namespaceDeclarations', namespaceDeclarations.length - 1],
-        child.from,
-        child.to,
-        0,
-      );
       return;
     }
     const qualified = splitQualifiedName(rawAttribute.name);
@@ -483,15 +615,8 @@ function tagInfoFromElement(cursor: XmlCursor, elementPath: StructuredPathSegmen
       rawValue: rawAttribute.rawValue,
     };
     attributes.push(attribute);
+    attributeSources.push(rawAttribute.source);
     builder.counts.attributes += 1;
-    recordXmlNode(
-      builder,
-      attribute,
-      [...elementPath, 'attributes', attributes.length - 1],
-      child.from,
-      child.to,
-      0,
-    );
   });
 
   const qualified = splitQualifiedName(name);
@@ -501,6 +626,9 @@ function tagInfoFromElement(cursor: XmlCursor, elementPath: StructuredPathSegmen
     localName: qualified.localName,
     attributes,
     namespaceDeclarations,
+    attributeSources,
+    namespaceDeclarationSources,
+    nameSpan,
     selfClosing,
   };
 }
@@ -508,20 +636,30 @@ function tagInfoFromElement(cursor: XmlCursor, elementPath: StructuredPathSegmen
 function attributeFromCursor(
   cursor: XmlCursor,
   text: string,
-): { name: string; value: string; rawValue: string; namespaceDeclaration: { prefix: string | null } | null } | null {
+): { name: string; value: string; rawValue: string; namespaceDeclaration: { prefix: string | null } | null; source: XmlAttributeSource } | null {
   let name = '';
   let rawValue = '';
+  let nameFrom = cursor.from;
+  let nameTo = cursor.from;
+  let valueFrom = cursor.to;
+  let valueTo = cursor.to;
   forEachChild(cursor, (child) => {
-    if (child.name === 'AttributeName') name = text.slice(child.from, child.to);
-    if (child.name === 'AttributeValue') rawValue = text.slice(child.from, child.to);
+    if (child.name === 'AttributeName') { name = text.slice(child.from, child.to); nameFrom = child.from; nameTo = child.to; }
+    if (child.name === 'AttributeValue') { rawValue = text.slice(child.from, child.to); valueFrom = child.from; valueTo = child.to; }
   });
-  if (!name) return null;
+  if (!name || rawValue.length < 2 || !((rawValue.startsWith('"') && rawValue.endsWith('"')) || (rawValue.startsWith("'") && rawValue.endsWith("'")))) return null;
   const value = decodeBuiltInXmlEntities(stripXmlAttributeQuotes(rawValue));
   return {
     name,
     value,
     rawValue,
     namespaceDeclaration: namespaceDeclarationFromAttributeName(name),
+    source: {
+      span: sourceSpanFromOffset(text, cursor.from, cursor.to - cursor.from),
+      keySpan: sourceSpanFromOffset(text, nameFrom, nameTo - nameFrom),
+      valueSpan: sourceSpanFromOffset(text, valueFrom + 1, Math.max(0, valueTo - valueFrom - 2)),
+      rawValue,
+    },
   };
 }
 
@@ -533,7 +671,12 @@ function xmlTextFromCursor(cursor: XmlCursor, path: StructuredPathSegment[], bui
     whitespaceOnly: text.trim().length === 0,
   };
   builder.counts.textNodes += 1;
-  recordXmlNode(builder, value, path, cursor.from, cursor.to, 0);
+  const span = sourceSpanFromOffset(builder.text, cursor.from, cursor.to - cursor.from);
+  const reason = value.whitespaceOnly
+    ? 'Whitespace-only XML text is source-only because it may control significant layout.'
+    : 'Text replacement is available only when this is the element\'s sole content node.';
+  recordXmlNode(builder, value, path, cursor.from, cursor.to, 0, { valueSpan: span, nodeKind: 'text', unsupportedReason: reason });
+  recordXmlNode(builder, value.text, [...path, 'text'], cursor.from, cursor.to, 0, { valueSpan: span, nodeKind: 'text-value', unsupportedReason: reason });
   return value;
 }
 
@@ -544,7 +687,9 @@ function xmlCommentFromCursor(cursor: XmlCursor, path: StructuredPathSegment[], 
     text: raw.startsWith('<!--') && raw.endsWith('-->') ? raw.slice(4, -3) : raw,
   };
   builder.counts.comments += 1;
-  recordXmlNode(builder, value, path, cursor.from, cursor.to, 0);
+  recordXmlNode(builder, value, path, cursor.from, cursor.to, 0, {
+    nodeKind: 'comment', unsupportedReason: 'XML comments remain source-only.',
+  });
   return value;
 }
 
@@ -555,7 +700,9 @@ function xmlCdataFromCursor(cursor: XmlCursor, path: StructuredPathSegment[], bu
     text: raw.startsWith('<![CDATA[') && raw.endsWith(']]>') ? raw.slice(9, -3) : raw,
   };
   builder.counts.cdata += 1;
-  recordXmlNode(builder, value, path, cursor.from, cursor.to, 0);
+  recordXmlNode(builder, value, path, cursor.from, cursor.to, 0, {
+    nodeKind: 'cdata', unsupportedReason: 'CDATA boundaries and content remain source-only.',
+  });
   return value;
 }
 
@@ -574,7 +721,10 @@ function xmlProcessingInstructionFromCursor(
     raw,
   };
   builder.counts.processingInstructions += 1;
-  recordXmlNode(builder, value, path, cursor.from, cursor.to, 0);
+  recordXmlNode(builder, value, path, cursor.from, cursor.to, 0, {
+    nodeKind: 'processing-instruction', qualifiedName: value.target,
+    unsupportedReason: 'XML processing instructions remain source-only.',
+  });
   return value;
 }
 
@@ -584,7 +734,9 @@ function xmlDoctypeFromCursor(cursor: XmlCursor, path: StructuredPathSegment[], 
     raw: builder.text.slice(cursor.from, cursor.to),
   };
   builder.counts.doctypes += 1;
-  recordXmlNode(builder, value, path, cursor.from, cursor.to, 0);
+  recordXmlNode(builder, value, path, cursor.from, cursor.to, 0, {
+    nodeKind: 'doctype', unsupportedReason: 'DTD and DOCTYPE declarations are prohibited.',
+  });
   return value;
 }
 
@@ -603,7 +755,10 @@ function xmlEntityReferenceFromCursor(
     decoded: decodeXmlEntityReferenceName(name),
   };
   builder.counts.entityReferences += 1;
-  recordXmlNode(builder, value, path, cursor.from, cursor.to, 0);
+  recordXmlNode(builder, value, path, cursor.from, cursor.to, 0, {
+    nodeKind: 'entity-reference', qualifiedName: value.name,
+    unsupportedReason: 'Entity-reference tokens remain source-only.',
+  });
   return value;
 }
 
@@ -633,12 +788,18 @@ function createXmlSourceMap(value: XmlDocumentValue, nodes: readonly XmlNodeWith
     displayPath: displayPathFromPath(node.path),
     type: structuredValueType(node.value),
     span: node.span,
-    valueSpan: node.span,
-    keySpan: null,
+    valueSpan: node.valueSpan ?? node.span,
+    keySpan: node.keySpan ?? null,
     lossy: false,
-    editable: false,
-    unsupportedReason: 'XML visual editing is disabled until source-preserving XML patch planning exists.',
+    editable: Boolean(node.editableOperations?.length),
+    editableOperations: [...(node.editableOperations ?? [])],
+    ...(node.unsupportedReason ? { unsupportedReason: node.unsupportedReason } : {}),
     childCount: node.childCount ?? childCount(node.value),
+    ...(node.nodeKind ? { nodeKind: node.nodeKind } : {}),
+    ...(node.qualifiedName !== undefined ? { qualifiedName: node.qualifiedName } : {}),
+    ...(node.localName !== undefined ? { localName: node.localName } : {}),
+    ...(node.namespaceUri !== undefined ? { namespaceUri: node.namespaceUri } : {}),
+    ...(node.namespaceContext ? { namespaceContext: { ...node.namespaceContext } } : {}),
   }));
   if (!sourceNodes.some((node) => node.pointer === '')) {
     sourceNodes.unshift({
@@ -652,8 +813,10 @@ function createXmlSourceMap(value: XmlDocumentValue, nodes: readonly XmlNodeWith
       keySpan: null,
       lossy: false,
       editable: false,
-      unsupportedReason: 'XML visual editing is disabled until source-preserving XML patch planning exists.',
+      editableOperations: [],
+      unsupportedReason: 'The XML document root is a projection; select a proven text or attribute value.',
       childCount: value.children.length,
+      nodeKind: 'xml-document',
     });
   }
   return createStructuredSourceMap('xml', sourceNodes);
@@ -666,13 +829,31 @@ function recordXmlNode(
   from: number,
   to: number,
   childCount: number,
+  options: Omit<XmlNodeWithSpan, 'value' | 'path' | 'span' | 'childCount'> = {},
 ): void {
   builder.nodes.push({
     value,
     path,
     span: sourceSpanFromOffset(builder.text, from, Math.max(1, to - from)),
     childCount,
+    ...options,
   });
+}
+
+function markXmlTextNodeEditable(
+  builder: XmlProjectionBuilder,
+  path: StructuredPathSegment[],
+  identity: Pick<XmlNodeWithSpan, 'qualifiedName' | 'localName' | 'namespaceUri' | 'namespaceContext'>,
+): void {
+  const pointer = pointerFromPath(path);
+  const node = builder.nodes.find((candidate) => pointerFromPath(candidate.path) === pointer);
+  if (!node) return;
+  node.editableOperations = ['replaceScalar'];
+  delete node.unsupportedReason;
+  node.qualifiedName = identity.qualifiedName;
+  node.localName = identity.localName;
+  node.namespaceUri = identity.namespaceUri;
+  if (identity.namespaceContext) node.namespaceContext = { ...identity.namespaceContext };
 }
 
 function visitCursor(cursor: XmlCursor, visitor: (cursor: XmlCursor, depth: number) => void, depth = 0): void {

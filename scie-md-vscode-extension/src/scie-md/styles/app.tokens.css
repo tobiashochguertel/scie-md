@@ -234,6 +234,51 @@
   font-weight: 700;
 }
 
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./fonts/vendor/ibm-plex-mono/ibm-plex-mono-400-normal.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+  unicode-range: U+0000-036F, U+0400-10FFFF;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./fonts/vendor/ibm-plex-mono/ibm-plex-mono-400-italic.woff2") format("woff2");
+  font-display: swap;
+  font-style: italic;
+  font-weight: 400;
+  unicode-range: U+0000-036F, U+0400-10FFFF;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./fonts/vendor/ibm-plex-mono/ibm-plex-mono-500-normal.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 500;
+  unicode-range: U+0000-036F, U+0400-10FFFF;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./fonts/vendor/ibm-plex-mono/ibm-plex-mono-700-normal.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 700;
+  unicode-range: U+0000-036F, U+0400-10FFFF;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./fonts/vendor/ibm-plex-mono/noto-sans-mono-greek-400-normal.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+  unicode-range: U+0370-03FF;
+}
+
 :root {
   color-scheme: light;
   font-family: "Scie Sans", sans-serif;
@@ -242,14 +287,17 @@
   --bg: #eef2f0;
   --surface: #ffffff;
   --surface-soft: #f5f8f7;
+  --surface-subtle: var(--surface-soft);
   --app-bg: var(--bg);
   --surface-muted: var(--surface-soft);
   --editor-bg: #fbfcfc;
   --text: #1f2933;
   --text-strong: #111827;
   --text-muted: #55645f;
+  --text-secondary: var(--text-muted);
   --focus-ring: #1d7f62;
   --border: #d7dfdc;
+  --border-subtle: var(--border);
   --border-strong: #c9d2ce;
   --button-bg: #f9fbfa;
   --button-hover: #edf5f1;
@@ -258,6 +306,7 @@
   --accent-soft: #8eb6a5;
   --accent-contrast: #ffffff;
   --error: #b42318;
+  --danger: var(--error);
   --warning: #9a5b13;
   --source-syntax-heading: #173f35;
   --source-syntax-strong: #1f2933;
@@ -286,6 +335,7 @@
   --link: var(--visual-link-color);
   --doc-font: "Source Serif 4", serif;
   --mono-font: "JetBrains Mono", monospace;
+  --source-editor-font: "IBM Plex Mono", monospace;
   --document-body-size: 16px;
   --document-h1-size: 34px;
   --document-h2-size: 24px;

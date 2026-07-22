@@ -166,19 +166,21 @@ describe('parseXmlDocument', () => {
     }));
   });
 
-  it('keeps XML preservation fixtures read-only while preserving risky node classes', () => {
+  it('keeps risky XML fixture nodes source-only while exposing only proven replacements', () => {
     const source = readFileSync(join(fixtureDir, 'namespaces-comments-cdata.xml'), 'utf8');
     const result = parseXmlDocument(createXmlContent(source, 'namespaces-comments-cdata.xml'));
 
     expect(result.parsed).not.toBeNull();
     expect(result.parsed?.preservation).toMatchObject({
       format: 'xml',
-      visualWritesEnabled: false,
-      decision: 'defer-visual-writes',
-      sourceMapFeasibility: 'syntax-tree-readonly',
+      visualWritesEnabled: true,
+      decision: 'guarded-visual-writes',
+      sourceMapFeasibility: 'cst-source-preserving',
       nodeSpanCoverage: 'partial',
     });
-    expect(result.parsed?.sourceMap.nodes.every((node) => !node.editable)).toBe(true);
+    expect(result.parsed?.sourceMap.nodes.some((node) => node.nodeKind === 'attribute-value' && node.editable)).toBe(true);
+    expect(result.parsed?.sourceMap.nodes.filter((node) => ['namespace-value', 'cdata', 'comment', 'processing-instruction', 'entity-reference'].includes(node.nodeKind ?? ''))
+      .every((node) => !node.editable)).toBe(true);
     expect(result.parsed).toMatchObject({
       namespaceCount: 2,
       attributeCount: expect.any(Number),
@@ -191,8 +193,8 @@ describe('parseXmlDocument', () => {
       code: 'xml-entity-reference-readonly',
       category: 'preservation',
     }));
-    expect(result.parsed?.preservation.blockers.join('\n')).toContain('namespace scope');
-    expect(result.parsed?.preservation.blockers.join('\n')).toContain('Entity references');
+    expect(result.parsed?.preservation.blockers.join('\n')).toContain('namespace declarations');
+    expect(result.parsed?.preservation.blockers.join('\n')).toContain('entity references');
   });
 
   it('keeps DTD fixture blocked as a security and preservation prerequisite', () => {

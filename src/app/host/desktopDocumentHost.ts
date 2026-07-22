@@ -44,6 +44,7 @@ import {
 import type { DocumentHost } from './documentHost';
 import { normalizeDocumentHostError } from './documentHostError';
 import { normalizeNativeLocator } from '../documentIdentity';
+import { inspectTomlSourceMap, planTomlMutation } from '../../services/tomlNativeService';
 
 async function typedFileCall<T>(operation: () => Promise<T>): Promise<T> {
   try {
@@ -55,8 +56,8 @@ async function typedFileCall<T>(operation: () => Promise<T>): Promise<T> {
 
 export const desktopDocumentHost: DocumentHost = {
   file: {
-    readTextFile: (path) => typedFileCall(() => readTextFile(path)),
-    readTextFileForEdit: (path) => typedFileCall(() => readTextFileForEdit(path)),
+    readTextFile: (path, options) => typedFileCall(() => readTextFile(path, options)),
+    readTextFileForEdit: (path, options) => typedFileCall(() => readTextFileForEdit(path, options)),
     statFile: (path, options) => typedFileCall(() => statFile(path, options)),
     writeTextFileAtomic: (path, sourceText, metadata, expectedMetadata) => typedFileCall(
       () => writeTextFileAtomic(path, sourceText, metadata, expectedMetadata),
@@ -113,5 +114,10 @@ export const desktopDocumentHost: DocumentHost = {
       await resolveDocumentLocator(path, options?.allowMissing ?? false),
       path,
     ),
+  },
+  structuredMutation: {
+    capabilities: { tomlNativePlanning: true },
+    inspectToml: (sourceText) => typedFileCall(() => inspectTomlSourceMap(sourceText)),
+    planToml: (sourceText, intent) => typedFileCall(() => planTomlMutation(sourceText, intent)),
   },
 };

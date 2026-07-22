@@ -17,9 +17,9 @@ describe('structured analysis model helpers', () => {
     });
     expect(structuredSurfaceForKind(adapterForFormat('yaml')?.capabilities.visualSurfaces ?? [], 'tree')).toMatchObject({
       kind: 'tree',
-      readonly: true,
-      editable: false,
-      lossy: true,
+      readonly: false,
+      editable: true,
+      lossy: false,
     });
     expect(structuredSurfaceForKind(adapterForFormat('csv')?.capabilities.visualSurfaces ?? [], 'table')).toMatchObject({
       kind: 'table',

@@ -28,6 +28,9 @@ export interface AppCommandContext {
   onOpenFolder: () => void;
   onSave: () => void;
   onSaveAs: () => void;
+  onSaveAllDocuments: () => void;
+  onReopenClosedDocument: () => void;
+  onSwitchToMostRecentlyUsedDocument: () => void;
   onFind: () => void;
   onOpenSlashMenu: () => void;
   onOpenTemplates: () => void;
@@ -57,6 +60,7 @@ export interface AppCommandContext {
   onCopyStructuredContext: () => void;
   onCopySelectedStructureContext: () => void;
   onCopyParserDiagnostics: () => void;
+  onCopyDocumentPerformanceReport: () => void;
   onCopyStructuredSchemaSummary: () => void;
   onCopyStructuredTableSample: () => void;
   onCopyStructuredHealthReport: () => void;
@@ -117,6 +121,9 @@ export function createAppCommands(context: AppCommandContext): CommandItem[] {
     { id: 'open-folder', label: 'Open folder in file explorer', detail: 'Browse Markdown, text, and images', run: context.onOpenFolder },
     { id: 'save', label: 'Save', detail: getKeyboardShortcutDisplay('save'), run: context.onSave },
     { id: 'save-as', label: 'Save As', detail: getKeyboardShortcutDisplay('saveAs'), run: context.onSaveAs },
+    { id: 'workspace-save-all', label: 'Save all documents', detail: 'Persist every dirty workspace document', run: context.onSaveAllDocuments },
+    { id: 'workspace-reopen-closed', label: 'Reopen closed document', detail: 'Restore the most recently closed workspace document', run: context.onReopenClosedDocument },
+    { id: 'workspace-switch-mru', label: 'Switch to most recently used document', detail: 'Return to the previous workspace tab', run: context.onSwitchToMostRecentlyUsedDocument },
     { id: 'find', label: 'Find and replace', detail: getKeyboardShortcutDisplay('find'), run: context.onFind },
     ...(capabilities.canUseMarkdownToolbar ? [
       { id: 'insert-menu', label: 'Open insert menu', detail: 'Use / for blocks, tables, citations, variables, LLM notes, and versions', run: context.onOpenSlashMenu },
@@ -153,6 +160,7 @@ export function createAppCommands(context: AppCommandContext): CommandItem[] {
     ...(context.structuredPasteBackValidationAvailable ? [
       { id: 'copy-structured-parser-diagnostics', label: 'Copy parser diagnostics', detail: 'Local parser diagnostics packet', run: context.onCopyParserDiagnostics },
     ] : []),
+    { id: 'copy-document-performance-report', label: 'Copy document performance report', detail: 'Content-free open, activation, editor, and analysis timings', run: context.onCopyDocumentPerformanceReport },
     ...(context.structuredPasteBackValidationAvailable ? [
       { id: 'validate-structured-clipboard', label: 'Structured context: validate clipboard text', detail: 'Parse returned structured text without replacing the document', run: context.onValidateStructuredClipboard },
     ] : []),

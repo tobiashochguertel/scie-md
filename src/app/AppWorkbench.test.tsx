@@ -291,8 +291,8 @@ describe('AppWorkbench', () => {
           mruDocumentId: secondId,
           recentlyClosedCount: 1,
           tabs: [
-            { documentId: firstId, label: 'paper.md — papers', accessibleName: 'paper.md, MARKDOWN, active, Unsaved, tab 1 of 2', formatLabel: 'MARKDOWN', statuses: ['Unsaved'], active: true, index: 0, count: 2, canMoveLeft: false, canMoveRight: true },
-            { documentId: secondId, label: 'paper.md — data', accessibleName: 'paper.md, JSON, Read only, tab 2 of 2', formatLabel: 'JSON', statuses: ['Read only'], active: false, index: 1, count: 2, canMoveLeft: true, canMoveRight: false },
+            tabFixture(firstId, 0, 2, true, 'papers', 'markdown', 'Unsaved'),
+            tabFixture(secondId, 1, 2, false, 'data', 'braces', 'Read only'),
           ],
         },
       },
@@ -305,22 +305,29 @@ describe('AppWorkbench', () => {
     expect(tabs[0].getAttribute('aria-selected')).toBe('true');
     expect(tabs[0].tabIndex).toBe(0);
     expect(tabs[1].tabIndex).toBe(-1);
-    expect(container.querySelectorAll('[role="tabpanel"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[role="tabpanel"]')).toHaveLength(2);
+    expect(container.querySelectorAll('[role="tabpanel"]:not([hidden])')).toHaveLength(1);
     expect(container.querySelectorAll('[data-testid="editor-stage"]')).toHaveLength(1);
 
     act(() => tabs[0].focus());
-    act(() => tablist.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })));
+    act(() => tabs[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })));
     expect(callbacks.onActivate).toHaveBeenCalledWith(secondId);
-    act(() => tablist.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', altKey: true, shiftKey: true, bubbles: true })));
+    act(() => tabs[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', altKey: true, shiftKey: true, bubbles: true })));
     expect(callbacks.onReorder).toHaveBeenCalled();
-    clickButton('×');
+    clickButton('Close paper.md');
     expect(callbacks.onClose).toHaveBeenCalledWith(firstId);
-    clickButton('Reopen closed');
-    clickButton('Save All');
+    clickButton('Workspace actions');
+    clickButton('Reopen closed document');
+    clickButton('Workspace actions');
+    clickButton('Save all documents');
     expect(callbacks.onReopenClosed).toHaveBeenCalledTimes(1);
     expect(callbacks.onSaveAll).toHaveBeenCalledTimes(1);
   });
 });
+
+function tabFixture(documentId: ReturnType<typeof createDocumentId>, index: number, count: number, active: boolean, qualifier: string, formatIconId: 'markdown' | 'braces', state: string) {
+  return { documentId, fileName: 'paper.md', visibleFileName: 'paper.md', qualifier, accessibleName: `paper.md, ${active ? 'active, ' : ''}${state}, tab ${index + 1} of ${count}`, formatLabel: formatIconId === 'braces' ? 'JSON' : 'MARKDOWN', formatIconId, visualState: { kind: state === 'Unsaved' ? 'dirty' as const : 'readonly' as const, label: state }, accessibleStates: [state], tooltip: `paper.md — ${qualifier}`, active, index, count, canMoveLeft: index > 0, canMoveRight: index < count - 1 };
+}
 
 function renderWorkbench(props: ComponentProps<typeof AppWorkbench>): void {
   act(() => {
@@ -330,7 +337,7 @@ function renderWorkbench(props: ComponentProps<typeof AppWorkbench>): void {
 
 function clickButton(label: string): void {
   const button = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
-    .find((candidate) => candidate.textContent === label);
+    .find((candidate) => candidate.textContent === label || candidate.getAttribute('aria-label') === label);
   expect(button, `button "${label}"`).not.toBeUndefined();
   act(() => {
     button?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -353,10 +360,15 @@ function createProps(overrides: Partial<ComponentProps<typeof AppWorkbench>> = {
         recentlyClosedCount: 0,
         tabs: [{
           documentId: activeProjection.documentId,
-          label: activeProjection.chrome.displayName,
+          fileName: activeProjection.chrome.displayName,
+          visibleFileName: activeProjection.chrome.displayName,
+          qualifier: null,
           accessibleName: `${activeProjection.chrome.displayName}, active, tab 1 of 1`,
           formatLabel: activeProjection.format.toUpperCase(),
-          statuses: ['Unsaved'],
+          formatIconId: 'markdown',
+          visualState: { kind: 'dirty', label: 'Unsaved' },
+          accessibleStates: ['Unsaved'],
+          tooltip: activeProjection.chrome.displayName,
           active: true,
           index: 0,
           count: 1,
@@ -512,6 +524,7 @@ function createProps(overrides: Partial<ComponentProps<typeof AppWorkbench>> = {
     },
     editorStage: {
       editorStageRef: { current: null },
+      documentId: activeProjection.documentId,
       format: 'markdown',
       formatCapabilities: formatCapabilitiesFor('markdown'),
       mode: 'visual',

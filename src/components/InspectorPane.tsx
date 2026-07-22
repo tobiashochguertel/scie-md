@@ -704,6 +704,7 @@ function formatStructuredEditFormat(format: StructuredEditJournalEntry['format']
   if (format === 'json') return 'JSON';
   if (format === 'jsonl') return 'JSONL';
   if (format === 'csv') return 'CSV';
+  if (format === 'yaml') return 'YAML';
   return 'TSV';
 }
 

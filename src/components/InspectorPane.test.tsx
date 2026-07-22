@@ -212,8 +212,14 @@ describe('InspectorPane', () => {
         ...baseInspectorData(),
         structuredEditJournal: [
           {
+            schemaVersion: 2,
             id: 'json:replaceScalar:test',
             format: 'json',
+            operationId: 'replaceScalar',
+            transactionId: 'json:replaceScalar',
+            sourceRevision: 0,
+            sourceFingerprint: 'sha256:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            planFingerprint: 'sha256:v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
             operationLabel: 'Edit JSON value',
             targetLabel: '$.study.title',
             previewLabel: 'Updated $.study.title.',

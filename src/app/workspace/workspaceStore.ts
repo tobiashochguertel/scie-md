@@ -1,5 +1,6 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import type { DocumentRecord } from '../documentRecord';
+import type { SourceChangeSet } from '../source/revisionedSourceBuffer';
 import { createDocumentEffectCoordinator, type DocumentEffectCoordinator } from '../effects/documentEffectCoordinator';
 import { createWorkspaceSaveCoordinator, type WorkspaceSaveCoordinator } from './workspaceSaveCoordinator';
 import {
@@ -23,6 +24,7 @@ import {
 export interface WorkspaceStore {
   getState: () => WorkspaceState;
   dispatch: (command: WorkspaceCommand) => WorkspaceState;
+  dispatchInteractiveSourceChange: (changeSet: SourceChangeSet) => WorkspaceState;
   subscribe: (listener: () => void) => () => void;
   effects: DocumentEffectCoordinator;
   saves: WorkspaceSaveCoordinator;
@@ -52,19 +54,56 @@ export function createWorkspaceStore(
   let externalChanges: WorkspaceExternalChangeCoordinator;
   let close: WorkspaceCloseCoordinator;
   let ingress: WorkspaceIngressCoordinator;
+  let pendingViewNotification: number | ReturnType<typeof setTimeout> | null = null;
+  let pendingViewNotificationKind: 'frame' | 'timer' | null = null;
+  const notifyListeners = () => {
+    pendingViewNotification = null;
+    pendingViewNotificationKind = null;
+    for (const listener of listeners) listener();
+  };
+  const cancelPendingViewNotification = () => {
+    if (pendingViewNotification === null) return;
+    if (pendingViewNotificationKind === 'frame' && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(pendingViewNotification as number);
+    } else {
+      clearTimeout(pendingViewNotification as ReturnType<typeof setTimeout>);
+    }
+    pendingViewNotification = null;
+    pendingViewNotificationKind = null;
+  };
+  const scheduleViewNotification = () => {
+    if (pendingViewNotification !== null) return;
+    if (typeof requestAnimationFrame === 'function') {
+      pendingViewNotificationKind = 'frame';
+      pendingViewNotification = requestAnimationFrame(notifyListeners);
+    } else {
+      pendingViewNotificationKind = 'timer';
+      pendingViewNotification = setTimeout(notifyListeners, 0);
+    }
+  };
+  const reduce = (command: WorkspaceCommand, notification: 'immediate' | 'next-frame') => {
+    const next = workspaceReducer(state, command);
+    if (next !== state) {
+      state = next;
+      recovery.observe(state);
+      manifest.observe(state);
+      externalChanges.observe(state);
+      if (notification === 'next-frame') scheduleViewNotification();
+      else {
+        cancelPendingViewNotification();
+        notifyListeners();
+      }
+    }
+    return state;
+  };
   const store: WorkspaceStore = {
     getState: () => state,
-    dispatch: (command) => {
-      const next = workspaceReducer(state, command);
-      if (next !== state) {
-        state = next;
-        recovery.observe(state);
-        manifest.observe(state);
-        externalChanges.observe(state);
-        for (const listener of listeners) listener();
-      }
-      return state;
-    },
+    dispatch: (command) => reduce(command, 'immediate'),
+    dispatchInteractiveSourceChange: (changeSet) => reduce({
+      type: 'updateDocument',
+      documentId: changeSet.documentId,
+      action: { type: 'sourceChangeSetApplied', changeSet },
+    }, 'next-frame'),
     subscribe: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);

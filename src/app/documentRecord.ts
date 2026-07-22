@@ -6,8 +6,23 @@ import type { AutosaveStatus, EditorMode, FileMetadata, SourceEnvelope } from '.
 import { createSourceEnvelope, DEFAULT_METADATA } from './documentState';
 import type { DocumentId, DocumentLocator, SourceRevision } from './documentIdentity';
 import { createDocumentId, createUntitledLocator, fallbackFileLocator, sourceRevision } from './documentIdentity';
-import type { StructuredEditJournalEntry } from './structuredEditJournal';
+import { appendStructuredEditJournalEntry, type StructuredEditJournalEntry } from './structuredEditJournal';
 import type { StructuredSurfaceId } from './structuredSurfaceNavigation';
+import type { RevisionedSourceBuffer, SourceChangeSet, SourceCompactionCandidate } from './source/revisionedSourceBuffer';
+import {
+  adoptWholeSource,
+  adoptSavedSource,
+  applySourceChangeSet,
+  assertValidRevisionedSourceBuffer,
+  commitSourceCompaction,
+  createRevisionedSourceBuffer,
+  markSourceSaved,
+  migrateLegacySourceSnapshot,
+  materializeCurrentSource,
+  materializeSavedSource,
+  restoreSourceBufferRevisions,
+  sourceBufferIsDirty,
+} from './source/revisionedSourceBuffer';
 
 export type DocumentContentState = 'clean' | 'dirty';
 export type DocumentSaveState = 'idle' | 'queued' | 'saving' | 'failed';
@@ -16,8 +31,13 @@ export type DocumentAccessState = 'writable' | 'readOnly' | 'permissionLost' | '
 export type DocumentRecoveryState = 'notRequired' | 'pending' | 'current' | 'failed' | 'recoveryOnly';
 
 export interface DocumentSourceState extends SourceEnvelope {
+  /** The durable source authority. The string fields are migration projections, not edit authority. */
+  buffer: RevisionedSourceBuffer;
   revision: SourceRevision;
   savedRevision: SourceRevision;
+  residency:
+    | { kind: 'resident'; since: number }
+    | { kind: 'coldClean'; since: number; verifiedBaseline: FileMetadata };
 }
 
 export interface DocumentLifecycleState {
@@ -47,7 +67,7 @@ export interface DocumentViewState {
 }
 
 export interface DocumentRecord {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: DocumentId;
   locator: DocumentLocator;
   format: DocumentFormat;
@@ -62,6 +82,13 @@ export interface DocumentRecord {
 export type DocumentRecordAction =
   | { type: 'replace'; record: DocumentRecord }
   | { type: 'sourceChanged'; sourceText: string | ((current: string) => string) }
+  | { type: 'guardedWholeSourceAdopted'; expectedRevision: SourceRevision; sourceText: string }
+  | { type: 'sourceChangeSetApplied'; changeSet: SourceChangeSet }
+  | { type: 'structuredMutationCommitted'; changeSet: SourceChangeSet; sourceText: string; journalEntry: StructuredEditJournalEntry }
+  | { type: 'sourceProjectionMaterialized'; revision: SourceRevision; sourceText: string; savedSourceText?: string }
+  | { type: 'sourceCompactionCommitted'; candidate: SourceCompactionCandidate }
+  | { type: 'sourceTransitionedColdClean'; expectedRevision: SourceRevision; transitionedAt: number }
+  | { type: 'coldSourceRehydrated'; expectedRevision: SourceRevision; sourceText: string; fileBaseline: FileMetadata; rehydratedAt: number }
   | { type: 'savedBaselineChanged'; savedSourceText: string | ((current: string) => string) }
   | { type: 'locatorChanged'; locator: DocumentLocator }
   | { type: 'filePathChanged'; filePath: string | null | ((current: string | null) => string | null) }
@@ -96,20 +123,23 @@ export function createDocumentRecord(input: {
   autosaveStatus?: AutosaveStatus;
   presentation?: Partial<DocumentPresentationState>;
   view?: Partial<DocumentViewState>;
+  residentSince?: number;
 } = {}): DocumentRecord {
   const sourceText = input.sourceText ?? '';
   const savedSourceText = input.savedSourceText ?? sourceText;
   const fileBaseline = input.fileBaseline ?? DEFAULT_METADATA;
   const autosaveStatus = input.autosaveStatus ?? 'idle';
   const record: DocumentRecord = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: input.id ?? createDocumentId(),
     locator: input.locator ?? createUntitledLocator(),
     format: input.format ?? 'markdown',
     source: {
       ...createSourceEnvelope(sourceText, savedSourceText, fileBaseline),
+      buffer: migrateLegacySourceSnapshot(sourceText, savedSourceText),
       revision: sourceRevision(0),
       savedRevision: sourceRevision(0),
+      residency: { kind: 'resident', since: input.residentSince ?? Date.now() },
     },
     fileBaseline,
     observedExternal: null,
@@ -143,44 +173,153 @@ export function createDocumentRecord(input: {
 
 export function documentRecordReducer(current: DocumentRecord, action: DocumentRecordAction): DocumentRecord {
   if (action.type === 'replace') return assertValidDocumentRecord(action.record);
+  if (current.source.residency.kind === 'coldClean' && sourceMutationRequiresResidentAuthority(action)) return current;
   let next = current;
   switch (action.type) {
     case 'sourceChanged': {
-      const sourceText = resolveUpdate(action.sourceText, current.source.sourceText);
-      if (sourceText === current.source.sourceText) return current;
-      const revision = sourceRevision(current.source.revision + 1);
+      const currentSourceText = documentCurrentSourceText(current);
+      const sourceText = resolveUpdate(action.sourceText, currentSourceText);
+      if (sourceText === currentSourceText) return current;
+      const buffer = adoptWholeSource(current.source.buffer, sourceText);
+      const revision = buffer.current.revision;
       next = {
         ...current,
         source: {
           ...current.source,
+          buffer,
           sourceText,
           revision,
           ...fidelityFields(current.fileBaseline, sourceText, current.source.savedSourceText),
         },
         lifecycle: {
           ...current.lifecycle,
-          content: sourceText === current.source.savedSourceText ? 'clean' : 'dirty',
-          recovery: sourceText === current.source.savedSourceText ? 'notRequired' : 'pending',
+          content: sourceBufferIsDirty(buffer) ? 'dirty' : 'clean',
+          recovery: sourceBufferIsDirty(buffer) ? 'pending' : 'notRequired',
+        },
+      };
+      break;
+    }
+    case 'guardedWholeSourceAdopted': {
+      if (action.expectedRevision !== current.source.revision) return current;
+      const sourceText = action.sourceText;
+      const currentSourceText = documentCurrentSourceText(current);
+      if (sourceText === currentSourceText) return current;
+      const buffer = adoptWholeSource(current.source.buffer, sourceText);
+      const dirty = sourceBufferIsDirty(buffer);
+      next = {
+        ...current,
+        source: { ...current.source, buffer, sourceText, revision: buffer.current.revision },
+        lifecycle: { ...current.lifecycle, content: dirty ? 'dirty' : 'clean', recovery: dirty ? 'pending' : 'notRequired' },
+      };
+      break;
+    }
+    case 'sourceChangeSetApplied': {
+      const result = applySourceChangeSet(current.id, current.source.buffer, action.changeSet);
+      if (result.status === 'rejected') return current;
+      const dirty = sourceBufferIsDirty(result.buffer);
+      next = {
+        ...current,
+        source: { ...current.source, buffer: result.buffer, revision: result.revision },
+        lifecycle: { ...current.lifecycle, content: dirty ? 'dirty' : 'clean', recovery: dirty ? 'pending' : 'notRequired' },
+      };
+      break;
+    }
+    case 'structuredMutationCommitted': {
+      const result = applySourceChangeSet(current.id, current.source.buffer, action.changeSet);
+      if (result.status === 'rejected') return current;
+      const dirty = sourceBufferIsDirty(result.buffer);
+      next = {
+        ...current,
+        source: { ...current.source, buffer: result.buffer, sourceText: action.sourceText, revision: result.revision },
+        lifecycle: { ...current.lifecycle, content: dirty ? 'dirty' : 'clean', recovery: dirty ? 'pending' : 'notRequired' },
+        view: { ...current.view, structuredEditJournal: appendStructuredEditJournalEntry(current.view.structuredEditJournal, action.journalEntry) },
+      };
+      break;
+    }
+    case 'sourceProjectionMaterialized': {
+      if (action.revision !== current.source.revision) return current;
+      next = {
+        ...current,
+        source: {
+          ...current.source,
+          sourceText: action.sourceText,
+          ...(action.savedSourceText !== undefined ? { savedSourceText: action.savedSourceText } : {}),
+        },
+      };
+      break;
+    }
+    case 'sourceCompactionCommitted': {
+      const buffer = commitSourceCompaction(current.source.buffer, action.candidate);
+      if (!buffer) return current;
+      next = { ...current, source: { ...current.source, buffer } };
+      break;
+    }
+    case 'sourceTransitionedColdClean': {
+      if (action.expectedRevision !== current.source.revision || !documentEligibleForColdClean(current)) return current;
+      const placeholder = restoreSourceBufferRevisions(
+        createRevisionedSourceBuffer('', ''),
+        current.source.revision,
+        current.source.savedRevision,
+      );
+      next = {
+        ...current,
+        source: {
+          ...createSourceEnvelope('', '', current.fileBaseline),
+          buffer: placeholder,
+          revision: current.source.revision,
+          savedRevision: current.source.savedRevision,
+          residency: { kind: 'coldClean', since: action.transitionedAt, verifiedBaseline: { ...current.fileBaseline } },
+        },
+      };
+      break;
+    }
+    case 'coldSourceRehydrated': {
+      if (current.source.residency.kind !== 'coldClean' || action.expectedRevision !== current.source.revision) return current;
+      const buffer = restoreSourceBufferRevisions(
+        createRevisionedSourceBuffer(action.sourceText, action.sourceText),
+        current.source.revision,
+        current.source.savedRevision,
+      );
+      next = {
+        ...current,
+        source: {
+          ...createSourceEnvelope(action.sourceText, action.sourceText, action.fileBaseline),
+          buffer,
+          revision: current.source.revision,
+          savedRevision: current.source.savedRevision,
+          residency: { kind: 'resident', since: action.rehydratedAt },
+        },
+        fileBaseline: action.fileBaseline,
+        observedExternal: null,
+        lifecycle: {
+          ...current.lifecycle,
+          external: 'inSync',
+          access: accessStateForMetadata(action.fileBaseline),
         },
       };
       break;
     }
     case 'savedBaselineChanged': {
-      const savedSourceText = resolveUpdate(action.savedSourceText, current.source.savedSourceText);
-      if (savedSourceText === current.source.savedSourceText) return current;
+      const currentSavedSourceText = documentSavedSourceText(current);
+      const savedSourceText = resolveUpdate(action.savedSourceText, currentSavedSourceText);
+      if (savedSourceText === currentSavedSourceText) return current;
+      const currentText = documentCurrentSourceText(current);
+      const buffer = savedSourceText === currentText
+        ? markSourceSaved(current.source.buffer)
+        : adoptSavedSource(current.source.buffer, savedSourceText);
       next = {
         ...current,
         source: {
           ...current.source,
+          buffer,
+          ...(savedSourceText === currentText ? { sourceText: currentText } : {}),
           savedSourceText,
-          savedRevision: savedSourceText === current.source.sourceText
-            ? current.source.revision
-            : current.source.savedRevision,
+          savedRevision: buffer.saved.revision,
         },
         lifecycle: {
           ...current.lifecycle,
-          content: current.source.sourceText === savedSourceText ? 'clean' : 'dirty',
-          recovery: current.source.sourceText === savedSourceText ? 'notRequired' : 'pending',
+          content: sourceBufferIsDirty(buffer) ? 'dirty' : 'clean',
+          recovery: sourceBufferIsDirty(buffer) ? 'pending' : 'notRequired',
         },
       };
       break;
@@ -203,12 +342,13 @@ export function documentRecordReducer(current: DocumentRecord, action: DocumentR
       next = { ...current, format: action.format };
       break;
     case 'fileBaselineChanged': {
+      if (current.source.residency.kind === 'coldClean') return current;
       const fileBaseline = resolveUpdate(action.fileBaseline, current.fileBaseline);
       if (fileBaseline === current.fileBaseline) return current;
       next = {
         ...current,
         fileBaseline,
-        source: { ...current.source, ...fidelityFields(fileBaseline, current.source.sourceText, current.source.savedSourceText) },
+        source: { ...current.source, ...fidelityFields(fileBaseline, documentCurrentSourceText(current), documentSavedSourceText(current)) },
         lifecycle: { ...current.lifecycle, access: accessStateForMetadata(fileBaseline) },
       };
       break;
@@ -230,13 +370,16 @@ export function documentRecordReducer(current: DocumentRecord, action: DocumentR
       };
       break;
     case 'externalDiskAdopted': {
-      const revision = sourceRevision(current.source.revision + 1);
+      const buffer = adoptWholeSource(current.source.buffer, action.sourceText, { markSaved: true });
+      const revision = buffer.current.revision;
       next = {
         ...current,
         source: {
           ...createSourceEnvelope(action.sourceText, action.sourceText, action.fileBaseline),
+          buffer,
           revision,
           savedRevision: revision,
+          residency: { kind: 'resident', since: Date.now() },
         },
         fileBaseline: action.fileBaseline,
         observedExternal: null,
@@ -321,15 +464,77 @@ export function replaceDocumentRecordSession(current: DocumentRecord, input: {
 }
 
 export function assertValidDocumentRecord(record: DocumentRecord): DocumentRecord {
-  if (record.schemaVersion !== 1) throw new Error(`Unsupported DocumentRecord schema version: ${String(record.schemaVersion)}.`);
+  if (record.schemaVersion !== 2) throw new Error(`Unsupported DocumentRecord schema version: ${String(record.schemaVersion)}.`);
+  assertValidRevisionedSourceBuffer(record.source.buffer);
   if (record.source.savedRevision > record.source.revision) throw new Error('Saved revision cannot exceed source revision.');
-  const expectedContent = record.source.sourceText === record.source.savedSourceText ? 'clean' : 'dirty';
+  if (record.source.revision !== record.source.buffer.current.revision || record.source.savedRevision !== record.source.buffer.saved.revision) {
+    throw new Error('Document source revisions disagree with the revisioned source buffer.');
+  }
+  const expectedContent = sourceBufferIsDirty(record.source.buffer) ? 'dirty' : 'clean';
   if (record.lifecycle.content !== expectedContent) throw new Error('Document content lifecycle disagrees with its source baseline.');
   if (record.lifecycle.content === 'clean' && record.lifecycle.recovery === 'pending') {
     throw new Error('A clean document cannot require a pending recovery checkpoint.');
   }
   if (record.locator.kind === 'file' && record.locator.displayPath.trim() === '') throw new Error('File locators require a display path.');
+  if (!record.source.residency || !Number.isFinite(record.source.residency.since) || record.source.residency.since < 0) {
+    throw new Error('Document source residency requires a valid transition time.');
+  }
+  if (record.source.residency.kind === 'coldClean') {
+    if (record.locator.kind !== 'file' || record.lifecycle.content !== 'clean') throw new Error('Only clean file-backed documents may be cold.');
+    if (record.source.buffer.current.text.length !== 0 || record.source.buffer.saved.text.length !== 0
+      || record.source.sourceText !== '' || record.source.savedSourceText !== '') {
+      throw new Error('A cold-clean document cannot retain authoritative source bytes.');
+    }
+    if (!sameFileBaseline(record.source.residency.verifiedBaseline, record.fileBaseline)) {
+      throw new Error('Cold-clean verified baseline must match the document file baseline.');
+    }
+  }
   return record;
+}
+
+export function documentCurrentSourceText(record: DocumentRecord): string {
+  if (record.source.residency.kind !== 'resident') throw new Error('Cold-clean source must be reacquired before materialization.');
+  return materializeCurrentSource(record.source.buffer);
+}
+
+export function documentSavedSourceText(record: DocumentRecord): string {
+  if (record.source.residency.kind !== 'resident') throw new Error('Cold-clean source must be reacquired before materialization.');
+  return materializeSavedSource(record.source.buffer);
+}
+
+export function documentEligibleForColdClean(record: DocumentRecord): boolean {
+  return record.source.residency.kind === 'resident'
+    && record.locator.kind === 'file'
+    && record.lifecycle.content === 'clean'
+    && record.lifecycle.save === 'idle'
+    && record.lifecycle.external === 'inSync'
+    && (record.lifecycle.access === 'writable' || record.lifecycle.access === 'readOnly')
+    && record.lifecycle.recovery !== 'recoveryOnly'
+    && record.lifecycle.recovery !== 'pending'
+    && Boolean(record.fileBaseline.contentHash ?? record.fileBaseline.originalByteHash);
+}
+
+export function documentSourceResidentWeight(record: DocumentRecord): number {
+  if (record.source.residency.kind !== 'resident') return 0;
+  const current = record.source.buffer.current.text.length;
+  const saved = record.source.buffer.saved.text === record.source.buffer.current.text ? 0 : record.source.buffer.saved.text.length;
+  return (current + saved) * 2 + 64 * 1024;
+}
+
+function sourceMutationRequiresResidentAuthority(action: DocumentRecordAction): boolean {
+  return action.type === 'sourceChanged'
+    || action.type === 'guardedWholeSourceAdopted'
+    || action.type === 'sourceChangeSetApplied'
+    || action.type === 'sourceProjectionMaterialized'
+    || action.type === 'sourceCompactionCommitted'
+    || action.type === 'savedBaselineChanged';
+}
+
+function sameFileBaseline(left: FileMetadata, right: FileMetadata): boolean {
+  return left.lastKnownMtimeMs === right.lastKnownMtimeMs
+    && left.lastKnownSizeBytes === right.lastKnownSizeBytes
+    && left.contentHash === right.contentHash
+    && left.originalByteHash === right.originalByteHash;
 }
 
 export function filePathForDocumentRecord(record: DocumentRecord): string | null {

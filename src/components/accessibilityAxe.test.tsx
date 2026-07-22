@@ -52,7 +52,7 @@ describe('accessibility axe smoke', () => {
               activeDocumentId: documentId,
               mruDocumentId: null,
               recentlyClosedCount: 0,
-              tabs: [{ documentId, label: 'paper.md', accessibleName: 'paper.md, MARKDOWN, active, Unsaved, tab 1 of 1', formatLabel: 'MARKDOWN', statuses: ['Unsaved'], active: true, index: 0, count: 1, canMoveLeft: false, canMoveRight: false }],
+              tabs: [{ documentId, fileName: 'paper.md', visibleFileName: 'paper.md', qualifier: null, accessibleName: 'paper.md, MARKDOWN, active, Unsaved, tab 1 of 1', formatLabel: 'MARKDOWN', formatIconId: 'markdown', visualState: { kind: 'dirty', label: 'Unsaved' }, accessibleStates: ['Unsaved'], tooltip: 'paper.md', active: true, index: 0, count: 1, canMoveLeft: false, canMoveRight: false }],
             }}
             onActivate={() => undefined}
             onClose={() => undefined}

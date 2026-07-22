@@ -66,6 +66,19 @@ describe('DocumentKeyedEditorGateway', () => {
     expect(remounted.restoreView).toHaveBeenCalledWith(gateway.getViewSnapshot(first, 'visual'));
   });
 
+  it('deactivates a source editor without rematerializing text already handed to the aggregate as patches', () => {
+    const gateway = new DocumentKeyedEditorGateway();
+    const documentId = createDocumentId();
+    const events: string[] = [];
+    const sourceAdapter = adapter('source', '# aggregate already current', true, events);
+    const commit = vi.fn();
+    gateway.registerAdapter(documentId, 'source', sourceAdapter);
+    expect(gateway.deactivate(documentId, commit)).toBeNull();
+    expect(sourceAdapter.flushPendingEdits).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+    expect(events).toEqual(['snapshot']);
+  });
+
   it('fails safely for missing and stale registrations and focuses only the addressed editor', () => {
     const gateway = new DocumentKeyedEditorGateway();
     const active = createDocumentId();

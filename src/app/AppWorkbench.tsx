@@ -69,6 +69,7 @@ export function AppWorkbench({
       topbar={topbar}
       statusBar={statusBar}
       tabStrip={<WorkspaceTabStrip {...workspaceTabs} />}
+      workspaceTabsModel={workspaceTabs.model}
       overlays={children}
     >
       <ActiveDocumentWorkbench

@@ -17,14 +17,14 @@ describe('useJsonSchemaDiscovery', () => {
   let container: HTMLDivElement;
   let root: Root;
   let latestState: HookState | null;
-  let readTextFile: ReturnType<typeof vi.fn<(path: string) => Promise<{ content: string }>>>;
+  let readTextFile: ReturnType<typeof vi.fn<(path: string) => Promise<{ sourceText: string }>>>;
 
   beforeEach(() => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
     latestState = null;
-    readTextFile = vi.fn<(path: string) => Promise<{ content: string }>>();
+    readTextFile = vi.fn<(path: string) => Promise<{ sourceText: string }>>();
   });
 
   afterEach(() => {
@@ -34,7 +34,7 @@ describe('useJsonSchemaDiscovery', () => {
   });
 
   it('uses an explicit selected schema before sibling discovery', async () => {
-    readTextFile.mockResolvedValue({ content: '{"type":"object"}' });
+    readTextFile.mockResolvedValue({ sourceText: '{"type":"object"}' });
 
     renderHook({
       explicitSchemaPath: 'C:\\lab\\selected.schema.json',
@@ -52,7 +52,7 @@ describe('useJsonSchemaDiscovery', () => {
   it('tries sibling schema names silently until one loads', async () => {
     readTextFile
       .mockRejectedValueOnce(new Error('File access denied'))
-      .mockResolvedValueOnce({ content: '{"required":["id"]}' });
+      .mockResolvedValueOnce({ sourceText: '{"required":["id"]}' });
 
     renderHook({});
     await flushAsync();
@@ -119,7 +119,7 @@ function Harness({
   format: DocumentFormat;
   filePath: string | null;
   explicitSchemaPath: string | null;
-  readTextFile: ReturnType<typeof vi.fn<(path: string) => Promise<{ content: string }>>>;
+  readTextFile: ReturnType<typeof vi.fn<(path: string) => Promise<{ sourceText: string }>>>;
   onState: (state: HookState) => void;
 }) {
   const state = useJsonSchemaDiscovery({

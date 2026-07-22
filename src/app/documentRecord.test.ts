@@ -1,19 +1,43 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_METADATA } from './documentState';
-import { createDocumentId, createUntitledLocator, fallbackFileLocator } from './documentIdentity';
+import { createDocumentId, createUntitledLocator, fallbackFileLocator, sourceRevision } from './documentIdentity';
 import {
   assertValidDocumentRecord,
   createDocumentRecord,
   documentRecordReducer,
+  documentCurrentSourceText,
   replaceDocumentRecordSession,
   type DocumentRecord,
 } from './documentRecord';
 
 describe('DocumentRecord', () => {
+  it('acknowledges source and journal as one guarded structured mutation transaction', () => {
+    const record = createDocumentRecord({ format: 'json', sourceText: '{"value":1}\n' });
+    const journalEntry = {
+      schemaVersion: 2 as const, id: 'entry', format: 'json' as const, operationId: 'replaceScalar', transactionId: 'tx', sourceRevision: 0,
+      sourceFingerprint: 'sha256:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      planFingerprint: 'sha256:v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      operationLabel: 'Edit JSON value', targetLabel: '$.value', previewLabel: 'Updated $.value.', riskLabel: 'Replace source range',
+      appliedAt: 1, line: 1, column: 10,
+    };
+    const accepted = documentRecordReducer(record, {
+      type: 'structuredMutationCommitted', sourceText: '{"value":2}\n', journalEntry,
+      changeSet: { documentId: record.id, expectedRevision: record.source.revision, changes: [{ from: 9, to: 10, insert: '2', expectedText: '1' }] },
+    });
+    expect(documentCurrentSourceText(accepted)).toBe('{"value":2}\n');
+    expect(accepted.source.revision).toBe(1);
+    expect(accepted.view.structuredEditJournal).toEqual([journalEntry]);
+    const rejected = documentRecordReducer(record, {
+      type: 'structuredMutationCommitted', sourceText: '{"value":2}\n', journalEntry,
+      changeSet: { documentId: record.id, expectedRevision: sourceRevision(1), changes: [{ from: 9, to: 10, insert: '2', expectedText: '1' }] },
+    });
+    expect(rejected).toBe(record);
+  });
+
   it('owns a serializable initial source, lifecycle, presentation, and view aggregate', () => {
     const record = createDocumentRecord({ sourceText: '# Paper' });
     expect(record).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       format: 'markdown',
       source: { sourceText: '# Paper', savedSourceText: '# Paper', revision: 0, savedRevision: 0 },
       lifecycle: { content: 'clean', save: 'idle', external: 'inSync', access: 'writable', recovery: 'notRequired' },
@@ -29,6 +53,7 @@ describe('DocumentRecord', () => {
       },
     });
     expect(JSON.parse(JSON.stringify(record))).toEqual(record);
+    expect(record.source.buffer).toMatchObject({ schemaVersion: 1, storageEpoch: 0, current: { revision: 0 }, saved: { revision: 0 } });
   });
 
   it('transitions source, baseline revisions, and empty dirty content consistently', () => {
@@ -40,6 +65,26 @@ describe('DocumentRecord', () => {
     const saved = documentRecordReducer(dirty, { type: 'savedBaselineChanged', savedSourceText: '' });
     expect(saved.source.savedRevision).toBe(saved.source.revision);
     expect(saved.lifecycle).toMatchObject({ content: 'clean', recovery: 'notRequired' });
+  });
+
+  it('accepts revision-guarded patches without replacing the compatibility string projection', () => {
+    const initial = createDocumentRecord({ sourceText: 'alpha beta' });
+    const edited = documentRecordReducer(initial, {
+      type: 'sourceChangeSetApplied',
+      changeSet: {
+        documentId: initial.id,
+        expectedRevision: sourceRevision(0),
+        changes: [{ from: 6, to: 10, insert: 'BETA', expectedText: 'beta' }],
+      },
+    });
+    expect(edited.source.sourceText).toBe('alpha beta');
+    expect(documentCurrentSourceText(edited)).toBe('alpha BETA');
+    expect(edited).toMatchObject({ source: { revision: 1, savedRevision: 0 }, lifecycle: { content: 'dirty', recovery: 'pending' } });
+    const stale = documentRecordReducer(edited, {
+      type: 'sourceChangeSetApplied',
+      changeSet: { documentId: initial.id, expectedRevision: sourceRevision(0), changes: [{ from: 0, to: 1, insert: 'A' }] },
+    });
+    expect(stale).toBe(edited);
   });
 
   it('keeps lifecycle facets orthogonal', () => {
@@ -129,6 +174,9 @@ describe('DocumentRecord', () => {
         selectedVariableName: 'temperature',
         authorshipMarks: [{ id: 'a', start: 0, end: 1, createdAt: 1, label: 'A' }],
         structuredEditJournal: [{
+          schemaVersion: 2, operationId: 'replaceScalar', transactionId: 'edit-a', sourceRevision: 0,
+          sourceFingerprint: 'sha256:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          planFingerprint: 'sha256:v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
           id: 'edit-a', format: 'json', operationLabel: 'Replace', targetLabel: '$.a',
           previewLabel: '1 -> 2', riskLabel: 'low', appliedAt: 1, line: 1, column: 1,
         }],
@@ -185,5 +233,56 @@ describe('DocumentRecord', () => {
     expect(untitled.locator.kind).toBe('untitled');
     expect(untitled.view).toMatchObject({ preferredStructuredSurface: 'tree', selectedStructuredPath: '$.preserved' });
     expect(JSON.stringify(untitled)).not.toContain('Map');
+  });
+
+  it('atomically drops and baseline-rehydrates only eligible clean file source', () => {
+    const baseline = {
+      ...DEFAULT_METADATA,
+      lastKnownMtimeMs: 10,
+      lastKnownSizeBytes: 5,
+      contentHash: 'content:alpha',
+      originalByteHash: 'bytes:alpha',
+    };
+    const resident = createDocumentRecord({
+      locator: fallbackFileLocator('C:\\lab\\alpha.md'),
+      sourceText: 'alpha',
+      fileBaseline: baseline,
+      residentSince: 1,
+    });
+    const cold = documentRecordReducer(resident, {
+      type: 'sourceTransitionedColdClean', expectedRevision: resident.source.revision, transitionedAt: 20,
+    });
+    expect(cold.source).toMatchObject({
+      sourceText: '', savedSourceText: '', residency: { kind: 'coldClean', since: 20, verifiedBaseline: baseline },
+    });
+    expect(cold.source.buffer.current.text.length).toBe(0);
+    expect(cold.source.revision).toBe(resident.source.revision);
+    expect(() => documentCurrentSourceText(cold)).toThrow('must be reacquired');
+    expect(documentRecordReducer(cold, { type: 'sourceChanged', sourceText: 'unsafe' })).toBe(cold);
+
+    const rehydrated = documentRecordReducer(cold, {
+      type: 'coldSourceRehydrated', expectedRevision: cold.source.revision,
+      sourceText: 'alpha', fileBaseline: baseline, rehydratedAt: 30,
+    });
+    expect(rehydrated.source.residency).toEqual({ kind: 'resident', since: 30 });
+    expect(documentCurrentSourceText(rehydrated)).toBe('alpha');
+    expect(rehydrated.source.revision).toBe(resident.source.revision);
+  });
+
+  it('refuses cold transition for dirty, untitled, saving, conflicted, or unverified records', () => {
+    const verified = createDocumentRecord({
+      locator: fallbackFileLocator('C:\\lab\\verified.md'), sourceText: 'saved',
+      fileBaseline: { ...DEFAULT_METADATA, contentHash: 'verified' },
+    });
+    const dirty = documentRecordReducer(verified, { type: 'sourceChanged', sourceText: 'dirty' });
+    const saving = documentRecordReducer(verified, { type: 'autosaveStatusChanged', autosaveStatus: 'saving' });
+    const conflicted = documentRecordReducer(verified, { type: 'externalConflictChanged', externalConflict: true });
+    const unverified = createDocumentRecord({ locator: fallbackFileLocator('C:\\lab\\unknown.md'), sourceText: 'saved' });
+    const untitled = createDocumentRecord({ sourceText: 'saved' });
+    for (const record of [dirty, saving, conflicted, unverified, untitled]) {
+      expect(documentRecordReducer(record, {
+        type: 'sourceTransitionedColdClean', expectedRevision: record.source.revision, transitionedAt: 1,
+      })).toBe(record);
+    }
   });
 });

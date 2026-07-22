@@ -1,11 +1,11 @@
 # TOML Source Preservation Evaluation
 
-Date: 2026-07-01
-Status: boundary decision complete; production TOML visual writes remain disabled
+Date: 2026-07-22
+Status: production desktop boundary adopted; guarded operation matrix enabled
 
 ## Decision
 
-Keep TOML visual writes disabled in ScieMD for this refactor, and use a Rust-backed `toml_edit` boundary as the recommended production direction for future TOML preservation work. Round 9 moved `toml_edit` from an isolated dev spike into the native app dependency boundary and added the non-mutating Tauri command `inspect_toml_source_map`, which returns parse status, source spans, unsupported preservation features, no-op round-trip evidence, and a conservative recommendation without reading or writing files. This gives ScieMD a concrete native source-map bridge to build on later, but it is still not enough to enable production writes because the app needs a typed edit planner with expected-source checks, post-edit validation, unsupported-node gating, and byte-for-byte untouched-region tests.
+Use Rust `toml_edit` as the one authoritative desktop TOML syntax, source-map, and mutation-planning engine. The versioned `inspect_toml_source_map` and `plan_toml_mutation` commands return value/source identities, operation capabilities, typed diagnostics, guarded patches, and exact untouched-region evidence without reading or writing files. The application shared executor remains authoritative for review, envelope validation, journal acknowledgement, aggregate commit, and normal save.
 
 Taplo remains relevant for diagnostics, formatting, schema/LSP behavior, and syntax-tree inspection, but it is not the primary edit-preservation boundary for ScieMD right now. The reason is practical: the current codebase already has a Tauri/Rust layer, `toml_edit` already proves no-op preservation and localized mutation behavior inside ScieMD fixtures, and keeping TOML preservation in Rust avoids adding large TOML tooling to the webview bundle.
 
@@ -24,6 +24,7 @@ The evidence fixtures live in `docs/refactor/toml_preservation_fixtures/`:
 - `section-ordering.toml`: non-alphabetical section order.
 - `duplicate-key.invalid.toml`: duplicate key rejection.
 - `duplicate-section.invalid.toml`: duplicate section rejection.
+- `unicode-and-datetime.toml`: non-ASCII strings plus offset/local date and time operation gating; the corpus also derives a uniform-CRLF variant.
 
 ## Spike Command
 
@@ -31,39 +32,39 @@ The evidence fixtures live in `docs/refactor/toml_preservation_fixtures/`:
 npm run spike:toml-preservation
 ```
 
-This command runs the Rust integration test `src-tauri/tests/toml_preservation_spike.rs`. Round 9 also added `src-tauri/src/commands/toml_source_map.rs`, which exposes the non-mutating Tauri command `inspect_toml_source_map(sourceText)`. Production TOML visual parsing in the webview remains `smol-toml` in `packages/core/src/formats/toml/parseTomlDocument.ts`, so this round does not switch the visible TOML tree to the Rust source-map command.
+This command runs the Rust integration corpus. Desktop production analysis now consumes `inspect_toml_source_map`; visual intents consume `plan_toml_mutation`; both use DTO `toml-native-dto-v1` and planner `toml-edit-native-v1`. `packages/core/src/formats/toml/parseTomlDocument.ts` remains only a host-neutral preview and defense-in-depth parse fallback and owns no desktop source identity or patch authority.
 
 ## Observed Evidence
 
 The `toml_edit` spike currently proves:
 
-- Valid fixtures round-trip byte-for-byte through `DocumentMut::to_string()` with no edits.
+- Valid LF fixtures round-trip byte-for-byte through `DocumentMut::to_string()`; the native boundary restores and proves uniform CRLF envelopes byte-for-byte.
 - A scalar edit to `[catalog].title` preserves unrelated comments, `[[products]]` syntax, existing product rows, and relative source order.
 - A scalar edit inside an inline table preserves the surrounding fixture comments and inline table structure in the isolated spike.
 - Inserting a table into an existing array of tables preserves existing entries and relative order in the isolated spike.
-- Immutable `Document<String>` access exposes spans for table headers, array-of-table headers, and values. This matters because `DocumentMut` intentionally removes spans when it becomes editable, so a future adapter must retain immutable parse evidence or keep a parallel source map before mutation.
-- The new `inspect_toml_source_map` command returns source-span-backed nodes, no-op round-trip status, and unsupported feature classifications for comments, dotted keys, inline tables, arrays of tables, and multiline strings without mutating the document.
+- Immutable `Document<String>` access exposes spans for table headers, array-of-table headers, keys, and values. The production adapter retains that immutable identity before any `DocumentMut` operation.
+- `inspect_toml_source_map` returns source-span-backed nodes, no-op round-trip status, per-operation capabilities, and unsupported feature classifications without mutating the document.
 - Duplicate key and duplicate section fixtures are rejected by the parser.
 
-Known limitations and remaining risks:
+Operation and host matrix:
 
-- The native command is source-map evidence only. It does not apply patches, does not compute expected old source slices, and does not yet compare untouched regions after a planned edit.
-- The spike now covers representative scalar, inline-table scalar, and array-of-table insertion cases, but it does not prove safe delete, rename, reorder, dotted-key edit, table move, inline-table insertion/removal, or comment-ownership behavior.
-- `toml_edit` documentation warns that dotted key ordering is not fully preserved in all cases, so a future ScieMD adapter must gate or fixture-test dotted-key edits carefully.
-- Taplo's documented parser stack preserves comments, whitespace, and original token positions in a syntax tree, but this round did not fixture-test Taplo as an edit engine inside ScieMD.
-- The current app still builds its TOML visual tree from normalized `smol-toml` output, so visual tree nodes do not carry authoritative source spans.
+- Desktop enables review-required scalar replacement for basic/literal single-line strings, finite numbers, and booleans; bare-key rename; scalar field add/delete in mutable tables; and scalar-array append/delete. The native node capability list is the final per-node gate.
+- Scalar replacement is safe inside dotted keys, inline tables, and arrays of tables because it patches the authoritative value span only. Structural edits to dotted keys, inline tables, and arrays of tables remain source-only unless a node explicitly advertises them.
+- Multiline strings and date/time scalar replacement remain source-only. Quoted/decorated key rename, ambiguous comment-owned deletion, non-scalar insertion, reorder, table move, and mixed-line-ending structural mutation remain source-only.
+- Comments, whitespace, ordering, quote style where representable, Unicode, uniform CRLF, key decoration, trailing decoration, and all untouched regions are preserved. Necessary double-quoted string escaping is visible in required review.
+- Browser and VS Code hosts do not imitate native preservation. They remain source-editable and visually read-only through declarative host capability intersection.
 
-## Minimum Adapter Contract Before TOML Writes
+## Implemented Adapter Contract
 
-Before any TOML visual write control is enabled, a production adapter must provide:
+The production adapter provides:
 
 1. A parser-backed source map from every editable visual node to a stable TOML item and source range.
 2. A read-only fallback for nodes represented by dotted keys, arrays of tables, inline tables, multiline strings, comments, or table structure that the adapter cannot patch locally.
 3. Patch planning with expected-source hash checks and post-edit strict TOML parse validation.
 4. Byte-for-byte round-trip tests for no-op documents and untouched regions across the fixture corpus.
-5. Scalar edit, key insert, key delete, and array-of-table edit fixtures before UI controls are exposed.
-6. A typed bridge from `inspect_toml_source_map`-style native evidence to the host-neutral structured operation/review model.
-7. A deliberate UI enablement step that keeps TOML read-only unless the native edit planner proves the exact operation is safe.
+5. Native scalar/key/table/scalar-array fixtures plus explicit dotted-key, inline-table, array-of-table, multiline-string, datetime, Unicode, CRLF, duplicate-key/section, and comment-decoration status.
+6. A typed bridge from native evidence to the host-neutral structured operation/review model and the shared Round 6 executor.
+7. Declarative catalog, matrix, node, runtime, and host intersection; absent native capability keeps the TOML tree read-only.
 
 ## References
 

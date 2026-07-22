@@ -71,6 +71,7 @@
   --focus-ring: var(--vscode-focusBorder, var(--scie-link));
   --shadow-soft: 0 16px 42px rgb(0 0 0 / 22%);
   --editor-font: var(--vscode-editor-font-family, "JetBrains Mono", monospace);
+  --source-editor-font: var(--vscode-editor-font-family, "IBM Plex Mono", monospace);
   background: var(--scie-bg);
   color: var(--scie-fg);
 }

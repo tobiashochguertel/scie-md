@@ -1,10 +1,11 @@
 import { act, type ComponentProps } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { sourceEditorCapabilitiesFor } from '@sciemd/core';
+import { createTomlContent, parseTomlNativeReport, sourceEditorCapabilitiesFor } from '@sciemd/core';
 import { AppEditorStage } from './AppEditorStage';
 import { formatCapabilitiesFor } from './formatCapabilities';
-import { parseSourceFormatDiagnostics } from './formatDiagnostics';
+import { parseSourceFormatDiagnostics, sourceFormatDiagnosticsFromParseResult } from './formatDiagnostics';
+import { createDocumentId } from './documentIdentity';
 import { createStructuredSurfaceNavigationModel } from './structuredSurfaceNavigation';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -861,10 +862,11 @@ describe('AppEditorStage', () => {
     expect(container.querySelector('[data-testid="source-text-editor"]')).toBeNull();
   });
 
-  it('routes valid YAML tree mode to the read-only structured tree without source change callbacks', () => {
+  it('routes valid YAML tree mode to the guarded production edit callback', () => {
     const onMarkdownChange = vi.fn();
     const onJsonSelectedPathChange = vi.fn();
     const onRevealStructuredSource = vi.fn();
+    const onYamlEditIntent = vi.fn();
     const structuredAnalysis = parseSourceFormatDiagnostics('yaml', 'sample:\n  name: Alpha\n', null).structuredAnalysis;
     const props = createProps({
       format: 'yaml',
@@ -876,22 +878,59 @@ describe('AppEditorStage', () => {
       onMarkdownChange,
       onJsonSelectedPathChange,
       onRevealStructuredSource,
+      onYamlEditIntent,
     });
 
     renderStage(props);
 
     expect(container.querySelector('[data-testid="json-tree-view"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="json-tree-view"]')?.getAttribute('data-value')).toBe('{"sample":{"name":"Alpha"}}');
-    expect(container.querySelector('[data-testid="json-tree-view"]')?.getAttribute('data-editable')).toBe('false');
+    expect(container.querySelector('[data-testid="json-tree-view"]')?.getAttribute('data-editable')).toBe('true');
     expect(container.querySelector('[data-testid="source-text-editor"]')).toBeNull();
     clickButton('select json path');
     clickButton('reveal json source');
+    clickButton('edit json path');
     expect(onJsonSelectedPathChange).toHaveBeenCalledWith('$.sample');
     expect(onRevealStructuredSource).toHaveBeenCalledWith(expect.objectContaining({
       pointer: '/sample',
       displayPath: '$.sample',
     }));
     expect(onMarkdownChange).not.toHaveBeenCalled();
+    expect(onYamlEditIntent).toHaveBeenCalledWith({ kind: 'replaceScalar', path: ['sample'], nextValue: 2 });
+  });
+
+  it('routes desktop native TOML tree mode to the guarded production edit callback', () => {
+    const source = 'title = "Alpha"\n';
+    const onTomlEditIntent = vi.fn();
+    const parsed = parseTomlNativeReport(createTomlContent(source), {
+      dtoVersion: 'toml-native-dto-v1', plannerVersion: 'toml-edit-native-v1', status: 'valid', value: { title: 'Alpha' }, diagnostics: [],
+      nodes: [
+        { path: [], pointer: '', displayPath: '$', kind: 'table', valueType: 'table', span: null, valueSpan: null, keySpan: null, editableCandidate: true, editableOperations: ['addObjectField'] },
+        { path: ['title'], pointer: '/title', displayPath: '$.title', kind: 'scalar', valueType: 'string', span: { offset: 8, length: 7, line: 1, column: 9 }, valueSpan: { offset: 8, length: 7, line: 1, column: 9 }, keySpan: { offset: 0, length: 5, line: 1, column: 1 }, editableCandidate: true, editableOperations: ['replaceScalar'] },
+      ], unsupportedFeatures: [], summary: { nodeCount: 2, spannedNodeCount: 1, unsupportedFeatureCount: 0, noOpRoundTripPreserved: true, visualWritesEnabled: true, boundaryStatus: 'production-source-preserving', commandScope: 'inspect-and-plan-guarded-patches' },
+    });
+    const structuredAnalysis = sourceFormatDiagnosticsFromParseResult(parsed).structuredAnalysis;
+    renderStage(createProps({
+      format: 'toml', formatCapabilities: formatCapabilitiesFor('toml', { tomlNativePlanning: true }), mode: 'visual', markdown: source,
+      structuredAnalysis, selectedJsonPath: '$.title', onTomlEditIntent,
+    }));
+
+    expect(container.querySelector('[data-testid="json-tree-view"]')?.getAttribute('data-editable')).toBe('true');
+    clickButton('edit json path');
+    expect(onTomlEditIntent).toHaveBeenCalledWith({ kind: 'replaceScalar', path: ['sample'], nextValue: 2 });
+  });
+
+  it('routes valid XML tree mode to the guarded production edit callback', () => {
+    const source = '<lab:root xmlns:lab="urn:lab"><lab:sample id="A">Alpha</lab:sample></lab:root>';
+    const onXmlEditIntent = vi.fn();
+    const structuredAnalysis = parseSourceFormatDiagnostics('xml', source, null).structuredAnalysis;
+    renderStage(createProps({
+      format: 'xml', formatCapabilities: formatCapabilitiesFor('xml'), mode: 'visual', markdown: source,
+      structuredAnalysis, selectedJsonPath: '$.children[0].children[0].text', onXmlEditIntent,
+    }));
+    expect(container.querySelector('[data-testid="json-tree-view"]')?.getAttribute('data-editable')).toBe('true');
+    clickButton('edit json path');
+    expect(onXmlEditIntent).toHaveBeenCalledWith({ kind: 'replaceScalar', path: ['sample'], nextValue: 2 });
   });
 
   it('keeps invalid TOML in generic source mode even when tree mode is requested', () => {
@@ -1186,6 +1225,7 @@ async function clickContextMenuItem(label: string): Promise<void> {
 function createProps(overrides: Partial<ComponentProps<typeof AppEditorStage>> = {}): ComponentProps<typeof AppEditorStage> {
   return {
     editorStageRef: { current: null },
+    documentId: createDocumentId(),
     format: 'markdown',
     formatCapabilities: formatCapabilitiesFor('markdown'),
     mode: 'visual',

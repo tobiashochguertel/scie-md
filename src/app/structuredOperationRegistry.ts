@@ -245,7 +245,7 @@ function jsonArrayCellOperationSections(target: Extract<StructuredOperationTarge
         operation('editCell', 'Edit cell', 'edit', {
           disabled: editDisabled,
           disabledReason: editDisabled ? target.editDisabledReason ?? 'JSON table cell editing is unavailable.' : undefined,
-          requiresReview: true,
+          requiresReview: false,
           sourcePreserving: true,
         }),
         operation('revealSource', 'Reveal in source', 'source', {
@@ -337,7 +337,7 @@ function tabularCellOperationSections(target: Extract<StructuredOperationTarget,
       items: [operation('editCell', 'Edit cell', 'edit', {
         disabled: !target.editsAvailable,
         disabledReason: target.editDisabledReason ?? 'Table cell editing is not available.',
-        requiresReview: true,
+        requiresReview: false,
         sourcePreserving: true,
       })],
     },
@@ -509,7 +509,7 @@ function recordEditOperation(
 
 function jsonEditOperation(id: StructuredOperationId, overrides: Partial<StructuredOperationItem> = {}): StructuredOperationItem {
   return operation(id, jsonEditOperationLabel(id), jsonEditOperationIcon(id), {
-    requiresReview: true,
+    requiresReview: id !== 'replaceScalar',
     sourcePreserving: true,
     destructive: id === 'deleteObjectField' || id === 'deleteArrayItem',
     ...overrides,

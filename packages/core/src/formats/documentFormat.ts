@@ -113,8 +113,14 @@ export interface StructuredNodeRef {
   keySpan?: SourceSpan | null;
   lossy: boolean;
   editable: boolean;
+  editableOperations?: string[];
   unsupportedReason?: string;
   childCount?: number;
+  nodeKind?: string;
+  qualifiedName?: string | null;
+  localName?: string | null;
+  namespaceUri?: string | null;
+  namespaceContext?: Record<string, string>;
 }
 
 export interface StructuredSourceMap {

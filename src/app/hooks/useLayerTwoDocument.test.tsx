@@ -1,12 +1,13 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_METADATA, type FileMetadata } from '../documentState';
+import { createHostReadResponse, DEFAULT_METADATA, type FileMetadata } from '../documentState';
 import type { DocumentHost, HostUnlisten } from '../host/documentHost';
 import type { FileWatchChangeEvent } from '../../services/fileWatchService';
 import { useLayerTwoDocument } from './useLayerTwoDocument';
 import { createDocumentId, sourceRevision } from '../documentIdentity';
 import { createDocumentEffectCoordinator } from '../effects/documentEffectCoordinator';
+import { documentAnalysisRuntime } from '../runtime/documentAnalysisRuntime';
 
 const layerDocumentId = createDocumentId();
 const layerEffects = createDocumentEffectCoordinator(() => sourceRevision(0));
@@ -51,6 +52,7 @@ describe('useLayerTwoDocument linked-file refresh', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     watchCallback = null;
+    documentAnalysisRuntime.resetForTests();
     host = createFakeHost((callback) => {
       watchCallback = callback;
     });
@@ -72,6 +74,7 @@ describe('useLayerTwoDocument linked-file refresh', () => {
     vi.mocked(host.watcher.updateWatchedFiles).mockResolvedValue(true);
     renderHarness();
 
+    await advance(0);
     await advance(250);
     expect(host.file.statFile).toHaveBeenCalledTimes(1);
     expect(host.file.readTextFile).toHaveBeenCalledTimes(1);
@@ -87,6 +90,7 @@ describe('useLayerTwoDocument linked-file refresh', () => {
     vi.mocked(host.watcher.updateWatchedFiles).mockResolvedValue(false);
     renderHarness();
 
+    await advance(0);
     await advance(250);
     expect(host.file.statFile).toHaveBeenCalledTimes(1);
     expect(host.file.readTextFile).toHaveBeenCalledTimes(1);
@@ -104,6 +108,7 @@ describe('useLayerTwoDocument linked-file refresh', () => {
       .mockResolvedValue(metadata);
     renderHarness();
 
+    await advance(0);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(250);
     });
@@ -157,10 +162,10 @@ function Harness({
 function createFakeHost(onListen: (callback: WatchCallback) => void): TestHost {
   return {
     file: {
-      readTextFile: vi.fn(async () => ({
-        content: '@article{smith2026, title={Result}, author={Smith}, year={2026}}',
+      readTextFile: vi.fn(async () => createHostReadResponse(
+        '@article{smith2026, title={Result}, author={Smith}, year={2026}}',
         metadata,
-      })),
+      )),
       readTextFileForEdit: vi.fn(),
       statFile: vi.fn(async () => metadata),
       writeTextFileAtomic: vi.fn(),

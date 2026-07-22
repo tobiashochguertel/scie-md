@@ -1,9 +1,13 @@
 use std::{collections::BTreeSet, ops::Range};
 
-use serde::Serialize;
-use toml_edit::{Document, DocumentMut, Item, Table, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map as JsonMap, Value as JsonValue};
+use toml_edit::{value, Document, DocumentMut, Item, Table, Value};
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub const TOML_NATIVE_DTO_VERSION: &str = "toml-native-dto-v1";
+pub const TOML_NATIVE_PLANNER_VERSION: &str = "toml-edit-native-v1";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum TomlPathSegment {
     Key(String),
@@ -68,7 +72,10 @@ pub struct TomlSourceMapNode {
     pub kind: String,
     pub value_type: String,
     pub span: Option<TomlSourceSpan>,
+    pub value_span: Option<TomlSourceSpan>,
+    pub key_span: Option<TomlSourceSpan>,
     pub editable_candidate: bool,
+    pub editable_operations: Vec<String>,
     pub unsupported_reason: Option<String>,
 }
 
@@ -92,16 +99,58 @@ pub struct TomlSourceMapSummary {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TomlSourceMapReport {
+    pub dto_version: String,
+    pub planner_version: String,
     pub status: TomlSourceMapStatus,
+    pub value: Option<JsonValue>,
     pub diagnostics: Vec<TomlSourceMapDiagnostic>,
     pub nodes: Vec<TomlSourceMapNode>,
     pub unsupported_features: Vec<TomlUnsupportedFeature>,
     pub summary: TomlSourceMapSummary,
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TomlMutationIntent {
+    pub kind: String,
+    pub path: Vec<TomlPathSegment>,
+    pub new_value: Option<JsonValue>,
+    pub new_key: Option<String>,
+    pub key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TomlGuardedPatch {
+    pub from: usize,
+    pub to: usize,
+    pub insert: String,
+    pub expected_text: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TomlMutationPlanReport {
+    pub dto_version: String,
+    pub planner_version: String,
+    pub status: String,
+    pub operation_id: String,
+    pub path: Vec<TomlPathSegment>,
+    pub patches: Vec<TomlGuardedPatch>,
+    pub next_source: Option<String>,
+    pub next_value: Option<JsonValue>,
+    pub diagnostics: Vec<TomlSourceMapDiagnostic>,
+    pub untouched_regions_exact: bool,
+}
+
 #[tauri::command]
 pub fn inspect_toml_source_map(source_text: String) -> TomlSourceMapReport {
     inspect_toml_source_map_text(&source_text)
+}
+
+#[tauri::command]
+pub fn plan_toml_mutation(source_text: String, intent: TomlMutationIntent) -> TomlMutationPlanReport {
+    plan_toml_mutation_text(&source_text, intent)
 }
 
 pub fn inspect_toml_source_map_text(source: &str) -> TomlSourceMapReport {
@@ -112,13 +161,16 @@ pub fn inspect_toml_source_map_text(source: &str) -> TomlSourceMapReport {
             let diagnostic = TomlSourceMapDiagnostic {
                 severity: "error".into(),
                 code: "toml-source-map-parse-error".into(),
-                message: error.to_string(),
+                message: "TOML source could not be parsed by the native engine.".into(),
                 line: span.as_ref().map(|span| span.line),
                 column: span.as_ref().map(|span| span.column),
                 span,
             };
             return TomlSourceMapReport {
+                dto_version: TOML_NATIVE_DTO_VERSION.into(),
+                planner_version: TOML_NATIVE_PLANNER_VERSION.into(),
                 status: TomlSourceMapStatus::Invalid,
+                value: None,
                 diagnostics: vec![diagnostic],
                 nodes: Vec::new(),
                 unsupported_features: Vec::new(),
@@ -157,11 +209,14 @@ pub fn inspect_toml_source_map_text(source: &str) -> TomlSourceMapReport {
         .collect::<Vec<_>>();
     let no_op_round_trip_preserved = source
         .parse::<DocumentMut>()
-        .map(|document| document.to_string() == source)
+        .map(|document| render_document_preserving_line_endings(&document, source) == source)
         .unwrap_or(false);
 
     TomlSourceMapReport {
+        dto_version: TOML_NATIVE_DTO_VERSION.into(),
+        planner_version: TOML_NATIVE_PLANNER_VERSION.into(),
         status: TomlSourceMapStatus::Valid,
+        value: Some(json_from_item(document.as_item())),
         diagnostics: Vec::new(),
         summary: TomlSourceMapSummary {
             node_count: nodes.len(),
@@ -175,7 +230,7 @@ pub fn inspect_toml_source_map_text(source: &str) -> TomlSourceMapReport {
             unsupported_feature_count: unsupported_features.len(),
             unsupported_kinds,
             no_op_round_trip_preserved,
-            visual_writes_enabled: false,
+            visual_writes_enabled: true,
             boundary_status: boundary_status(),
             command_scope: command_scope(),
             recommended_boundary: recommended_boundary(),
@@ -253,6 +308,10 @@ fn collect_table(
         let mut child_path = path.clone();
         child_path.push(TomlPathSegment::Key(key.to_string()));
         collect_item(source, child, child_path, nodes, unsupported_features);
+        if let Some(node) = nodes.iter_mut().rev().find(|node| node.path == path_with_key(&path, key)) {
+            node.key_span = table.key(key).and_then(|key| key.span()).map(|span| source_span(source, span));
+            add_field_operations(node);
+        }
     }
 }
 
@@ -312,6 +371,11 @@ fn collect_value(
                     &path,
                     value.span(),
                 ));
+                if let Some(node) = nodes.iter_mut().rev().find(|node| node.path == path) {
+                    node.editable_operations.retain(|operation| operation != "replaceScalar");
+                    node.editable_candidate = !node.editable_operations.is_empty();
+                    if !node.editable_candidate { node.unsupported_reason = Some("Multiline TOML strings are source-only.".into()); }
+                }
             }
         }
     }
@@ -326,19 +390,51 @@ fn push_node(
     nodes: &mut Vec<TomlSourceMapNode>,
 ) {
     let span = span.map(|range| source_span(source, range));
+    let editable_operations = editable_operations(kind, value_type, &path);
     nodes.push(TomlSourceMapNode {
         pointer: pointer_from_path(&path),
         display_path: display_path_from_path(&path),
         path,
         kind: kind.into(),
         value_type: value_type.into(),
-        editable_candidate: false,
-        unsupported_reason: Some(
-            "TOML visual writes remain disabled until the toml_edit source-map command is paired with a fixture-backed patch planner."
-                .into(),
-        ),
+        editable_candidate: !editable_operations.is_empty(),
+        editable_operations,
+        unsupported_reason: None,
+        value_span: span.clone(),
+        key_span: None,
         span,
     });
+}
+
+fn path_with_key(path: &[TomlPathSegment], key: &str) -> Vec<TomlPathSegment> {
+    let mut result = path.to_vec();
+    result.push(TomlPathSegment::Key(key.to_string()));
+    result
+}
+
+fn editable_operations(kind: &str, value_type: &str, path: &[TomlPathSegment]) -> Vec<String> {
+    let mut operations = Vec::new();
+    if kind == "scalar" && !matches!(value_type, "datetime" | "date" | "time") {
+        operations.push("replaceScalar".into());
+    }
+    if kind == "array" {
+        operations.push("addArrayItem".into());
+    }
+    if kind == "table" {
+        operations.push("addObjectField".into());
+    }
+    if matches!(path.last(), Some(TomlPathSegment::Index(_))) {
+        operations.push("deleteArrayItem".into());
+    }
+    operations
+}
+
+fn add_field_operations(node: &mut TomlSourceMapNode) {
+    if node.key_span.is_some() {
+        node.editable_operations.push("renameObjectKey".into());
+        node.editable_operations.push("deleteObjectField".into());
+        node.editable_candidate = true;
+    }
 }
 
 fn unsupported_feature(
@@ -406,8 +502,8 @@ fn source_span(source: &str, range: Range<usize>) -> TomlSourceSpan {
     let end = range.end.min(source.len()).max(start);
     let (line, column) = line_column_from_offset(source, start);
     TomlSourceSpan {
-        offset: start,
-        length: end - start,
+        offset: source[..start].encode_utf16().count(),
+        length: source[start..end].encode_utf16().count(),
         line,
         column,
     }
@@ -425,7 +521,7 @@ fn line_column_from_offset(source: &str, offset: usize) -> (usize, usize) {
             line_start = index + 1;
         }
     }
-    (line, offset.saturating_sub(line_start) + 1)
+    (line, source[line_start..offset.min(source.len())].encode_utf16().count() + 1)
 }
 
 fn item_kind(item: &Item) -> &'static str {
@@ -511,19 +607,313 @@ fn recommended_boundary() -> String {
 }
 
 fn boundary_status() -> String {
-    "experimental-readonly-evidence".into()
+    "production-source-preserving".into()
 }
 
 fn command_scope() -> String {
-    "inspect-source-map-only".into()
+    "inspect-and-plan-guarded-patches".into()
+}
+
+fn json_from_item(item: &Item) -> JsonValue {
+    match item {
+        Item::None => JsonValue::Null,
+        Item::Value(value) => json_from_value(value),
+        Item::Table(table) => JsonValue::Object(table.iter().map(|(key, item)| (key.to_string(), json_from_item(item))).collect()),
+        Item::ArrayOfTables(tables) => JsonValue::Array(tables.iter().map(|table| {
+            JsonValue::Object(table.iter().map(|(key, item)| (key.to_string(), json_from_item(item))).collect())
+        }).collect()),
+    }
+}
+
+fn json_from_value(value: &Value) -> JsonValue {
+    match value {
+        Value::String(value) => JsonValue::String(value.value().clone()),
+        Value::Integer(value) => JsonValue::Number((*value.value()).into()),
+        Value::Float(value) => serde_json::Number::from_f64(*value.value()).map(JsonValue::Number).unwrap_or(JsonValue::Null),
+        Value::Boolean(value) => JsonValue::Bool(*value.value()),
+        Value::Datetime(value) => JsonValue::String(value.value().to_string()),
+        Value::Array(array) => JsonValue::Array(array.iter().map(json_from_value).collect()),
+        Value::InlineTable(table) => {
+            let mut object = JsonMap::new();
+            for (key, value) in table.iter() { object.insert(key.to_string(), json_from_value(value)); }
+            JsonValue::Object(object)
+        }
+    }
+}
+
+pub fn plan_toml_mutation_text(source: &str, intent: TomlMutationIntent) -> TomlMutationPlanReport {
+    let inspection = inspect_toml_source_map_text(source);
+    if inspection.status != TomlSourceMapStatus::Valid {
+        return rejected_plan(&intent, "toml-native-invalid-source", "TOML source is invalid.");
+    }
+    let pointer = pointer_from_path(&intent.path);
+    let allowed = inspection.nodes.iter().find(|node| node.pointer == pointer)
+        .is_some_and(|node| node.editable_operations.iter().any(|operation| operation == &intent.kind));
+    if !allowed {
+        return rejected_plan(&intent, "toml-native-operation-unsupported", "This TOML node is source-only for the requested operation.");
+    }
+    if intent.kind == "deleteObjectField" {
+        if let Some(node) = inspection.nodes.iter().find(|node| node.path == intent.path) {
+            if node_has_attached_comment(source, node) {
+                return rejected_plan(&intent, "toml-native-comment-ownership", "The TOML field has attached comment decoration; use source mode.");
+            }
+        }
+    }
+
+    let next_source = if intent.kind == "renameObjectKey" {
+        match plan_key_rename(source, &inspection, &intent) {
+            Ok(source) => source,
+            Err((code, message)) => return rejected_plan(&intent, code, message),
+        }
+    } else if intent.kind == "replaceScalar" {
+        match plan_scalar_replace(source, &inspection, &intent) {
+            Ok(source) => source,
+            Err((code, message)) => return rejected_plan(&intent, code, message),
+        }
+    } else {
+        let mut document = match source.parse::<DocumentMut>() {
+            Ok(document) => document,
+            Err(_) => return rejected_plan(&intent, "toml-native-invalid-source", "TOML source is invalid."),
+        };
+        if let Err((code, message)) = apply_document_mutation(document.as_item_mut(), &intent.path, &intent) {
+            return rejected_plan(&intent, code, message);
+        }
+        render_document_preserving_line_endings(&document, source)
+    };
+    let next_document = match next_source.parse::<Document<String>>() {
+        Ok(document) => document,
+        Err(_) => return rejected_plan(&intent, "toml-native-postcondition-failed", "The planned TOML result did not parse."),
+    };
+    let patch = minimal_guarded_patch(source, &next_source);
+    if patch.is_none() {
+        return rejected_plan(&intent, "toml-native-no-change", "The requested TOML operation made no source change.");
+    }
+    let patch = patch.unwrap();
+    if matches!(intent.kind.as_str(), "deleteObjectField" | "deleteArrayItem") && patch.expected_text.contains('#') {
+        return rejected_plan(&intent, "toml-native-comment-ownership", "The deleted TOML node has comment decoration; use source mode.");
+    }
+    TomlMutationPlanReport {
+        dto_version: TOML_NATIVE_DTO_VERSION.into(),
+        planner_version: TOML_NATIVE_PLANNER_VERSION.into(),
+        status: "planned".into(),
+        operation_id: intent.kind,
+        path: intent.path,
+        patches: vec![patch],
+        next_source: Some(next_source),
+        next_value: Some(json_from_item(next_document.as_item())),
+        diagnostics: Vec::new(),
+        untouched_regions_exact: true,
+    }
+}
+
+fn plan_scalar_replace(source: &str, inspection: &TomlSourceMapReport, intent: &TomlMutationIntent) -> Result<String, (&'static str, &'static str)> {
+    let node = inspection.nodes.iter().find(|node| node.path == intent.path).ok_or(("toml-native-stale-path", "The TOML path no longer exists."))?;
+    let span = node.value_span.as_ref().ok_or(("toml-native-value-span-unavailable", "The TOML value has no authoritative source span."))?;
+    let from = utf16_to_byte_offset(source, span.offset).ok_or(("toml-native-value-span-invalid", "The TOML value span is invalid."))?;
+    let to = utf16_to_byte_offset(source, span.offset + span.length).ok_or(("toml-native-value-span-invalid", "The TOML value span is invalid."))?;
+    let raw = &source[from..to];
+    let replacement = render_scalar_like(raw, intent.new_value.as_ref().ok_or(("toml-native-missing-value", "A replacement value is required."))?)?;
+    let mut next = String::with_capacity(source.len() + replacement.len());
+    next.push_str(&source[..from]); next.push_str(&replacement); next.push_str(&source[to..]);
+    Ok(next)
+}
+
+fn render_scalar_like(raw: &str, input: &JsonValue) -> Result<String, (&'static str, &'static str)> {
+    match input {
+        JsonValue::String(text) if raw.starts_with('\'') && raw.ends_with('\'') && !text.chars().any(|character| matches!(character, '\'' | '\r' | '\n')) => Ok(format!("'{text}'")),
+        JsonValue::String(text) => serde_json::to_string(text).map_err(|_| ("toml-native-value-unsupported", "The TOML string could not be represented.")),
+        JsonValue::Bool(boolean) => Ok(boolean.to_string()),
+        JsonValue::Number(number) => Ok(number.to_string()),
+        _ => Err(("toml-native-value-unsupported", "Visual TOML operations accept scalar values only.")),
+    }
+}
+
+fn rejected_plan(intent: &TomlMutationIntent, code: &str, message: &str) -> TomlMutationPlanReport {
+    TomlMutationPlanReport {
+        dto_version: TOML_NATIVE_DTO_VERSION.into(), planner_version: TOML_NATIVE_PLANNER_VERSION.into(),
+        status: "rejected".into(), operation_id: intent.kind.clone(), path: intent.path.clone(), patches: Vec::new(),
+        next_source: None, next_value: None, diagnostics: vec![TomlSourceMapDiagnostic {
+            severity: "error".into(), code: code.into(), message: message.into(), span: None, line: None, column: None,
+        }], untouched_regions_exact: false,
+    }
+}
+
+fn plan_key_rename(source: &str, inspection: &TomlSourceMapReport, intent: &TomlMutationIntent) -> Result<String, (&'static str, &'static str)> {
+    let new_key = intent.new_key.as_deref().ok_or(("toml-native-missing-key", "A replacement key is required."))?;
+    if !is_bare_toml_key(new_key) { return Err(("toml-native-unsafe-key", "Visual key rename accepts bare TOML keys only.")); }
+    let node = inspection.nodes.iter().find(|node| node.path == intent.path).ok_or(("toml-native-stale-path", "The TOML path no longer exists."))?;
+    let span = node.key_span.as_ref().ok_or(("toml-native-key-span-unavailable", "The TOML key has no authoritative source span."))?;
+    let from = utf16_to_byte_offset(source, span.offset).ok_or(("toml-native-key-span-invalid", "The TOML key span is invalid."))?;
+    let to = utf16_to_byte_offset(source, span.offset + span.length).ok_or(("toml-native-key-span-invalid", "The TOML key span is invalid."))?;
+    if !is_bare_toml_key(&source[from..to]) { return Err(("toml-native-key-decoration", "Quoted or decorated TOML keys are source-only for rename.")); }
+    let mut next = String::with_capacity(source.len() + new_key.len());
+    next.push_str(&source[..from]); next.push_str(new_key); next.push_str(&source[to..]);
+    Ok(next)
+}
+
+fn apply_document_mutation(item: &mut Item, path: &[TomlPathSegment], intent: &TomlMutationIntent) -> Result<(), (&'static str, &'static str)> {
+    match intent.kind.as_str() {
+        "replaceScalar" => {
+            let target = value_at_path_mut(item, path).ok_or(("toml-native-stale-path", "The TOML path no longer exists."))?;
+            if !target.is_str() && !target.is_integer() && !target.is_float() && !target.is_bool() {
+                return Err(("toml-native-scalar-unsupported", "This TOML scalar type is source-only."));
+            }
+            *target = json_to_toml_value(intent.new_value.as_ref().ok_or(("toml-native-missing-value", "A replacement value is required."))?)?;
+        }
+        "addObjectField" => {
+            let table = table_at_path_mut(item, path).ok_or(("toml-native-table-unsupported", "This TOML table cannot be edited visually."))?;
+            let key = intent.key.as_deref().ok_or(("toml-native-missing-key", "A field key is required."))?;
+            if !is_bare_toml_key(key) || table.contains_key(key) { return Err(("toml-native-unsafe-key", "The TOML field key is invalid or already exists.")); }
+            table.insert(key, Item::Value(json_to_toml_value(intent.new_value.as_ref().ok_or(("toml-native-missing-value", "A field value is required."))?)?));
+        }
+        "deleteObjectField" => {
+            let (parent, key) = split_key_path(path)?;
+            let table = table_at_path_mut(item, parent).ok_or(("toml-native-table-unsupported", "This TOML table cannot be edited visually."))?;
+            table.remove(key).ok_or(("toml-native-stale-path", "The TOML field no longer exists."))?;
+        }
+        "addArrayItem" => {
+            let array = value_at_path_mut(item, path).and_then(Value::as_array_mut).ok_or(("toml-native-array-unsupported", "This TOML array cannot be edited visually."))?;
+            array.push(json_to_toml_value(intent.new_value.as_ref().ok_or(("toml-native-missing-value", "An array value is required."))?)?);
+        }
+        "deleteArrayItem" => {
+            let (parent, index) = split_index_path(path)?;
+            let array = value_at_path_mut(item, parent).and_then(Value::as_array_mut).ok_or(("toml-native-array-unsupported", "This TOML array cannot be edited visually."))?;
+            if index >= array.len() { return Err(("toml-native-stale-path", "The TOML array item no longer exists.")); }
+            array.remove(index);
+        }
+        _ => return Err(("toml-native-operation-unsupported", "This TOML operation is not supported.")),
+    }
+    Ok(())
+}
+
+fn value_at_path_mut<'a>(item: &'a mut Item, path: &[TomlPathSegment]) -> Option<&'a mut Value> {
+    if path.is_empty() { return item.as_value_mut(); }
+    match (&path[0], item) {
+        (TomlPathSegment::Key(key), Item::Table(table)) => value_at_path_mut(table.get_mut(key)?, &path[1..]),
+        (TomlPathSegment::Index(index), Item::ArrayOfTables(tables)) => table_value_at_path_mut(tables.get_mut(*index)?, &path[1..]),
+        (_, Item::Value(value)) => value_value_at_path_mut(value, path),
+        _ => None,
+    }
+}
+
+fn table_value_at_path_mut<'a>(table: &'a mut Table, path: &[TomlPathSegment]) -> Option<&'a mut Value> {
+    let TomlPathSegment::Key(key) = path.first()? else { return None; };
+    value_at_path_mut(table.get_mut(key)?, &path[1..])
+}
+
+fn value_value_at_path_mut<'a>(value: &'a mut Value, path: &[TomlPathSegment]) -> Option<&'a mut Value> {
+    if path.is_empty() { return Some(value); }
+    match (&path[0], value) {
+        (TomlPathSegment::Index(index), Value::Array(array)) => value_value_at_path_mut(array.get_mut(*index)?, &path[1..]),
+        (TomlPathSegment::Key(key), Value::InlineTable(table)) => value_value_at_path_mut(table.get_mut(key)?, &path[1..]),
+        _ => None,
+    }
+}
+
+fn table_at_path_mut<'a>(item: &'a mut Item, path: &[TomlPathSegment]) -> Option<&'a mut Table> {
+    if path.is_empty() { return item.as_table_mut(); }
+    match (&path[0], item) {
+        (TomlPathSegment::Key(key), Item::Table(table)) => table_at_path_mut(table.get_mut(key)?, &path[1..]),
+        (TomlPathSegment::Index(index), Item::ArrayOfTables(tables)) => {
+            let table = tables.get_mut(*index)?;
+            if path.len() == 1 { Some(table) } else { table_at_path_in_table_mut(table, &path[1..]) }
+        }
+        _ => None,
+    }
+}
+
+fn table_at_path_in_table_mut<'a>(table: &'a mut Table, path: &[TomlPathSegment]) -> Option<&'a mut Table> {
+    if path.is_empty() { return Some(table); }
+    let TomlPathSegment::Key(key) = path.first()? else { return None; };
+    table_at_path_mut(table.get_mut(key)?, &path[1..])
+}
+
+fn split_key_path(path: &[TomlPathSegment]) -> Result<(&[TomlPathSegment], &str), (&'static str, &'static str)> {
+    match path.split_last() {
+        Some((TomlPathSegment::Key(key), parent)) => Ok((parent, key)),
+        _ => Err(("toml-native-path-kind", "The TOML path is not an object field.")),
+    }
+}
+
+fn split_index_path(path: &[TomlPathSegment]) -> Result<(&[TomlPathSegment], usize), (&'static str, &'static str)> {
+    match path.split_last() {
+        Some((TomlPathSegment::Index(index), parent)) => Ok((parent, *index)),
+        _ => Err(("toml-native-path-kind", "The TOML path is not an array item.")),
+    }
+}
+
+fn json_to_toml_value(input: &JsonValue) -> Result<Value, (&'static str, &'static str)> {
+    match input {
+        JsonValue::String(value_text) => Ok(value(value_text.clone()).into_value().unwrap()),
+        JsonValue::Bool(boolean) => Ok(value(*boolean).into_value().unwrap()),
+        JsonValue::Number(number) if number.is_i64() => Ok(value(number.as_i64().unwrap()).into_value().unwrap()),
+        JsonValue::Number(number) => number.as_f64().map(|number| value(number).into_value().unwrap()).ok_or(("toml-native-value-unsupported", "The TOML number is not finite.")),
+        _ => Err(("toml-native-value-unsupported", "Visual TOML operations accept scalar values only.")),
+    }
+}
+
+fn minimal_guarded_patch(source: &str, next: &str) -> Option<TomlGuardedPatch> {
+    if source == next { return None; }
+    let mut prefix = 0;
+    for ((left_index, left), (_, right)) in source.char_indices().zip(next.char_indices()) {
+        if left != right { break; }
+        prefix = left_index + left.len_utf8();
+    }
+    let source_tail = &source[prefix..]; let next_tail = &next[prefix..];
+    let mut suffix = 0;
+    for (left, right) in source_tail.chars().rev().zip(next_tail.chars().rev()) {
+        if left != right { break; }
+        suffix += left.len_utf8();
+    }
+    let source_to = source.len() - suffix; let next_to = next.len() - suffix;
+    Some(TomlGuardedPatch {
+        from: source[..prefix].encode_utf16().count(), to: source[..source_to].encode_utf16().count(),
+        insert: next[prefix..next_to].to_string(), expected_text: source[prefix..source_to].to_string(),
+    })
+}
+
+fn utf16_to_byte_offset(source: &str, offset: usize) -> Option<usize> {
+    if offset == 0 { return Some(0); }
+    let mut units = 0;
+    for (index, character) in source.char_indices() {
+        units += character.len_utf16();
+        if units == offset { return Some(index + character.len_utf8()); }
+        if units > offset { return None; }
+    }
+    (units == offset).then_some(source.len())
+}
+
+fn is_bare_toml_key(key: &str) -> bool {
+    !key.is_empty() && key.chars().all(|character| character.is_ascii_alphanumeric() || character == '_' || character == '-')
+}
+
+fn node_has_attached_comment(source: &str, node: &TomlSourceMapNode) -> bool {
+    let Some(span) = node.key_span.as_ref().or(node.value_span.as_ref()) else { return true; };
+    let Some(offset) = utf16_to_byte_offset(source, span.offset) else { return true; };
+    let line_start = source[..offset].rfind('\n').map_or(0, |index| index + 1);
+    let line_end = source[offset..].find('\n').map_or(source.len(), |index| offset + index);
+    if unquoted_comment_index(&source[line_start..line_end]).is_some() { return true; }
+    let before = source[..line_start].trim_end_matches(['\r', '\n']);
+    let previous_start = before.rfind('\n').map_or(0, |index| index + 1);
+    before[previous_start..].trim_start().starts_with('#')
+}
+
+fn render_document_preserving_line_endings(document: &DocumentMut, source: &str) -> String {
+    let rendered = document.to_string();
+    if source.contains("\r\n") && !source.replace("\r\n", "").contains('\n') {
+        rendered.replace('\n', "\r\n")
+    } else {
+        rendered
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{inspect_toml_source_map_text, TomlSourceMapStatus, TomlUnsupportedKind};
+    use super::{inspect_toml_source_map_text, plan_toml_mutation_text, TomlMutationIntent, TomlPathSegment, TomlSourceMapStatus, TomlUnsupportedKind};
+    use serde_json::json;
 
     #[test]
-    fn returns_spanned_nodes_without_enabling_visual_writes() {
+    fn returns_spanned_nodes_with_guarded_visual_operations() {
         let source = [
             "# catalog",
             "title = \"Dataset\"",
@@ -536,12 +926,12 @@ mod tests {
 
         assert_eq!(report.status, TomlSourceMapStatus::Valid);
         assert!(report.summary.no_op_round_trip_preserved);
-        assert!(!report.summary.visual_writes_enabled);
+        assert!(report.summary.visual_writes_enabled);
         assert_eq!(
             report.summary.boundary_status,
-            "experimental-readonly-evidence"
+            "production-source-preserving"
         );
-        assert_eq!(report.summary.command_scope, "inspect-source-map-only");
+        assert_eq!(report.summary.command_scope, "inspect-and-plan-guarded-patches");
         assert_eq!(
             report.summary.recommended_boundary,
             "rust-toml-edit-source-map-command"
@@ -591,7 +981,8 @@ mod tests {
             .summary
             .unsupported_kinds
             .contains(&TomlUnsupportedKind::ArrayOfTables));
-        assert!(report.nodes.iter().all(|node| !node.editable_candidate));
+        assert!(report.nodes.iter().any(|node| node.pointer == "/products/0/sku" && node.editable_operations.contains(&"replaceScalar".into())));
+        assert!(report.nodes.iter().find(|node| node.pointer == "/notes").is_some_and(|node| !node.editable_operations.contains(&"replaceScalar".into())));
     }
 
     #[test]
@@ -603,5 +994,73 @@ mod tests {
         assert_eq!(report.summary.node_count, 0);
         assert_eq!(report.diagnostics.len(), 1);
         assert_eq!(report.diagnostics[0].severity, "error");
+    }
+
+    #[test]
+    fn plans_guarded_scalar_key_table_and_array_operations_without_writing_files() {
+        let source = "# Ω\r\ntitle = \"Old\"\r\nitems = [1, 2]\r\n[server]\r\nport = 8080\r\n";
+        let scalar = plan_toml_mutation_text(source, TomlMutationIntent {
+            kind: "replaceScalar".into(), path: vec![TomlPathSegment::Key("title".into())],
+            new_value: Some(json!("New")), new_key: None, key: None,
+        });
+        assert_eq!(scalar.status, "planned");
+        assert_eq!(scalar.patches.len(), 1);
+        assert!(scalar.next_source.as_deref().is_some_and(|next| next.contains("title = \"New\"\r\n") && next.starts_with("# Ω\r\n")));
+
+        let renamed = plan_toml_mutation_text(source, TomlMutationIntent {
+            kind: "renameObjectKey".into(), path: vec![TomlPathSegment::Key("title".into())],
+            new_value: None, new_key: Some("heading".into()), key: None,
+        });
+        assert!(renamed.next_source.as_deref().is_some_and(|next| next.contains("heading = \"Old\"")));
+
+        let added = plan_toml_mutation_text(source, TomlMutationIntent {
+            kind: "addObjectField".into(), path: vec![TomlPathSegment::Key("server".into())],
+            new_value: Some(json!(true)), new_key: None, key: Some("enabled".into()),
+        });
+        assert!(added.next_source.as_deref().is_some_and(|next| next.contains("enabled = true")));
+
+        let appended = plan_toml_mutation_text(source, TomlMutationIntent {
+            kind: "addArrayItem".into(), path: vec![TomlPathSegment::Key("items".into())],
+            new_value: Some(json!(3)), new_key: None, key: None,
+        });
+        assert!(appended.next_source.as_deref().is_some_and(|next| next.contains("items = [1, 2, 3]")));
+
+        let deleted_item = plan_toml_mutation_text(source, TomlMutationIntent {
+            kind: "deleteArrayItem".into(), path: vec![TomlPathSegment::Key("items".into()), TomlPathSegment::Index(0)],
+            new_value: None, new_key: None, key: None,
+        });
+        assert_eq!(deleted_item.next_value.as_ref().and_then(|value| value.get("items")), Some(&json!([2])));
+        assert!(deleted_item.next_source.as_deref().is_some_and(|next| {
+            next.starts_with(source.split("items =").next().unwrap())
+                && next.ends_with("[server]\r\nport = 8080\r\n")
+        }));
+
+        let deleted_field = plan_toml_mutation_text(source, TomlMutationIntent {
+            kind: "deleteObjectField".into(), path: vec![TomlPathSegment::Key("server".into()), TomlPathSegment::Key("port".into())],
+            new_value: None, new_key: None, key: None,
+        });
+        assert!(deleted_field.next_source.as_deref().is_some_and(|next| !next.contains("port =")));
+    }
+
+    #[test]
+    fn native_errors_are_typed_and_content_free() {
+        let secret = "api_token = [\"SECRET-CONTENT\"";
+        let report = inspect_toml_source_map_text(secret);
+        assert_eq!(report.status, TomlSourceMapStatus::Invalid);
+        assert!(report.diagnostics.iter().all(|diagnostic| !diagnostic.message.contains("SECRET-CONTENT")));
+    }
+
+    #[test]
+    fn dates_times_and_quoted_keys_have_explicit_source_only_operation_status() {
+        let source = "\"quoted key\" = 1\nmeasured_at = 2026-07-22T08:30:45-04:00\n";
+        let report = inspect_toml_source_map_text(source);
+        let datetime = report.nodes.iter().find(|node| node.pointer == "/measured_at").unwrap();
+        assert!(!datetime.editable_operations.contains(&"replaceScalar".into()));
+        let rename = plan_toml_mutation_text(source, TomlMutationIntent {
+            kind: "renameObjectKey".into(), path: vec![TomlPathSegment::Key("quoted key".into())],
+            new_value: None, new_key: Some("renamed".into()), key: None,
+        });
+        assert_eq!(rename.status, "rejected");
+        assert_eq!(rename.diagnostics[0].code, "toml-native-key-decoration");
     }
 }

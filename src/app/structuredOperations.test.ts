@@ -31,7 +31,7 @@ describe('structured operation registry', () => {
     });
 
     expect(operations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'replaceScalar', label: 'Edit value', requiresReview: true, sourcePreserving: true }),
+      expect.objectContaining({ id: 'replaceScalar', label: 'Edit value', requiresReview: false, sourcePreserving: true }),
       expect.objectContaining({ id: 'copyPath', label: 'Copy path' }),
       expect.objectContaining({ id: 'revealSource', label: 'Reveal in source' }),
       expect.objectContaining({ id: 'addObjectField', label: 'Add field' }),

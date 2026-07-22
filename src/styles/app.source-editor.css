@@ -6,7 +6,7 @@
   height: 100%;
   background: var(--editor-bg);
   color: var(--text);
-  font-family: var(--mono-font);
+  font-family: var(--source-editor-font);
   font-size: calc(14px * var(--font-scale));
 }
 
@@ -23,7 +23,41 @@
   min-height: 100%;
   margin: 0 auto;
   padding: 0 var(--source-pad-x);
+  font-family: var(--source-editor-font);
   line-height: var(--editor-line-height);
+}
+
+.source-editor-long-line-reveal {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--text-secondary);
+  font: inherit;
+  margin: 0 0.35rem;
+  padding: 0 0.4rem;
+  cursor: pointer;
+}
+
+.source-editor-long-line-reveal:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.source-editor-projection-controls {
+  align-items: center;
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  display: flex;
+  font-size: 0.75rem;
+  gap: 0.5rem;
+  justify-content: center;
+  padding: 0.25rem 0.5rem;
+}
+
+.source-editor-projection-controls button {
+  font: inherit;
 }
 
 .source-editor .cm-selectionBackground,

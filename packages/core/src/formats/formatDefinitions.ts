@@ -1,5 +1,6 @@
 import rawFormatCatalog from './formatCatalog.v1.json';
 import type { DocumentFormat } from './documentFormat';
+import { validateStructuredMutationCoverage } from './structured/structuredMutation';
 
 export type FormatRuntimeBindingId =
   | 'markdown-adapter'
@@ -134,6 +135,7 @@ export function validateFormatContributionCatalog(input: unknown): FormatContrib
   const missing = DOCUMENT_FORMATS.filter((format) => !seenFormats.has(format));
   if (missing.length > 0) throw new Error(`Format contribution catalog is missing: ${missing.join(', ')}.`);
   if (formats.length !== DOCUMENT_FORMATS.length) throw new Error('Format contribution catalog contains unsupported entries.');
+  validateStructuredMutationCoverage(formats as unknown as FormatContribution[]);
   return input as unknown as FormatContributionCatalog;
 }
 

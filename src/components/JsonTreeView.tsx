@@ -3,6 +3,8 @@ import { ChevronRight, Copy, FileCode2, ListTree, Pencil, Plus, Trash2, X } from
 import {
   createJsonRawNumberToken,
   jsonSourceHash,
+  yamlSourceHash,
+  xmlSourceHash,
   jsonSchemaObjectControlForPath,
   jsonSchemaScalarControlForPath,
   pointerFromPath,
@@ -137,11 +139,14 @@ export function JsonTreeView({
     ? null
     : schemaValidation?.summary ?? null;
   const expectedSourceHash = useMemo(() => (
-    sourceText === undefined ? undefined : jsonSourceHash(sourceText)
-  ), [sourceText]);
+    sourceText === undefined ? undefined
+      : sourceMap?.format === 'yaml' ? yamlSourceHash(sourceText)
+        : sourceMap?.format === 'xml' ? xmlSourceHash(sourceText)
+          : jsonSourceHash(sourceText)
+  ), [sourceMap?.format, sourceText]);
   const nodeCanEditVisually = (node: JsonTreeNodeModel) => Boolean(
     editable
-    && sourceMap?.format === 'json'
+    && (sourceMap?.format === 'json' || sourceMap?.format === 'yaml' || sourceMap?.format === 'toml' || sourceMap?.format === 'xml')
     && onEditIntent
     && node.sourceRef?.editable
     && !node.lossy,
@@ -420,6 +425,7 @@ export function JsonTreeView({
       )}
       <JsonTreeEditDialog
         state={editDialog}
+        format={sourceMap?.format ?? 'json'}
         sourceText={sourceText}
         expectedSourceHash={expectedSourceHash}
         schemaSummary={schemaSummary}
@@ -794,14 +800,14 @@ function jsonVisualEditDisabledReason(
   sourceMap: StructuredSourceMap | null,
 ): string | null {
   if (!sourceMap) return null;
-  if (sourceMap.format !== 'json') {
-    return `${sourceMap.format.toUpperCase()} is shown as a read-only JSON projection; switch to JSON source to edit visually.`;
+  if (!['json', 'yaml', 'toml', 'xml'].includes(sourceMap.format)) {
+    return `${sourceMap.format.toUpperCase()} is shown as a read-only structured projection; use source mode to edit it.`;
   }
   if (node.lossy) {
     return node.unsupportedReason ?? 'This node is a lossy read-only projection.';
   }
   if (!node.sourceRef?.editable) {
-    return 'This node does not map to an editable source range.';
+    return node.unsupportedReason ?? 'This node does not map to an editable source range.';
   }
   return null;
 }
@@ -853,6 +859,7 @@ function JsonEditActionButton({
 
 function JsonTreeEditDialog({
   state,
+  format,
   sourceText,
   expectedSourceHash,
   schemaSummary,
@@ -860,6 +867,7 @@ function JsonTreeEditDialog({
   onSubmit,
 }: {
   state: JsonTreeEditDialogState | null;
+  format: StructuredSourceMap['format'];
   sourceText?: string;
   expectedSourceHash?: string;
   schemaSummary: JsonSchemaSummary | null;
@@ -871,6 +879,7 @@ function JsonTreeEditDialog({
     <JsonTreeEditDialogForm
       key={`${state.action}:${state.node.pointer}`}
       state={state}
+      format={format}
       sourceText={sourceText}
       expectedSourceHash={expectedSourceHash}
       schemaSummary={schemaSummary}
@@ -882,6 +891,7 @@ function JsonTreeEditDialog({
 
 function JsonTreeEditDialogForm({
   state,
+  format,
   sourceText,
   expectedSourceHash,
   schemaSummary,
@@ -889,6 +899,7 @@ function JsonTreeEditDialogForm({
   onSubmit,
 }: {
   state: JsonTreeEditDialogState;
+  format: StructuredSourceMap['format'];
   sourceText?: string;
   expectedSourceHash?: string;
   schemaSummary: JsonSchemaSummary | null;
@@ -989,7 +1000,7 @@ function JsonTreeEditDialogForm({
   return (
     <ModalShell open titleId="json-tree-edit-title" className="json-tree-edit-dialog" onCancel={onCancel}>
       <header className="dialog-header">
-        <h2 id="json-tree-edit-title">{jsonEditDialogTitle(state.action)}</h2>
+        <h2 id="json-tree-edit-title">{jsonEditDialogTitle(state.action, format)}</h2>
       </header>
       <dl className="json-tree-edit-target">
         <div>
@@ -1045,6 +1056,7 @@ function JsonTreeEditDialogForm({
             min={0}
             max={state.node.children.length}
             value={arrayIndex}
+            disabled={format === 'yaml'}
             onChange={(event) => setArrayIndex(event.target.value)}
           />
         </label>
@@ -1255,7 +1267,9 @@ function jsonEditActionsForNode(
   }
   if (node.type === 'array') actions.push('addArrayItem');
   if (isArrayItemNode(node, sourceMap)) actions.push('deleteArrayItem');
-  return actions;
+  if (sourceMap?.format === 'json' || !sourceMap) return actions;
+  const allowed = new Set(node.sourceRef?.editableOperations ?? []);
+  return actions.filter((action) => action !== 'addRequiredField' && allowed.has(action));
 }
 
 function isObjectFieldNode(node: JsonTreeNodeModel, sourceMap: StructuredSourceMap | null): boolean {
@@ -1459,22 +1473,23 @@ function jsonEditActionLabel(action: JsonTreeEditAction): string {
   }
 }
 
-function jsonEditDialogTitle(action: JsonTreeEditAction): string {
+function jsonEditDialogTitle(action: JsonTreeEditAction, format: StructuredSourceMap['format'] = 'json'): string {
+  const label = format === 'yaml' ? 'YAML' : format === 'toml' ? 'TOML' : format === 'xml' ? 'XML' : 'JSON';
   switch (action) {
     case 'replaceScalar':
-      return 'Edit JSON value';
+      return `Edit ${label} value`;
     case 'renameObjectKey':
-      return 'Rename JSON key';
+      return `Rename ${label} key`;
     case 'addObjectField':
-      return 'Add JSON field';
+      return `Add ${label} field`;
     case 'addRequiredField':
-      return 'Add required JSON field';
+      return `Add required ${label} field`;
     case 'deleteObjectField':
-      return 'Delete JSON field';
+      return `Delete ${label} field`;
     case 'addArrayItem':
-      return 'Add JSON item';
+      return `Add ${label} item`;
     case 'deleteArrayItem':
-      return 'Delete JSON item';
+      return `Delete ${label} item`;
   }
 }
 

@@ -101,6 +101,7 @@ pub fn run() {
             commands::path_utils::resolve_document_locator,
             commands::file_io::read_text_file,
             commands::file_io::read_text_file_for_edit,
+            commands::file_io::cancel_text_file_read,
             commands::file_io::read_text_file_preview,
             commands::file_io::read_binary_file_base64,
             commands::file_io::list_readable_files,
@@ -128,6 +129,7 @@ pub fn run() {
             commands::inkscape::export_svg_with_inkscape,
             commands::reveal::reveal_in_file_manager,
             commands::toml_source_map::inspect_toml_source_map,
+            commands::toml_source_map::plan_toml_mutation,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ScieMD");
@@ -141,6 +143,8 @@ struct DesktopSmokeReport {
     initial_path: Option<String>,
     startup_path: Option<String>,
     structured_files: Vec<DesktopStructuredSmokeFileReport>,
+    toml_native_patch_count: Option<usize>,
+    toml_native_no_direct_write: Option<bool>,
     saved_size_bytes: Option<u64>,
     recovery_bytes: Option<usize>,
     recovery_path: Option<String>,
@@ -243,6 +247,37 @@ fn run_desktop_smoke_self_test(app: tauri::AppHandle, report_path: &Path) -> Res
         return Ok(());
     }
 
+    if scenario == "toml-structured-edit" {
+        let path = std::env::var_os("SCIEMD_DESKTOP_SMOKE_TOML_PATH").map(PathBuf::from)
+            .ok_or_else(|| "Desktop TOML structured-edit path was not provided.".to_string())?;
+        commands::path_grants::grant_file_and_parent(&path)?;
+        let disk_before_plan = fs::read(&path).map_err(|_| "Could not capture TOML bytes before planning.".to_string())?;
+        let opened = commands::file_io::read_text_file_for_edit_blocking(commands::path_utils::external_safe_path_string(&path))?;
+        let native_plan = commands::toml_source_map::plan_toml_mutation_text(&opened.source_text, commands::toml_source_map::TomlMutationIntent {
+            kind: "replaceScalar".into(),
+            path: vec![commands::toml_source_map::TomlPathSegment::Key("title".into())],
+            new_value: Some(serde_json::json!("After")), new_key: None, key: None,
+        });
+        if native_plan.status != "planned" || native_plan.patches.len() != 1 {
+            return Err("Packaged native TOML planner did not return one guarded patch.".into());
+        }
+        let before_commit = fs::read(&path).map_err(|_| "Could not verify TOML planner write isolation.".to_string())?;
+        report.toml_native_no_direct_write = Some(before_commit == disk_before_plan);
+        if report.toml_native_no_direct_write != Some(true) { return Err("Native TOML planning wrote the document directly.".into()); }
+        let next_source = native_plan.next_source.ok_or_else(|| "Native TOML plan omitted its result.".to_string())?;
+        commands::file_io::write_text_file_atomic(
+            commands::path_utils::external_safe_path_string(&path), next_source,
+            opened.metadata.line_ending, opened.metadata.encoding, opened.metadata.has_bom,
+            Some(opened.metadata.last_known_mtime_ms), Some(opened.metadata.last_known_size_bytes), opened.metadata.content_hash,
+        )?;
+        let reread = fs::read_to_string(&path).map_err(|_| "Could not reread saved TOML fixture.".to_string())?;
+        if !reread.contains("title = \"After\"") { return Err("Normal atomic save did not persist the native TOML plan.".into()); }
+        report.toml_native_patch_count = Some(native_plan.patches.len());
+        report.ok = true;
+        write_desktop_smoke_report(report_path, &report)?;
+        return Ok(());
+    }
+
     let startup_path = std::env::var_os("SCIEMD_DESKTOP_SMOKE_STARTUP_PATH")
         .map(PathBuf::from)
         .or_else(startup_document_path_from_env)
@@ -252,15 +287,16 @@ fn run_desktop_smoke_self_test(app: tauri::AppHandle, report_path: &Path) -> Res
     ));
 
     commands::path_grants::grant_file_and_parent(&startup_path)?;
-    let opened =
-        commands::file_io::read_text_file_for_edit(startup_path.to_string_lossy().to_string())?;
-    if !opened.content.contains("ScieMD Desktop Smoke") {
+    let opened = commands::file_io::read_text_file_for_edit_blocking(
+        startup_path.to_string_lossy().to_string(),
+    )?;
+    if !opened.source_text.contains("ScieMD Desktop Smoke") {
         return Err("Packaged app could not read the startup Markdown document.".into());
     }
 
     let saved_markdown = format!(
         "{}\n\nSaved by packaged desktop smoke.\n",
-        opened.content.trim_end()
+        opened.source_text.trim_end()
     );
     let saved_metadata = commands::file_io::write_text_file_atomic(
         startup_path.to_string_lossy().to_string(),
@@ -274,9 +310,13 @@ fn run_desktop_smoke_self_test(app: tauri::AppHandle, report_path: &Path) -> Res
     )?;
     report.saved_size_bytes = Some(saved_metadata.last_known_size_bytes);
 
-    let reread =
-        commands::file_io::read_text_file_for_edit(startup_path.to_string_lossy().to_string())?;
-    if !reread.content.contains("Saved by packaged desktop smoke.") {
+    let reread = commands::file_io::read_text_file_for_edit_blocking(
+        startup_path.to_string_lossy().to_string(),
+    )?;
+    if !reread
+        .source_text
+        .contains("Saved by packaged desktop smoke.")
+    {
         return Err("Atomic save did not persist the smoke edit.".into());
     }
 
@@ -379,8 +419,8 @@ fn run_desktop_structured_smoke_cases() -> Result<Vec<DesktopStructuredSmokeFile
     for case in cases {
         let path = PathBuf::from(&case.path);
         commands::path_grants::grant_file_and_parent(&path)?;
-        let opened = commands::file_io::read_text_file_for_edit(case.path.clone())?;
-        if !opened.content.contains(&case.expected_contains) {
+        let opened = commands::file_io::read_text_file_for_edit_blocking(case.path.clone())?;
+        if !opened.source_text.contains(&case.expected_contains) {
             return Err(format!(
                 "Packaged app could not read expected {} structured smoke marker in {}.",
                 case.format, case.path
@@ -397,8 +437,8 @@ fn run_desktop_structured_smoke_cases() -> Result<Vec<DesktopStructuredSmokeFile
             Some(opened.metadata.last_known_size_bytes),
             opened.metadata.content_hash.clone(),
         )?;
-        let reread = commands::file_io::read_text_file_for_edit(case.path.clone())?;
-        if !reread.content.contains(&case.updated_contains) {
+        let reread = commands::file_io::read_text_file_for_edit_blocking(case.path.clone())?;
+        if !reread.source_text.contains(&case.updated_contains) {
             return Err(format!(
                 "Atomic save did not persist the {} structured smoke edit in {}.",
                 case.format, case.path

@@ -318,7 +318,7 @@ export function AppTopbar({
     || formatCapabilities.canUseTablePreview;
 
   return (
-    <header className="topbar" role="banner" onMouseDown={onTitlebarMouseDown} onDoubleClick={onTitlebarDoubleClick}>
+    <header className="topbar" role="banner">
       <div className="topbar-left app-topbar-leading" onMouseDown={stopTitlebarInteraction} onDoubleClick={stopTitlebarInteraction}>
         <ScieMDBrandMark />
         <nav className="app-menubar" aria-label="Application menu">
@@ -433,7 +433,13 @@ export function AppTopbar({
         </div>
       </div>
 
-      <div className="document-title" title={documentChrome.filePath ?? documentChrome.displayName}>
+      <div
+        className="document-title topbar-drag-region"
+        title={documentChrome.filePath ?? documentChrome.displayName}
+        data-window-drag-region="true"
+        onMouseDown={onTitlebarMouseDown}
+        onDoubleClick={onTitlebarDoubleClick}
+      >
         <span>{documentChrome.activeDirty ? '* ' : ''}{documentChrome.displayName}</span>
         {documentChrome.aggregateStatus && (
           <span className="workspace-dirty-summary" role="status" aria-live="polite">

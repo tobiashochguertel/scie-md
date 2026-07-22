@@ -5,6 +5,7 @@ import { normalizeDocumentHostError, type DocumentHostErrorCode } from '../host/
 import type { RecoveryCatalogEntry } from '../../services/recoveryCatalog';
 import { defaultManifestView, type WorkspaceManifestDocument, type WorkspaceManifestPayload } from '../../services/persistence';
 import type { WorkspaceCapabilityState } from './workspaceState';
+import { restoreSourceBufferRevisions } from '../source/revisionedSourceBuffer';
 
 export type WorkspaceStartupWinner =
   | { kind: 'explicit-launch'; path: string }
@@ -219,9 +220,10 @@ async function hydrateDocument(
     presentation: manifest.presentation as DocumentRecord['presentation'],
     view: manifest.view as DocumentRecord['view'],
   });
+  const savedRevision = sourceText === savedSourceText ? revision : sourceRevision(Math.max(0, revision - 1));
   const record = assertValidDocumentRecord({
     ...created,
-    source: { ...created.source, revision, savedRevision: sourceText === savedSourceText ? revision : sourceRevision(Math.max(0, revision - 1)) },
+    source: { ...created.source, buffer: restoreSourceBufferRevisions(created.source.buffer, revision, savedRevision), revision, savedRevision },
     lifecycle: {
       ...created.lifecycle,
       external: errorCode === 'NOT_FOUND' ? 'missing' : errorCode ? 'unknown' : 'inSync',

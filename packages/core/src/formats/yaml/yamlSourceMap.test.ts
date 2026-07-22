@@ -7,7 +7,7 @@ import { createYamlSourceMap } from './yamlSourceMap.js';
 const fixtureDir = join(process.cwd(), 'docs/refactor/yaml_preservation_fixtures');
 
 describe('createYamlSourceMap', () => {
-  it('maps simple mapping and sequence nodes to source spans while keeping them read-only', () => {
+  it('maps simple mapping and sequence nodes to editable CST-backed source spans', () => {
     const text = [
       'study:',
       '  id: SCMD-YAML-001',
@@ -23,15 +23,15 @@ describe('createYamlSourceMap', () => {
     expect(result.sourceMap.nodesByPointer['']).toMatchObject({
       displayPath: '$',
       span: expect.objectContaining({ line: 1, column: 1 }),
-      editable: false,
-      lossy: true,
+      editable: true,
+      lossy: false,
     });
     expect(result.sourceMap.nodesByPointer['/study/id']).toMatchObject({
       type: 'string',
       keySpan: expect.objectContaining({ line: 2, column: 3 }),
       valueSpan: expect.objectContaining({ line: 2, column: 7 }),
       span: expect.objectContaining({ line: 2, column: 7 }),
-      editable: false,
+      editable: true,
     });
     expect(result.sourceMap.nodesByPointer['/study/values/1']).toMatchObject({
       type: 'number',
@@ -41,9 +41,9 @@ describe('createYamlSourceMap', () => {
       nodeCount: 6,
       spannedNodeCount: 6,
       unmappedVisualNodeCount: 0,
-      editableNodeCount: 0,
+      editableNodeCount: 6,
       editableCandidateCount: 6,
-      visualWritesEnabled: false,
+      visualWritesEnabled: true,
     });
   });
 
@@ -147,7 +147,7 @@ describe('createYamlSourceMap', () => {
       const result = createYamlSourceMap(text, document, document.toJS());
       expect(result.sourceMap.nodes.length, fixtureName).toBeGreaterThan(0);
       expect(result.inspection.spannedNodeCount, fixtureName).toBeGreaterThan(0);
-      expect(result.inspection.visualWritesEnabled, fixtureName).toBe(false);
+      expect(result.inspection.visualWritesEnabled, fixtureName).toBe(result.inspection.editableNodeCount > 0);
     }
   });
 
@@ -158,7 +158,7 @@ describe('createYamlSourceMap', () => {
       expect(document.errors).toHaveLength(0);
       const result = createYamlSourceMap(text, document, document.toJS());
 
-      expect(result.inspection.visualWritesEnabled).toBe(false);
+      expect(result.inspection.visualWritesEnabled).toBe(true);
       expect(result.inspection.unsupportedKinds).toEqual(expect.arrayContaining([
         'alias',
         'anchor',

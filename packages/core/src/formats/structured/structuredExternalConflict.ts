@@ -4,6 +4,8 @@ import type { JsonlSourceLine } from '../jsonl/parseJsonlDocument.js';
 import { parseDelimitedText } from '../tabular/parseDelimitedText.js';
 import type { ParsedDelimitedText } from '../tabular/parseDelimitedText.js';
 import { createTomlContent, parseTomlDocument } from '../toml/parseTomlDocument.js';
+import { parseTomlNativeReport, type TomlNativeSourceMapReport } from '../toml/tomlNative.js';
+import { createXmlContent, parseXmlDocument, type ParsedXmlDocument } from '../xml/parseXmlDocument.js';
 import { createYamlContent, parseYamlDocument, type ParsedYamlDocument } from '../yaml/parseYamlDocument.js';
 import { displayPathFromPath, pointerFromPath, structuredValueType } from './sourceMap.js';
 
@@ -57,7 +59,7 @@ interface JsonlReviewInput {
 
 interface SourceMappedStructuredReviewInput {
   label: 'base' | 'current' | 'disk';
-  format: Extract<DocumentFormat, 'yaml' | 'toml'>;
+  format: Extract<DocumentFormat, 'yaml' | 'toml' | 'xml'>;
   source: string;
   value: unknown;
   diagnostics: FormatDiagnostic[];
@@ -88,9 +90,14 @@ export function createStructuredExternalConflictReview(
 ): StructuredExternalConflictReviewPlan {
   if (format === 'jsonl') return createJsonlExternalConflictReview(format, baseSource, currentSource, diskSource);
   if (format === 'csv' || format === 'tsv') return createTabularExternalConflictReview(format, baseSource, currentSource, diskSource);
-  if (format === 'yaml' || format === 'toml') {
+  if (format === 'yaml') {
     return createSourceMappedStructuredExternalConflictReview(format, baseSource, currentSource, diskSource);
   }
+  if (format === 'xml') return createSourceMappedStructuredExternalConflictReview(format, baseSource, currentSource, diskSource);
+  if (format === 'toml') return fallbackStructuredExternalConflictReview(
+    format, baseSource, currentSource, diskSource,
+    'TOML path review requires the desktop native toml_edit source-map capability.', [],
+  );
   return fallbackStructuredExternalConflictReview(
     format,
     baseSource,
@@ -99,6 +106,15 @@ export function createStructuredExternalConflictReview(
     `${format.toUpperCase()} conflicts are shown as source-only changes until a source-preserving ${format.toUpperCase()} patch planner exists.`,
     [],
   );
+}
+
+export function createTomlNativeExternalConflictReview(
+  baseSource: string,
+  currentSource: string,
+  diskSource: string,
+  reports: { base: TomlNativeSourceMapReport; current: TomlNativeSourceMapReport; disk: TomlNativeSourceMapReport },
+): StructuredExternalConflictReviewPlan {
+  return createSourceMappedStructuredExternalConflictReview('toml', baseSource, currentSource, diskSource, reports);
 }
 
 export function applyStructuredExternalConflictReviewDecisions(
@@ -280,14 +296,15 @@ function createTabularExternalConflictReview(
 }
 
 function createSourceMappedStructuredExternalConflictReview(
-  format: Extract<DocumentFormat, 'yaml' | 'toml'>,
+  format: Extract<DocumentFormat, 'yaml' | 'toml' | 'xml'>,
   baseSource: string,
   currentSource: string,
   diskSource: string,
+  tomlReports?: { base: TomlNativeSourceMapReport; current: TomlNativeSourceMapReport; disk: TomlNativeSourceMapReport },
 ): StructuredExternalConflictReviewPlan {
-  const base = parseSourceMappedStructuredForConflictReview(format, 'base', baseSource);
-  const current = parseSourceMappedStructuredForConflictReview(format, 'current', currentSource);
-  const disk = parseSourceMappedStructuredForConflictReview(format, 'disk', diskSource);
+  const base = parseSourceMappedStructuredForConflictReview(format, 'base', baseSource, tomlReports?.base);
+  const current = parseSourceMappedStructuredForConflictReview(format, 'current', currentSource, tomlReports?.current);
+  const disk = parseSourceMappedStructuredForConflictReview(format, 'disk', diskSource, tomlReports?.disk);
   const diagnostics = [
     ...base.diagnostics,
     ...current.diagnostics,
@@ -499,9 +516,10 @@ function tabularConflictGuard(
 }
 
 function parseSourceMappedStructuredForConflictReview(
-  format: Extract<DocumentFormat, 'yaml' | 'toml'>,
+  format: Extract<DocumentFormat, 'yaml' | 'toml' | 'xml'>,
   label: 'base' | 'current' | 'disk',
   source: string,
+  tomlReport?: TomlNativeSourceMapReport,
 ): SourceMappedStructuredReviewInput {
   if (format === 'yaml') {
     const result = parseYamlDocument(createYamlContent(source));
@@ -516,15 +534,29 @@ function parseSourceMappedStructuredForConflictReview(
     };
   }
 
-  const result = parseTomlDocument(createTomlContent(source));
+  if (format === 'xml') {
+    const result = parseXmlDocument(createXmlContent(source));
+    return {
+      label,
+      format,
+      source,
+      value: result.parsed?.value,
+      diagnostics: labelDiagnostics(label, result.diagnostics),
+      sourceMap: result.parsed?.sourceMap ?? null,
+      unsupportedFeaturePointers: xmlUnsupportedFeaturePointers(result.parsed),
+    };
+  }
+
+  if (!tomlReport) return { label, format, source, value: undefined, diagnostics: [], sourceMap: null, unsupportedFeaturePointers: new Set() };
+  const result = parseTomlNativeReport(createTomlContent(source), tomlReport);
   return {
     label,
     format,
     source,
     value: result.parsed?.value,
     diagnostics: labelDiagnostics(label, result.diagnostics),
-    sourceMap: result.parsed ? createTomlScalarAssignmentSourceMap(source, result.parsed.value) : null,
-    unsupportedFeaturePointers: new Set<string>(),
+    sourceMap: result.parsed?.sourceMap ?? null,
+    unsupportedFeaturePointers: new Set(result.parsed?.sourceMap.nodes.filter((node) => !node.editableOperations?.includes('replaceScalar')).map((node) => node.pointer) ?? []),
   };
 }
 
@@ -542,6 +574,12 @@ function yamlUnsupportedFeaturePointers(parsed: ParsedYamlDocument | null | unde
     pointers.add(feature.pointer);
   }
   return pointers;
+}
+
+function xmlUnsupportedFeaturePointers(parsed: ParsedXmlDocument | null | undefined): Set<string> {
+  return new Set((parsed?.sourceMap.nodes ?? [])
+    .filter((node) => node.type === 'string' && !node.editable)
+    .map((node) => node.pointer));
 }
 
 function collectStructuredPathChanges(
@@ -614,186 +652,6 @@ function hasUnsupportedFeatureAtPath(
   return input.unsupportedFeaturePointers.has(pointerFromPath(path));
 }
 
-function createTomlScalarAssignmentSourceMap(source: string, value: unknown): StructuredSourceMap {
-  const nodes = new Map<string, SourceMappedStructuredPathNode>();
-  const rootSpan = sourceSpan(0, source.length);
-  nodes.set('', {
-    path: [],
-    pointer: '',
-    displayPath: '$',
-    type: structuredValueType(value),
-    span: rootSpan,
-    raw: source,
-    value,
-  });
-
-  let sectionPath: string[] = [];
-  for (const line of splitLinesWithOffsets(source)) {
-    const withoutComment = stripTomlComment(line.text);
-    const trimmed = withoutComment.trim();
-    if (!trimmed) continue;
-
-    const table = parseSimpleTomlTableHeader(trimmed);
-    if (table) {
-      sectionPath = table;
-      continue;
-    }
-    if (/^\[\[/.test(trimmed)) {
-      sectionPath = [];
-      continue;
-    }
-
-    const equalsIndex = indexOfTomlEquals(withoutComment);
-    if (equalsIndex < 0) continue;
-    const rawKey = withoutComment.slice(0, equalsIndex).trim();
-    if (!/^[A-Za-z0-9_-]+$/.test(rawKey)) continue;
-    const valueStart = skipTomlWhitespace(withoutComment, equalsIndex + 1);
-    const valueEnd = trimTomlRight(withoutComment, withoutComment.length);
-    if (valueStart >= valueEnd) continue;
-    const rawValue = withoutComment.slice(valueStart, valueEnd);
-    if (isUnsupportedSingleLineTomlValue(rawValue)) continue;
-
-    const path = [...sectionPath, rawKey];
-    const pathValue = valueAtStructuredPath(value, path);
-    const pointer = pointerFromPath(path);
-    nodes.set(pointer, {
-      path,
-      pointer,
-      displayPath: displayPathFromPath(path),
-      type: structuredValueType(pathValue),
-      span: sourceSpan(line.offset + valueStart, valueEnd - valueStart),
-      raw: rawValue,
-      value: pathValue,
-    });
-  }
-
-  const structuredNodes = Array.from(nodes.values()).map((node) => ({
-    format: 'toml' as const,
-    path: node.path,
-    pointer: node.pointer,
-    displayPath: node.displayPath,
-    type: node.type as ReturnType<typeof structuredValueType>,
-    span: node.span,
-    valueSpan: node.span,
-    keySpan: null,
-    lossy: false,
-    editable: false,
-    unsupportedReason: 'TOML visual writes remain disabled; this span is used only for guarded conflict review.',
-    childCount: childCount(node.value),
-  }));
-  const nodesByPointer: Record<string, (typeof structuredNodes)[number]> = {};
-  const nodesByDisplayPath: Record<string, (typeof structuredNodes)[number]> = {};
-  for (const node of structuredNodes) {
-    nodesByPointer[node.pointer] = node;
-    nodesByDisplayPath[node.displayPath] = node;
-  }
-  return {
-    format: 'toml',
-    root: structuredNodes[0] ?? null,
-    nodes: structuredNodes,
-    nodesByPointer,
-    nodesByDisplayPath,
-  };
-
-  function sourceSpan(offset: number, length: number): SourceSpan {
-    const prefix = source.slice(0, offset);
-    const lines = prefix.split(/\r\n|\r|\n/);
-    return {
-      offset,
-      length,
-      line: lines.length,
-      column: (lines.at(-1)?.length ?? 0) + 1,
-    };
-  }
-}
-
-function parseSimpleTomlTableHeader(trimmedLine: string): string[] | null {
-  if (/^\[\[/.test(trimmedLine)) return null;
-  const match = trimmedLine.match(/^\[([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)]$/);
-  return match ? match[1].split('.') : null;
-}
-
-function splitLinesWithOffsets(source: string): Array<{ text: string; offset: number }> {
-  const lines: Array<{ text: string; offset: number }> = [];
-  let lineStart = 0;
-  let index = 0;
-  while (index < source.length) {
-    const char = source[index];
-    if (char === '\r' || char === '\n') {
-      lines.push({ text: source.slice(lineStart, index), offset: lineStart });
-      index += char === '\r' && source[index + 1] === '\n' ? 2 : 1;
-      lineStart = index;
-      continue;
-    }
-    index += 1;
-  }
-  lines.push({ text: source.slice(lineStart), offset: lineStart });
-  return lines;
-}
-
-function stripTomlComment(line: string): string {
-  let quoted: '"' | "'" | null = null;
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    const previous = line[index - 1];
-    if (quoted === '"' && char === '"' && previous !== '\\') {
-      quoted = null;
-      continue;
-    }
-    if (quoted === "'" && char === "'") {
-      quoted = null;
-      continue;
-    }
-    if (!quoted && (char === '"' || char === "'")) {
-      quoted = char;
-      continue;
-    }
-    if (!quoted && char === '#') return line.slice(0, index);
-  }
-  return line;
-}
-
-function indexOfTomlEquals(line: string): number {
-  let quoted: '"' | "'" | null = null;
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    const previous = line[index - 1];
-    if (quoted === '"' && char === '"' && previous !== '\\') {
-      quoted = null;
-      continue;
-    }
-    if (quoted === "'" && char === "'") {
-      quoted = null;
-      continue;
-    }
-    if (!quoted && (char === '"' || char === "'")) {
-      quoted = char;
-      continue;
-    }
-    if (!quoted && char === '=') return index;
-  }
-  return -1;
-}
-
-function skipTomlWhitespace(line: string, start: number): number {
-  let index = start;
-  while (index < line.length && /\s/.test(line[index])) index += 1;
-  return index;
-}
-
-function trimTomlRight(line: string, end: number): number {
-  let index = end;
-  while (index > 0 && /\s/.test(line[index - 1])) index -= 1;
-  return index;
-}
-
-function isUnsupportedSingleLineTomlValue(rawValue: string): boolean {
-  const trimmed = rawValue.trimStart();
-  return trimmed.startsWith('"""')
-    || trimmed.startsWith("'''")
-    || ((trimmed.startsWith('[') || trimmed.startsWith('{')) && !/[\]}]\s*$/.test(trimmed));
-}
-
 function valueAtStructuredPath(value: unknown, path: readonly StructuredPathSegment[]): unknown {
   let current = value;
   for (const segment of path) {
@@ -821,12 +679,6 @@ function structuredScalarValuesEqual(left: unknown, right: unknown): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function childCount(value: unknown): number {
-  if (Array.isArray(value)) return value.length;
-  if (isRecord(value)) return Object.keys(value).length;
-  return 0;
 }
 
 function validateStructuredExternalConflictResult(format: DocumentFormat, source: string): { ok: true; diagnostics: FormatDiagnostic[] } | { ok: false; reason: string; diagnostics: FormatDiagnostic[] } {
@@ -874,6 +726,17 @@ function validateStructuredExternalConflictResult(format: DocumentFormat, source
       return {
         ok: false,
         reason: 'Structured review was rejected because the merged TOML source would not parse.',
+        diagnostics: result.diagnostics,
+      };
+    }
+    return { ok: true, diagnostics: result.diagnostics };
+  }
+  if (format === 'xml') {
+    const result = parseXmlDocument(createXmlContent(source));
+    if (!result.parsed) {
+      return {
+        ok: false,
+        reason: 'Structured review was rejected because the merged XML source would not parse or violated the XML security policy.',
         diagnostics: result.diagnostics,
       };
     }

@@ -232,6 +232,7 @@ export function SourceMarkdownEditor({
         ],
       }),
     });
+    remeasureSourceEditorAfterFontsReady(view);
 
     viewRef.current = view;
     emitCursorLine(view);
@@ -448,6 +449,29 @@ function lineFromIssue(issue: ValidationIssue): number | null {
   if (!match) return null;
   const line = Number(match[1]);
   return Number.isFinite(line) && line > 0 ? line : null;
+}
+
+export function remeasureSourceEditorAfterFontsReady(
+  view: Pick<EditorView, 'requestMeasure' | 'dom'>,
+  fonts: FontFaceSet | undefined = typeof document === 'undefined' ? undefined : document.fonts,
+): void {
+  if (!fonts) {
+    view.requestMeasure();
+    view.dom.dataset.sourceFontRemeasured = 'fallback';
+    return;
+  }
+  void Promise.all([
+    fonts.load('400 14px "IBM Plex Mono"', 'α μ − ∞ {} []'),
+    fonts.load('italic 400 14px "IBM Plex Mono"', 'source'),
+    fonts.load('700 14px "IBM Plex Mono"', 'source'),
+    fonts.ready,
+  ]).then(() => {
+    view.requestMeasure();
+    view.dom.dataset.sourceFontRemeasured = 'loaded';
+  }).catch(() => {
+    view.requestMeasure();
+    view.dom.dataset.sourceFontRemeasured = 'fallback';
+  });
 }
 
 function maybeTypewriterScroll(view: EditorView): void {

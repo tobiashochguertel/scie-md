@@ -1,4 +1,4 @@
-export const DOCUMENT_HOST_ERROR_CONTRACT_VERSION = 1 as const;
+export const DOCUMENT_HOST_ERROR_CONTRACT_VERSION = 2 as const;
 
 export const DOCUMENT_HOST_ERROR_CODES = [
   'FILE_CHANGED',
@@ -7,6 +7,7 @@ export const DOCUMENT_HOST_ERROR_CODES = [
   'CLOUD_UNAVAILABLE',
   'BACKUP_FAILED',
   'LOSSY_WRITE_REQUIRED',
+  'CANCELLED',
   'UNKNOWN_HOST_ERROR',
 ] as const;
 
@@ -16,6 +17,7 @@ export interface DocumentHostErrorPayload {
   contractVersion: number;
   code: string;
   message: string;
+  phase?: string;
 }
 
 const knownCodes = new Set<string>(DOCUMENT_HOST_ERROR_CODES);
@@ -23,11 +25,13 @@ const knownCodes = new Set<string>(DOCUMENT_HOST_ERROR_CODES);
 export class DocumentHostError extends Error {
   readonly contractVersion = DOCUMENT_HOST_ERROR_CONTRACT_VERSION;
   readonly code: DocumentHostErrorCode;
+  readonly phase?: string;
 
-  constructor(code: DocumentHostErrorCode, message: string) {
+  constructor(code: DocumentHostErrorCode, message: string, phase?: string) {
     super(message || 'The document host reported an error.');
     this.name = 'DocumentHostError';
     this.code = code;
+    this.phase = phase;
   }
 }
 
@@ -35,10 +39,11 @@ export function normalizeDocumentHostError(error: unknown): DocumentHostError {
   if (error instanceof DocumentHostError) return error;
 
   if (isPayload(error)) {
-    const code = error.contractVersion === DOCUMENT_HOST_ERROR_CONTRACT_VERSION && knownCodes.has(error.code)
+    const supportedVersion = error.contractVersion === 1 || error.contractVersion === DOCUMENT_HOST_ERROR_CONTRACT_VERSION;
+    const code = supportedVersion && knownCodes.has(error.code)
       ? error.code as DocumentHostErrorCode
       : 'UNKNOWN_HOST_ERROR';
-    return new DocumentHostError(code, error.message);
+    return new DocumentHostError(code, error.message, error.phase);
   }
 
   if (error instanceof Error) return new DocumentHostError('UNKNOWN_HOST_ERROR', error.message);
@@ -58,5 +63,6 @@ function isPayload(value: unknown): value is DocumentHostErrorPayload {
   const candidate = value as Partial<DocumentHostErrorPayload>;
   return typeof candidate.contractVersion === 'number'
     && typeof candidate.code === 'string'
-    && typeof candidate.message === 'string';
+    && typeof candidate.message === 'string'
+    && (candidate.phase === undefined || typeof candidate.phase === 'string');
 }

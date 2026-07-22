@@ -63,7 +63,7 @@ describe('structured ingest inference', () => {
       capabilityPolicy: expect.objectContaining({
         canPreview: true,
         canUseVisualTree: true,
-        canEditVisually: false,
+        canEditVisually: true,
       }),
     });
   });

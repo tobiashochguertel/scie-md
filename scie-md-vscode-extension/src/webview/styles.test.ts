@@ -97,6 +97,13 @@ describe('VS Code webview CSS token bridge', () => {
     expect(extensionTokenStyles).toMatch(/url\(\s*['"]?\.\/fonts\//);
   });
 
+  it('keeps VS Code source font authority while preserving structured-preview typography', () => {
+    expect(webviewStyles).toContain('--source-editor-font: var(--vscode-editor-font-family, "IBM Plex Mono", monospace);');
+    expect(webviewStyles).toContain('--editor-font: var(--vscode-editor-font-family, "JetBrains Mono", monospace);');
+    expect(extensionSourceStyles).toContain('font-family: var(--source-editor-font);');
+    expect(webviewStyles).toMatch(/\.vscode-scie-structured-tree\s*{[\s\S]*font-family:\s*var\(--editor-font\);/);
+  });
+
   it('keeps the data sidebar from crushing narrow VS Code panes', () => {
     expect(webviewStyles).toMatch(/@media \(max-width: 760px\) \{[\s\S]*\.vscode-scie-content\[data-data-sidebar-open="true"\]\s*{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\);/);
     expect(webviewStyles).toMatch(/@media \(max-width: 760px\) \{[\s\S]*\.vscode-scie-data-sidebar\s*{[\s\S]*position:\s*absolute;/);

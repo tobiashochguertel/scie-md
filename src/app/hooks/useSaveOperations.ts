@@ -28,6 +28,8 @@ import {
   formatStructuredSaveConfirmation,
   type StructuredSavePolicy,
 } from '../structuredSavePolicy';
+import { documentPerformance, utf8ByteLength } from '../performance/documentPerformance';
+import { sourceSnapshotService } from '../source/sourceSnapshotService';
 
 export interface VisualRoundTripWriteContext {
   autosave: boolean;
@@ -160,7 +162,9 @@ export function useSaveOperations({
     const workspaceDocument = workspaceStore?.getState().documentsById[effectiveDocumentId] ?? null;
     if (workspaceStore && !workspaceDocument) return false;
     const liveFormat = workspaceDocument?.format ?? formatRef.current;
-    const visualState = liveFormat === 'markdown' ? documentEditorGateway.flush(effectiveDocumentId) : null;
+    const visualState = liveFormat === 'markdown' && (!workspaceStore || documentEditorGateway.surface(effectiveDocumentId) === 'visual')
+      ? documentEditorGateway.flush(effectiveDocumentId)
+      : null;
     const outputSourceText = visualState?.markdown ?? workspaceDocument?.source.sourceText ?? sourceTextRef.current;
     const visualWriteAllowed = visualState
       ? await confirmVisualRoundTripWrite?.(outputSourceText, {
@@ -178,16 +182,27 @@ export function useSaveOperations({
     });
     sourceTextRef.current = flushedSourceText ?? outputSourceText;
     const origin = workspaceStore?.getState().documentsById[effectiveDocumentId] ?? null;
+    const snapshotLease = origin
+      ? sourceSnapshotService.lease(origin.id, origin.source.buffer.current, 'save')
+      : null;
     const saveToken = workspaceStore?.saves.begin(effectiveDocumentId, requestedOptions.autosave ? 'autosave' : 'manual') ?? null;
+    const snapshotStarted = monotonicNow();
     const snapshot = {
       ...requestedOptions,
       sourcePath: origin ? filePathForDocumentRecord(origin) : filePathRef.current,
       sourceMetadata: origin?.fileBaseline ?? fileMetadataRef.current,
       sourceFormat: origin?.format ?? formatRef.current,
-      sourceText: origin?.source.sourceText ?? sourceTextRef.current,
+      sourceText: snapshotLease?.sourceText ?? sourceTextRef.current,
       sourceRevision: origin?.source.revision ?? null,
       sourceLocator: origin?.locator ?? null,
     };
+    documentPerformance.trace({
+      name: 'whole-source-materialization',
+      documentId: effectiveDocumentId,
+      durationMs: monotonicNow() - snapshotStarted,
+      materializedBytes: utf8ByteLength(snapshot.sourceText),
+      phase: 'save-snapshot',
+    });
     const backupSchedule = backupSchedulesRef.current.get(effectiveDocumentId) ?? { sessionBackupDone: false, lastBackupAtMs: 0 };
     backupSchedulesRef.current.set(effectiveDocumentId, backupSchedule);
     const isSnapshotCurrent = () => (
@@ -199,7 +214,7 @@ export function useSaveOperations({
       if (!isSnapshotCurrent()) return false;
       if (!workspaceStore || !saveToken) return sourceTextRef.current === snapshot.sourceText;
       const current = workspaceStore.getState().documentsById[saveToken.documentId];
-      return current?.source.revision === saveToken.sourceRevision && current.source.sourceText === snapshot.sourceText;
+      return current?.source.revision === saveToken.sourceRevision;
     };
     const updateOrigin = (action: DocumentRecordAction) => {
       if (workspaceStore) {
@@ -242,6 +257,7 @@ export function useSaveOperations({
         structuredSavePolicy.reason ?? 'Autosave paused because the structured source has parser errors.',
       );
       if (isSnapshotCurrent()) setOriginAutosaveStatus('paused');
+      snapshotLease?.release();
       return false;
     }
     if (structuredSavePolicy.manualSaveRequiresConfirmation && !snapshot.autosave) {
@@ -249,6 +265,7 @@ export function useSaveOperations({
       if (!shouldSaveInvalidSource) {
         preserveRecovery();
         if (isSnapshotCurrent()) setOriginAutosaveStatus('paused');
+        snapshotLease?.release();
         return false;
       }
     }
@@ -581,6 +598,7 @@ export function useSaveOperations({
           setLastAutosavedAt(savedAt);
           setOriginExternalConflict(false);
         }
+        sourceSnapshotService.evictSaved(effectiveDocumentId, snapshot.sourceRevision ?? undefined);
         setSettings(host.settings.rememberRecentFile(targetPath));
         if (recoveryCoordinator && snapshot.sourceRevision !== null) {
           await recoveryCoordinator.clearDocument(effectiveDocumentId, snapshot.sourceRevision);
@@ -649,7 +667,10 @@ export function useSaveOperations({
       }
     };
 
-    if (!saveToken && workspaceStore) return false;
+    if (!saveToken && workspaceStore) {
+      snapshotLease?.release();
+      return false;
+    }
     if (!workspaceStore) updateSaveQueueDepth(1);
     const queuedSave: Promise<string | false> = workspaceStore && saveToken
       ? workspaceStore.saves.enqueue(saveToken, runSave)
@@ -663,8 +684,9 @@ export function useSaveOperations({
       }
       return false;
     });
-    if (!workspaceStore) saveQueueRef.current = handledSave.finally(() => updateSaveQueueDepth(-1));
-    return handledSave;
+    const releasedSave = handledSave.finally(() => snapshotLease?.release());
+    if (!workspaceStore) saveQueueRef.current = releasedSave.finally(() => updateSaveQueueDepth(-1));
+    return releasedSave;
   }, [commitCanonicalSourceTextEdit, commitSavedLocator, confirmText, confirmVisualRoundTripWrite, effectiveDocumentId, host, pushToast, recoveryCoordinator, reserveSaveLocator, setAutosaveStatus, setExternalConflict, setFileMetadata, setFilePath, setFormat, setLastAutosavedAt, setLastSavedCanonicalSourceText, setSettings, structuredSavePolicyRef, updateSaveQueueDepth, workspaceStore]);
 
   const actorStructuredSavePolicy = structuredSavePolicyRef?.current;
@@ -783,4 +805,8 @@ function fidelityReviewMessage(
 function byteLength(value: string): number {
   if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(value).byteLength;
   return unescape(encodeURIComponent(value)).length;
+}
+
+function monotonicNow(): number {
+  return typeof performance === 'undefined' ? Date.now() : performance.now();
 }

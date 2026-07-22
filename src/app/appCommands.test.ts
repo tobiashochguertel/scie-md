@@ -25,6 +25,9 @@ function createContext(overrides: Partial<AppCommandContext> = {}): AppCommandCo
     onOpenFolder: noop,
     onSave: noop,
     onSaveAs: noop,
+    onSaveAllDocuments: noop,
+    onReopenClosedDocument: noop,
+    onSwitchToMostRecentlyUsedDocument: noop,
     onFind: noop,
     onOpenSlashMenu: noop,
     onOpenTemplates: noop,
@@ -54,6 +57,7 @@ function createContext(overrides: Partial<AppCommandContext> = {}): AppCommandCo
     onCopyStructuredContext: noop,
     onCopySelectedStructureContext: noop,
     onCopyParserDiagnostics: noop,
+    onCopyDocumentPerformanceReport: noop,
     onCopyStructuredSchemaSummary: noop,
     onCopyStructuredTableSample: noop,
     onCopyStructuredHealthReport: noop,
@@ -109,6 +113,7 @@ describe('createAppCommands', () => {
     expect(labels).toContain('Insert review note');
     expect(labels).toContain('LLM skill: copy ScieMD LLM Skill');
     expect(labels).toContain('LLM skill: generate ScieMD_LLM_skill.md');
+    expect(labels).toContain('Copy document performance report');
     expect(labels).not.toContain('Copy for LLM: style guide');
     expect(labels).not.toContain('Copy current section for LLM revision');
     expect(ids).not.toContain('insert-image');

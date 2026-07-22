@@ -7,6 +7,7 @@ import { parseSourceFormatDiagnostics } from '../formatDiagnostics';
 import { useSourceFormatDiagnostics } from './useSourceFormatDiagnostics';
 import { createDocumentId, sourceRevision } from '../documentIdentity';
 import { createDocumentEffectCoordinator } from '../effects/documentEffectCoordinator';
+import { documentAnalysisRuntime } from '../runtime/documentAnalysisRuntime';
 
 const diagnosticDocumentId = createDocumentId();
 const diagnosticEffects = createDocumentEffectCoordinator(() => sourceRevision(0));
@@ -40,6 +41,7 @@ describe('useSourceFormatDiagnostics', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     latestState = null;
+    documentAnalysisRuntime.resetForTests();
     formatWorkerMock.parseFormatDocumentAsync.mockReset();
     formatWorkerMock.isTransientFormatParserWorkerFailure.mockClear();
   });
@@ -142,17 +144,18 @@ describe('useSourceFormatDiagnostics', () => {
     }));
   });
 
-  it('falls back to synchronous diagnostics when the worker fails unexpectedly', async () => {
+  it('keeps source editing available without synchronous deep fallback when the worker fails unexpectedly', async () => {
     formatWorkerMock.parseFormatDocumentAsync.mockRejectedValueOnce(new Error('unexpected worker serialization failure'));
 
     renderHook({ text: '{"bad": [}' });
     await flushAsync();
 
     expect(latestState?.parsingPending).toBe(false);
-    expect(latestState?.jsonAnalysis?.status).toBe('invalid');
+    expect(latestState?.jsonAnalysis?.status).toBe('source-only');
     expect(latestState?.diagnostics[0]).toMatchObject({
-      severity: 'error',
+      severity: 'warning',
       source: 'json',
+      code: 'format-parser-unavailable',
     });
   });
 

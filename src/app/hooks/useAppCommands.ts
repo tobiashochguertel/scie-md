@@ -29,6 +29,9 @@ interface UseAppCommandsArgs {
   onOpenFolder: () => void;
   onSave: () => void;
   onSaveAs: () => void;
+  onSaveAllDocuments: () => void;
+  onReopenClosedDocument: () => void;
+  onSwitchToMostRecentlyUsedDocument: () => void;
   onFind: () => void;
   onOpenSlashMenu: () => void;
   onOpenTemplates: () => void;
@@ -58,6 +61,7 @@ interface UseAppCommandsArgs {
   onCopyStructuredContext: () => void;
   onCopySelectedStructureContext: () => void;
   onCopyParserDiagnostics: () => void;
+  onCopyDocumentPerformanceReport: () => void;
   onCopyStructuredSchemaSummary: () => void;
   onCopyStructuredTableSample: () => void;
   onCopyStructuredHealthReport: () => void;
@@ -101,6 +105,9 @@ export function useAppCommands({
   onOpenFolder,
   onSave,
   onSaveAs,
+  onSaveAllDocuments,
+  onReopenClosedDocument,
+  onSwitchToMostRecentlyUsedDocument,
   onFind,
   onOpenSlashMenu,
   onOpenTemplates,
@@ -130,6 +137,7 @@ export function useAppCommands({
   onCopyStructuredContext,
   onCopySelectedStructureContext,
   onCopyParserDiagnostics,
+  onCopyDocumentPerformanceReport,
   onCopyStructuredSchemaSummary,
   onCopyStructuredTableSample,
   onCopyStructuredHealthReport,
@@ -170,6 +178,9 @@ export function useAppCommands({
     onOpenFolder,
     onSave,
     onSaveAs,
+    onSaveAllDocuments,
+    onReopenClosedDocument,
+    onSwitchToMostRecentlyUsedDocument,
     onFind,
     onOpenSlashMenu,
     onOpenTemplates,
@@ -199,6 +210,7 @@ export function useAppCommands({
     onCopyStructuredContext,
     onCopySelectedStructureContext,
     onCopyParserDiagnostics,
+    onCopyDocumentPerformanceReport,
     onCopyStructuredSchemaSummary,
     onCopyStructuredTableSample,
     onCopyStructuredHealthReport,

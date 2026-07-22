@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "referenceEnvironment": {
+    "os": "Windows 11 x64",
+    "webview": "WebView2 evergreen",
+    "cpuClass": "8-core desktop or better",
+    "memoryGiB": 16,
+    "powerState": "AC balanced",
+    "buildMode": "Tauri release"
+  },
+  "sampleCount": 5,
+  "budgets": {
+    "warm_reactivation_editor_attach_p95_ms": 250,
+    "cold_open_first_editable_p95_ms": 5000,
+    "native_cancel_stop_p95_ms": 500,
+    "accepted_input_p95_ms": 50,
+    "visibly_echoed_input_p95_ms": 100,
+    "webview_heap_mib": 768,
+    "process_working_set_mib": 1024
+  },
+  "policy": "Timing and memory are repeated distributions. Semantic ordering, redaction, byte-acquisition, and transaction counts are deterministic gates. Later rounds may tighten these targets; weakening requires a roadmap decision with measured evidence."
+}

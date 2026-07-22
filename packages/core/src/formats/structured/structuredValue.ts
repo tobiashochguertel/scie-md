@@ -34,12 +34,13 @@ export type StructuredSourceMapFeasibility =
   | 'lossy-value-only'
   | 'syntax-tree-readonly'
   | 'cst-spike-required'
+  | 'cst-source-preserving'
   | 'requires-lossless-parser';
 
 export interface StructuredPreservationSummary {
   format: StructuredDocumentFormat;
-  visualWritesEnabled: false;
-  decision: 'defer-visual-writes';
+  visualWritesEnabled: boolean;
+  decision: 'defer-visual-writes' | 'guarded-visual-writes';
   sourceMapFeasibility: StructuredSourceMapFeasibility;
   nodeSpanCoverage: 'none' | 'partial';
   candidateLibraries: string[];
@@ -90,6 +91,7 @@ export function createStructuredPreservationSummary({
   nodeSpanCoverage = 'none',
   candidateLibraries,
   blockers,
+  visualWritesEnabled = false,
 }: {
   format: StructuredDocumentFormat;
   warnings: readonly FormatDiagnostic[];
@@ -97,11 +99,12 @@ export function createStructuredPreservationSummary({
   nodeSpanCoverage?: StructuredPreservationSummary['nodeSpanCoverage'];
   candidateLibraries: string[];
   blockers: string[];
+  visualWritesEnabled?: boolean;
 }): StructuredPreservationSummary {
   return {
     format,
-    visualWritesEnabled: false,
-    decision: 'defer-visual-writes',
+    visualWritesEnabled,
+    decision: visualWritesEnabled ? 'guarded-visual-writes' : 'defer-visual-writes',
     sourceMapFeasibility,
     nodeSpanCoverage,
     candidateLibraries,

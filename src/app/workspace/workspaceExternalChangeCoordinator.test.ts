@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDocumentRecord, documentRecordReducer } from '../documentRecord';
-import { DEFAULT_METADATA, type FileMetadata, type ReadTextFileResponse } from '../documentState';
-import { fallbackFileLocator, type DocumentId } from '../documentIdentity';
+import { createHostReadResponse, DEFAULT_METADATA, type FileMetadata, type ReadTextFileResponse } from '../documentState';
+import { fallbackFileLocator, sourceRevision, type DocumentId } from '../documentIdentity';
 import { DocumentHostError } from '../host/documentHostError';
 import type { DocumentHost } from '../host/documentHost';
 import { createWorkspaceState } from './workspaceState';
@@ -112,6 +112,18 @@ describe('workspace external-change coordinator', () => {
     expect(host.file.readTextFile).not.toHaveBeenCalled();
   });
 
+  it('compares disk against the incrementally edited buffer rather than the stale string projection', async () => {
+    store.dispatch({
+      type: 'updateDocument', documentId: firstId,
+      action: { type: 'sourceChangeSetApplied', changeSet: { documentId: firstId, expectedRevision: sourceRevision(0), changes: [{ from: 0, to: 3, insert: 'ONE', expectedText: 'one' }] } },
+    });
+    vi.mocked(host.file.statFile).mockResolvedValue(metadata({ lastKnownMtimeMs: 2000, lastKnownSizeBytes: 4, contentHash: 'disk' }));
+    vi.mocked(host.file.readTextFile).mockResolvedValue(read('ONE\n', metadata({ lastKnownMtimeMs: 2000, lastKnownSizeBytes: 4, contentHash: 'disk' })));
+    store.externalChanges.configure(host);
+    await store.externalChanges.checkDocument(firstId);
+    expect(store.getState().documentsById[firstId].lifecycle).toMatchObject({ external: 'inSync', content: 'clean' });
+  });
+
   it('centralizes fallback polling and recovers native registration without creating per-document pollers', async () => {
     vi.useFakeTimers();
     vi.mocked(host.watcher.updateWatchedFiles).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
@@ -133,7 +145,7 @@ describe('workspace external-change coordinator', () => {
     expect(store.externalChanges.notifications()).toEqual(expect.arrayContaining([
       expect.objectContaining({ documentId: secondId, acknowledged: true }),
     ]));
-    expect((await store.externalChanges.compareDocument(secondId))?.content).toBe('disk\n');
+    expect((await store.externalChanges.compareDocument(secondId))?.sourceText).toBe('disk\n');
     expect(await store.externalChanges.reloadFromDisk(secondId)).toBe(true);
     expect(store.getState().documentsById[secondId].source).toMatchObject({ sourceText: 'disk\n', savedSourceText: 'disk\n' });
 
@@ -166,7 +178,7 @@ function metadata(patch: Partial<FileMetadata> = {}): FileMetadata {
 }
 
 function read(content: string, fileMetadata: FileMetadata): ReadTextFileResponse {
-  return { content, metadata: fileMetadata };
+  return createHostReadResponse(content, fileMetadata);
 }
 
 async function flushAsync() {

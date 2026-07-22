@@ -1,4 +1,4 @@
-import type { DocumentFormat } from '@sciemd/core';
+import { structuredMutationFingerprint, structuredMutationFormats, structuredVisualOperationRegistration, type DocumentFormat } from '@sciemd/core';
 
 export interface WorkspaceManifestRecoveryReference {
   id: string;
@@ -30,8 +30,14 @@ export interface WorkspaceManifestDocument {
     selectedVariableName: string | null;
     authorshipMarks: Array<{ id: string; start: number; end: number; createdAt: number; label: string }>;
     structuredEditJournal: Array<{
+      schemaVersion: 2;
       id: string;
-      format: 'json' | 'jsonl' | 'csv' | 'tsv';
+      format: DocumentFormat;
+      operationId: string;
+      transactionId: string;
+      sourceRevision: number;
+      sourceFingerprint: string;
+      planFingerprint: string;
       operationLabel: string;
       targetLabel: string;
       previewLabel: string;
@@ -67,6 +73,7 @@ export interface LegacyWorkspaceManifestV1 {
 const FORMATS = new Set<DocumentFormat>(['markdown', 'json', 'jsonl', 'yaml', 'toml', 'xml', 'csv', 'tsv', 'plainText']);
 const SURFACES = new Set(['markdown-visual', 'source', 'tree', 'records', 'table', 'cards', 'health']);
 const DOCUMENT_TYPES = new Set(['lab-note', 'report', 'memo', 'notes', 'other']);
+const STRUCTURED_MUTATION_FORMATS = new Set<DocumentFormat>(structuredMutationFormats);
 
 export function migrateWorkspaceManifestV1(value: unknown): WorkspaceManifestPayload | unknown {
   const record = asRecord(value);
@@ -205,8 +212,10 @@ function validateView(value: unknown): WorkspaceManifestDocument['view'] | null 
     if (!(record[key] === null || typeof record[key] === 'string')) return null;
   }
   if (!Array.isArray(record.authorshipMarks) || !record.authorshipMarks.every(validAuthorshipMark)) return null;
-  if (!Array.isArray(record.structuredEditJournal) || !record.structuredEditJournal.every(validJournalEntry)) return null;
-  return record as unknown as WorkspaceManifestDocument['view'];
+  if (!Array.isArray(record.structuredEditJournal)) return null;
+  const structuredEditJournal = record.structuredEditJournal.map(migrateJournalEntry);
+  if (structuredEditJournal.some((entry) => entry === null)) return null;
+  return { ...record, structuredEditJournal } as unknown as WorkspaceManifestDocument['view'];
 }
 
 function validatePresentation(value: unknown): WorkspaceManifestDocument['presentation'] | null {
@@ -232,13 +241,29 @@ function validAuthorshipMark(value: unknown): boolean {
     && typeof record.createdAt === 'number' && typeof record.label === 'string');
 }
 
-function validJournalEntry(value: unknown): boolean {
+function migrateJournalEntry(value: unknown): WorkspaceManifestDocument['view']['structuredEditJournal'][number] | null {
   const record = asRecord(value);
-  return Boolean(record && typeof record.id === 'string' && (record.format === 'json' || record.format === 'jsonl' || record.format === 'csv' || record.format === 'tsv')
+  if (!(record && typeof record.id === 'string' && typeof record.format === 'string' && STRUCTURED_MUTATION_FORMATS.has(record.format as DocumentFormat)
     && typeof record.operationLabel === 'string' && typeof record.targetLabel === 'string' && typeof record.previewLabel === 'string'
     && typeof record.riskLabel === 'string' && typeof record.appliedAt === 'number'
-    && (record.line === null || nonNegativeInteger(record.line)) && (record.column === null || nonNegativeInteger(record.column)));
+    && (record.line === null || nonNegativeInteger(record.line)) && (record.column === null || nonNegativeInteger(record.column)))) return null;
+  if (typeof record.schemaVersion === 'number' && record.schemaVersion > 2) return null;
+  if (record.schemaVersion === 2 && typeof record.operationId === 'string' && typeof record.transactionId === 'string'
+    && nonNegativeInteger(record.sourceRevision) && validFingerprint(record.sourceFingerprint) && validFingerprint(record.planFingerprint)) {
+    if (record.operationId !== 'legacy-unknown'
+      && !structuredVisualOperationRegistration(record.format as typeof structuredMutationFormats[number], record.operationId)) return null;
+    return record as unknown as WorkspaceManifestDocument['view']['structuredEditJournal'][number];
+  }
+  const legacyIdentity = structuredMutationFingerprint(JSON.stringify(record));
+  return {
+    schemaVersion: 2, id: record.id, format: record.format as DocumentFormat, operationId: 'legacy-unknown', transactionId: record.id,
+    sourceRevision: 0, sourceFingerprint: legacyIdentity, planFingerprint: legacyIdentity,
+    operationLabel: record.operationLabel, targetLabel: record.targetLabel, previewLabel: record.previewLabel,
+    riskLabel: record.riskLabel, appliedAt: record.appliedAt, line: record.line as number | null, column: record.column as number | null,
+  };
 }
+
+function validFingerprint(value: unknown): boolean { return typeof value === 'string' && /^sha256:v1:[0-9a-f]{64}$/.test(value); }
 
 function sameReferences(left: WorkspaceManifestRecoveryReference[], right: WorkspaceManifestRecoveryReference[]): boolean {
   const key = (entry: WorkspaceManifestRecoveryReference) => `${entry.id}:${entry.generation}:${entry.sourceRevision}`;

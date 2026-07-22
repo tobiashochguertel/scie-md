@@ -19,7 +19,7 @@ interface UseJsonSchemaDiscoveryOptions {
   filePath: string | null;
   explicitSchemaPath: string | null;
   fileHost: {
-    readTextFile(path: string): Promise<{ content: string }>;
+    readTextFile(path: string): Promise<{ sourceText: string }>;
   };
 }
 
@@ -67,7 +67,7 @@ export function useJsonSchemaDiscovery({
           schemaSource: {
             kind: 'explicit',
             path: explicitSchemaPath,
-            text: response.content,
+            text: response.sourceText,
             label: 'Selected schema',
           },
           loading: false,
@@ -85,7 +85,7 @@ export function useJsonSchemaDiscovery({
             schemaSource: {
               kind: 'sibling',
               path: candidate,
-              text: response.content,
+              text: response.sourceText,
               label: 'Sibling schema',
             },
             loading: false,

@@ -43,7 +43,7 @@ export function createWorkspaceShellProjection(
   const dirtySummary = suppliedSummary ?? summarizeWorkspaceDirtyState(state);
   const filePath = filePathForDocumentRecord(active);
   const activeDirty = active.lifecycle.content === 'dirty';
-  const formatCapabilities = formatCapabilitiesFor(active.format);
+  const formatCapabilities = formatCapabilitiesFor(active.format, { tomlNativePlanning: true });
   const mode: EditorMode = formatCapabilities.canUseVisualMarkdown || formatCapabilities.canUseStructuredVisualMode
     || formatCapabilities.canUseRecordList || formatCapabilities.canUseTablePreview
     ? active.view.mode

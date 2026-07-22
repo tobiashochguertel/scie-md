@@ -13,6 +13,8 @@ import {
 } from '../../services/recoveryCatalog';
 import { clearFileDraftAsync, clearUntitledDraftAsync } from '../../services/draftRecoveryService';
 import type { WorkspaceCommand, WorkspaceState } from './workspaceState';
+import { documentPerformance, utf8ByteLength } from '../performance/documentPerformance';
+import { sourceSnapshotService } from '../source/sourceSnapshotService';
 
 export type RecoveryLifecycleReason = 'timer' | 'deactivation' | 'visibility-hidden' | 'pagehide' | 'beforeunload' | 'destructive-barrier';
 
@@ -78,6 +80,7 @@ export function createWorkspaceRecoveryCoordinator(
   const schedule = (documentId: DocumentId, delayMs = RECOVERY_CHECKPOINT_LAG_MS) => {
     const record = getState().documentsById[documentId];
     if (!record || record.lifecycle.content !== 'dirty' || record.lifecycle.recovery === 'current') return;
+    if (inFlight.has(documentId)) return;
     const currentTime = now();
     const existing = timers.get(documentId);
     const firstPendingAt = existing?.firstPendingAt ?? currentTime;
@@ -121,7 +124,15 @@ export function createWorkspaceRecoveryCoordinator(
     flushEditor?.(documentId);
     const record = getState().documentsById[documentId];
     if (!record || record.lifecycle.content !== 'dirty') return null;
-    const entry = backend.checkpointSync(inputForRecord(record, now()));
+    const started = monotonicNow();
+    const leased = leasedInputForRecord(record, now());
+    let entry: RecoveryCatalogEntry;
+    try {
+      entry = backend.checkpointSync(leased.input);
+      recordRecoverySnapshot(documentId, leased.input.sourceText, monotonicNow() - started, 'recovery-checkpoint-sync');
+    } finally {
+      leased.release();
+    }
     markCurrentIfUnchanged(documentId, entry.sourceRevision);
     recordCheckpoint(documentId);
     return entry;
@@ -133,7 +144,7 @@ export function createWorkspaceRecoveryCoordinator(
   ): Promise<RecoveryCatalogEntry | null> => {
     cancelTimer(documentId);
     const existing = inFlight.get(documentId);
-    if (existing) await existing;
+    if (existing) return existing;
     const operation = (async (): Promise<RecoveryCatalogEntry | null> => {
       for (;;) {
         flushEditor?.(documentId);
@@ -145,7 +156,15 @@ export function createWorkspaceRecoveryCoordinator(
           return null;
         }
         try {
-          const entry = await backend.checkpoint(inputForRecord(record, now()));
+          const started = monotonicNow();
+          const leased = leasedInputForRecord(record, now());
+          let entry: RecoveryCatalogEntry;
+          try {
+            entry = await backend.checkpoint(leased.input);
+            recordRecoverySnapshot(documentId, leased.input.sourceText, monotonicNow() - started, 'recovery-checkpoint');
+          } finally {
+            leased.release();
+          }
           recordCheckpoint(documentId);
           const current = getState().documentsById[documentId];
           if (!current) return entry;
@@ -254,15 +273,34 @@ export function createWorkspaceRecoveryCoordinator(
   };
 }
 
-function inputForRecord(record: DocumentRecord, savedAt: number): RecoveryCheckpointInput {
+function leasedInputForRecord(record: DocumentRecord, savedAt: number): { input: RecoveryCheckpointInput; release(): void } {
+  const current = sourceSnapshotService.lease(record.id, record.source.buffer.current, 'recovery');
+  const saved = sourceSnapshotService.lease(record.id, record.source.buffer.saved, 'recovery', 'saved');
   return {
+    input: {
     documentId: record.id,
     sourceRevision: record.source.revision,
     locator: record.locator,
-    sourceText: record.source.sourceText,
-    savedSourceText: record.source.savedSourceText,
+    sourceText: current.sourceText,
+    savedSourceText: saved.sourceText,
     format: record.format,
     savedAt,
     baseMetadata: record.locator.kind === 'file' ? record.fileBaseline : null,
+    },
+    release: () => { current.release(); saved.release(); },
   };
+}
+
+function recordRecoverySnapshot(documentId: DocumentId, sourceText: string, durationMs: number, phase: string): void {
+  documentPerformance.trace({
+    name: 'whole-source-materialization',
+    documentId,
+    durationMs,
+    materializedBytes: utf8ByteLength(sourceText),
+    phase,
+  });
+}
+
+function monotonicNow(): number {
+  return typeof performance === 'undefined' ? Date.now() : performance.now();
 }

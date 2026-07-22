@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "round11-dense-tabs-ibm-plex-mono-v1",
+  "viewport": { "width": 1440, "height": 900 },
+  "deviceScaleFactor": 1,
+  "zoomCases": [1, 2],
+  "tabCounts": [1, 2, 12, 30, 60],
+  "sourceFont": "IBM Plex Mono",
+  "duplicateNameSet": [
+    "experiment-results.md",
+    "experiment-results.json",
+    "long-identical-prefix-microscopy-run-results.csv",
+    "long-identical-prefix-microscopy-run-results.tsv",
+    "specimen-record.yaml",
+    "specimen-record.toml",
+    "specimen-record.xml"
+  ],
+  "qualifierPattern": "projects/study-{group}/run-{index}",
+  "visualStyles": ["scienfy", "scientific-draft", "journal-manuscript"],
+  "assertions": {
+    "rowHeightCssPx": 38,
+    "maxToolZoneCssPx": 110,
+    "minimumPointerTargetCssPx": 28,
+    "pixelThreshold": 0.01
+  }
+}

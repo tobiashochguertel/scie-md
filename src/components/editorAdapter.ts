@@ -1,4 +1,5 @@
 import type { EditorHistoryControls } from './editorControls';
+import type { DocumentRuntimeKey, SuspendedEditorRuntime } from '../app/runtime/documentRuntimeRegistry';
 
 export type EditorSurface = 'source' | 'visual';
 
@@ -31,6 +32,10 @@ export interface EditorAdapter {
   restoreView?(snapshot: EditorViewSnapshot): boolean;
   flushPendingEdits(): EditorReadResult | null;
   history?: EditorHistoryControls;
+  runtimeKey?(): DocumentRuntimeKey | null;
+  suspendRuntime?(): Omit<SuspendedEditorRuntime, 'suspendedAt'> | null;
+  attachRuntime?(runtime: SuspendedEditorRuntime): boolean;
+  rebuildRuntime?(): boolean;
 }
 
 export type EditorAdapterReady = (adapter: EditorAdapter | undefined, retiringAdapter?: EditorAdapter) => void;

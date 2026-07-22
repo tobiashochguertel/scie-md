@@ -16,7 +16,7 @@ import { ExportLogDialog } from '../components/ExportLogDialog';
 import { ExportRenderHost } from '../components/ExportRenderHost';
 import type { ExportRenderHostHandle } from '../components/ExportRenderHost';
 import { ExportStatusBanner } from '../components/ExportStatusBanner';
-import { JsonEditReviewDialog } from '../components/JsonEditReviewDialog';
+import { StructuredEditReviewDialog } from '../components/StructuredEditReviewDialog';
 import type { ExportStatusBannerState } from '../components/ExportStatusBanner';
 import { LinkDialog } from '../components/LinkDialog';
 import { PromptDialog } from '../components/PromptDialog';
@@ -115,11 +115,11 @@ interface AppOverlaysProps {
   onCopyTabularPaste: (content: string, format: DelimitedTextConversionFormat) => void;
   onStructuredConversionAction?: (request: StructuredConversionRequest) => void;
   onCancelTabularPaste: () => void;
-  jsonEditReviewPreview: StructuredEditSourcePreview | null;
-  jsonEditReviewPlan?: StructuredReviewPlan | null;
-  jsonEditReviewSchemaExplanation?: string;
-  onApplyJsonEditReview: () => void;
-  onCancelJsonEditReview: () => void;
+  structuredEditReviewPreview: StructuredEditSourcePreview | null;
+  structuredEditReviewPlan?: StructuredReviewPlan | null;
+  structuredEditReviewSchemaExplanation?: string;
+  onApplyStructuredEditReview: () => void;
+  onCancelStructuredEditReview: () => void;
   externalConflictOpen: boolean;
   externalConflictHunks: DiffHunk[];
   externalProtectedChanges: ProtectedChange[];
@@ -235,11 +235,11 @@ export function AppOverlays({
   onCopyTabularPaste,
   onStructuredConversionAction,
   onCancelTabularPaste,
-  jsonEditReviewPreview,
-  jsonEditReviewPlan,
-  jsonEditReviewSchemaExplanation,
-  onApplyJsonEditReview,
-  onCancelJsonEditReview,
+  structuredEditReviewPreview,
+  structuredEditReviewPlan,
+  structuredEditReviewSchemaExplanation,
+  onApplyStructuredEditReview,
+  onCancelStructuredEditReview,
   externalConflictOpen,
   externalConflictHunks,
   externalProtectedChanges,
@@ -393,13 +393,13 @@ export function AppOverlays({
         onConversionAction={onStructuredConversionAction}
         onCancel={onCancelTabularPaste}
       />
-      <JsonEditReviewDialog
-        open={Boolean(jsonEditReviewPreview)}
-        preview={jsonEditReviewPreview}
-        reviewPlan={jsonEditReviewPlan}
-        schemaGeneratedValueExplanation={jsonEditReviewSchemaExplanation}
-        onApply={onApplyJsonEditReview}
-        onCancel={onCancelJsonEditReview}
+      <StructuredEditReviewDialog
+        open={Boolean(structuredEditReviewPreview)}
+        preview={structuredEditReviewPreview}
+        reviewPlan={structuredEditReviewPlan ?? null}
+        schemaGeneratedValueExplanation={structuredEditReviewSchemaExplanation}
+        onApply={onApplyStructuredEditReview}
+        onCancel={onCancelStructuredEditReview}
       />
       <ExternalConflictDialog
         open={externalConflictOpen}

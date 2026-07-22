@@ -3,6 +3,7 @@ import type {
   FormatDiagnostic,
   StructuredPathSegment,
 } from '../documentFormat.js';
+import { parseDocument } from 'yaml';
 import type {
   JsonTextEdit,
   JsonVisualEditIntent,
@@ -21,9 +22,14 @@ import type {
   TabularVisualEditPlan,
 } from '../tabular/tabularEdits.js';
 import { tabularSourceHash } from '../tabular/tabularEdits.js';
+import type { YamlTextEdit, YamlVisualEditIntent, YamlVisualEditPlan } from '../yaml/yamlEdits.js';
+import { yamlSourceHash } from '../yaml/yamlEdits.js';
+import type { TomlNativeMutationIntent, TomlNativeMutationPlanReport } from '../toml/tomlNative.js';
+import type { XmlVisualEditIntent, XmlVisualEditPlan } from '../xml/xmlEdits.js';
+import { xmlSourceHash } from '../xml/xmlEdits.js';
 import { displayPathFromPath, pointerFromPath } from './sourceMap.js';
 
-export type StructuredEditableFormat = Extract<DocumentFormat, 'json' | 'jsonl' | 'csv' | 'tsv'>;
+export type StructuredEditableFormat = Extract<DocumentFormat, 'json' | 'jsonl' | 'csv' | 'tsv' | 'yaml' | 'toml' | 'xml'>;
 export type StructuredClipboardReplaceFormat = Extract<StructuredEditableFormat, 'json' | 'jsonl'>;
 export type StructuredEditTargetKind = 'document' | 'path' | 'record' | 'cell' | 'row';
 export type StructuredPostApplyValidation = 'parse' | 'schema' | 'none';
@@ -61,6 +67,13 @@ export interface StructuredEditTransaction {
   destructive: boolean;
   requiresReview: boolean;
   postApplyValidation: StructuredPostApplyValidation;
+  semanticAssertions: StructuredSemanticAssertion[];
+}
+
+export interface StructuredSemanticAssertion {
+  path: StructuredPathSegment[];
+  expectation: 'present' | 'absent';
+  valueHash?: string;
 }
 
 export interface StructuredEditSourcePreviewRange {
@@ -120,6 +133,7 @@ export function createStructuredEditTransaction(input: {
   destructive?: boolean;
   requiresReview?: boolean;
   postApplyValidation?: StructuredPostApplyValidation;
+  semanticAssertions?: readonly StructuredSemanticAssertion[];
 }): StructuredEditTransaction {
   const sourceHash = structuredSourceHashForFormat(input.format, input.source);
   const edits = input.edits.map((edit) => ({ ...edit }));
@@ -140,6 +154,7 @@ export function createStructuredEditTransaction(input: {
     destructive: input.destructive ?? false,
     requiresReview: input.requiresReview ?? false,
     postApplyValidation: input.postApplyValidation ?? 'parse',
+    semanticAssertions: (input.semanticAssertions ?? []).map((assertion) => ({ ...assertion, path: [...assertion.path] })),
   };
 }
 
@@ -251,7 +266,7 @@ export function structuredEditTransactionFromJsonlEdit(
     previewLabel: plan.previewLabel,
     undoLabel: jsonlOperationLabel(intent),
     destructive: intent.kind === 'deleteRecord',
-    requiresReview: intent.kind === 'deleteRecord',
+    requiresReview: true,
     postApplyValidation: 'parse',
   });
 }
@@ -274,8 +289,88 @@ export function structuredEditTransactionFromTabularEdit(
     previewLabel: plan.previewLabel,
     undoLabel: tabularOperationLabel(intent),
     destructive: false,
-    requiresReview: false,
+    requiresReview: intent.kind === 'appendRow',
     postApplyValidation: 'parse',
+  });
+}
+
+export function structuredEditTransactionFromYamlEdit(
+  source: string,
+  intent: YamlVisualEditIntent,
+  plan: YamlVisualEditPlan,
+): StructuredEditTransaction | null {
+  if (!plan.ok || plan.nextSource === undefined) return null;
+  return createStructuredEditTransaction({
+    format: 'yaml',
+    source,
+    operationId: intent.kind,
+    operationLabel: yamlOperationLabel(intent),
+    target: { kind: 'path', label: displayPathFromPath(intent.path), path: [...intent.path], pointer: pointerFromPath(intent.path) },
+    edits: plan.edits.map(yamlEditToStructuredEdit),
+    nextSource: plan.nextSource,
+    diagnostics: plan.diagnostics,
+    previewLabel: plan.previewLabel,
+    undoLabel: `Undo ${yamlOperationLabel(intent).toLowerCase()}`,
+    destructive: intent.kind === 'deleteObjectField' || intent.kind === 'deleteArrayItem',
+    requiresReview: true,
+    postApplyValidation: 'parse',
+    semanticAssertions: yamlSemanticAssertions(plan.nextSource, intent),
+  });
+}
+
+export function structuredEditTransactionFromTomlNativePlan(
+  source: string,
+  intent: TomlNativeMutationIntent,
+  plan: TomlNativeMutationPlanReport,
+): StructuredEditTransaction | null {
+  if (plan.status !== 'planned' || plan.nextSource === null || plan.nextValue === null || plan.patches.length !== 1) return null;
+  const label = tomlOperationLabel(intent.kind);
+  return createStructuredEditTransaction({
+    format: 'toml', source, operationId: intent.kind, operationLabel: label,
+    target: { kind: 'path', label: displayPathFromPath(intent.path), path: [...intent.path], pointer: pointerFromPath(intent.path) },
+    edits: plan.patches.map((patch) => ({ offset: patch.from, length: patch.to - patch.from, content: patch.insert })),
+    nextSource: plan.nextSource,
+    diagnostics: plan.diagnostics.map((diagnostic) => ({
+      severity: diagnostic.severity, code: diagnostic.code, message: diagnostic.message, source: 'toml', category: 'edit',
+      span: diagnostic.span ?? undefined, line: diagnostic.line ?? undefined, column: diagnostic.column ?? undefined,
+      blocking: diagnostic.severity === 'error',
+    })),
+    previewLabel: `${label} with one native guarded source patch.`, undoLabel: `Undo ${label.toLowerCase()}`,
+    destructive: intent.kind === 'deleteObjectField' || intent.kind === 'deleteArrayItem', requiresReview: true,
+    postApplyValidation: 'parse', semanticAssertions: semanticAssertionsForIntent(plan.nextValue, intent),
+  });
+}
+
+export function structuredEditTransactionFromXmlEdit(
+  source: string,
+  intent: XmlVisualEditIntent,
+  plan: XmlVisualEditPlan,
+): StructuredEditTransaction | null {
+  if (!plan.ok || plan.nextSource === undefined || !plan.targetIdentity || plan.semanticTargetValue === undefined) return null;
+  return createStructuredEditTransaction({
+    format: 'xml',
+    source,
+    operationId: intent.kind,
+    operationLabel: plan.targetIdentity.kind === 'attribute-value' ? 'Edit XML attribute value' : 'Edit XML element text',
+    target: {
+      kind: 'path',
+      label: displayPathFromPath(intent.path),
+      path: [...intent.path],
+      pointer: pointerFromPath(intent.path),
+    },
+    edits: plan.edits.map((edit) => ({ ...edit })),
+    nextSource: plan.nextSource,
+    diagnostics: plan.diagnostics,
+    previewLabel: plan.previewLabel,
+    undoLabel: plan.targetIdentity.kind === 'attribute-value' ? 'Undo XML attribute edit' : 'Undo XML text edit',
+    destructive: false,
+    requiresReview: true,
+    postApplyValidation: 'parse',
+    semanticAssertions: [{
+      path: [...plan.targetIdentity.elementPath],
+      expectation: 'present',
+      valueHash: structuredSemanticValueHash(plan.semanticTargetValue),
+    }],
   });
 }
 
@@ -333,7 +428,108 @@ export function structuredSourceHashForFormat(format: StructuredEditableFormat, 
   if (format === 'json') return jsonSourceHash(source);
   if (format === 'jsonl') return jsonlSourceHash(source);
   if (format === 'csv' || format === 'tsv') return tabularSourceHash(source);
+  if (format === 'yaml') return yamlSourceHash(source);
+  if (format === 'xml') return xmlSourceHash(source);
   return fallbackSourceHash(source);
+}
+
+function semanticAssertionsForIntent(value: unknown, intent: TomlNativeMutationIntent): StructuredSemanticAssertion[] {
+  if (intent.kind === 'deleteObjectField') return [{ path: [...intent.path], expectation: 'absent' }];
+  if (intent.kind === 'deleteArrayItem') {
+    const parent = intent.path.slice(0, -1); const actual = semanticValueAtPath(value, parent);
+    return actual.found ? [{ path: parent, expectation: 'present', valueHash: structuredSemanticValueHash(actual.value) }] : [];
+  }
+  if (intent.kind === 'renameObjectKey' && intent.newKey) {
+    const nextPath = [...intent.path.slice(0, -1), intent.newKey]; const actual = semanticValueAtPath(value, nextPath);
+    return actual.found ? [{ path: [...intent.path], expectation: 'absent' }, { path: nextPath, expectation: 'present', valueHash: structuredSemanticValueHash(actual.value) }] : [];
+  }
+  let path = intent.kind === 'addObjectField' && intent.key ? [...intent.path, intent.key] : [...intent.path];
+  if (intent.kind === 'addArrayItem') {
+    const array = semanticValueAtPath(value, intent.path);
+    if (!array.found || !Array.isArray(array.value) || array.value.length === 0) return [];
+    path = [...intent.path, array.value.length - 1];
+  }
+  const actual = semanticValueAtPath(value, path);
+  return actual.found ? [{ path, expectation: 'present', valueHash: structuredSemanticValueHash(actual.value) }] : [];
+}
+
+function tomlOperationLabel(kind: TomlNativeMutationIntent['kind']): string {
+  if (kind === 'replaceScalar') return 'Edit TOML value';
+  if (kind === 'renameObjectKey') return 'Rename TOML key';
+  if (kind === 'addObjectField') return 'Add TOML field';
+  if (kind === 'deleteObjectField') return 'Delete TOML field';
+  if (kind === 'addArrayItem') return 'Append TOML item';
+  return 'Delete TOML item';
+}
+
+function yamlEditToStructuredEdit(edit: YamlTextEdit): StructuredEditTextEdit {
+  return { offset: edit.offset, length: edit.length, content: edit.content };
+}
+
+function yamlOperationLabel(intent: YamlVisualEditIntent): string {
+  if (intent.kind === 'replaceScalar') return 'Edit YAML value';
+  if (intent.kind === 'renameObjectKey') return 'Rename YAML key';
+  if (intent.kind === 'addObjectField') return 'Add YAML field';
+  if (intent.kind === 'deleteObjectField') return 'Delete YAML field';
+  if (intent.kind === 'addArrayItem') return 'Append YAML item';
+  return 'Delete YAML item';
+}
+
+function yamlSemanticAssertions(nextSource: string, intent: YamlVisualEditIntent): StructuredSemanticAssertion[] {
+  const parsed = parseYamlSemanticValue(nextSource);
+  if (!parsed.ok) return [];
+  if (intent.kind === 'deleteObjectField') {
+    return [{ path: [...intent.path], expectation: 'absent' }];
+  }
+  if (intent.kind === 'deleteArrayItem') {
+    const parentPath = intent.path.slice(0, -1);
+    const parent = semanticValueAtPath(parsed.value, parentPath);
+    return parent.found ? [{ path: parentPath, expectation: 'present', valueHash: structuredSemanticValueHash(parent.value) }] : [];
+  }
+  if (intent.kind === 'renameObjectKey') {
+    const nextPath = [...intent.path.slice(0, -1), intent.newKey];
+    const value = semanticValueAtPath(parsed.value, nextPath);
+    return value.found ? [
+      { path: [...intent.path], expectation: 'absent' },
+      { path: nextPath, expectation: 'present', valueHash: structuredSemanticValueHash(value.value) },
+    ] : [];
+  }
+  let path = intent.kind === 'addObjectField' ? [...intent.path, intent.key] : [...intent.path];
+  if (intent.kind === 'addArrayItem') {
+    const sequence = semanticValueAtPath(parsed.value, intent.path);
+    if (!sequence.found || !Array.isArray(sequence.value) || sequence.value.length === 0) return [];
+    path = [...intent.path, sequence.value.length - 1];
+  }
+  const value = semanticValueAtPath(parsed.value, path);
+  return value.found ? [{ path, expectation: 'present', valueHash: structuredSemanticValueHash(value.value) }] : [];
+}
+
+export function structuredSemanticValueHash(value: unknown): string {
+  return fallbackSourceHash(stableSemanticStringify(value));
+}
+
+function stableSemanticStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableSemanticStringify).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableSemanticStringify(record[key])}`).join(',')}}`;
+}
+
+function parseYamlSemanticValue(source: string): { ok: true; value: unknown } | { ok: false } {
+  try {
+    const document = parseDocument(source, { strict: true, uniqueKeys: true });
+    return document.errors.length === 0 ? { ok: true, value: document.toJS() } : { ok: false };
+  } catch { return { ok: false }; }
+}
+
+function semanticValueAtPath(value: unknown, path: readonly StructuredPathSegment[]): { found: boolean; value: unknown } {
+  let current = value;
+  for (const segment of path) {
+    if (typeof segment === 'number' && Array.isArray(current) && segment >= 0 && segment < current.length) current = current[segment];
+    else if (typeof segment === 'string' && current !== null && typeof current === 'object' && Object.prototype.hasOwnProperty.call(current, segment)) current = (current as Record<string, unknown>)[segment];
+    else return { found: false, value: undefined };
+  }
+  return { found: true, value: current };
 }
 
 function jsonEditToStructuredEdit(edit: JsonTextEdit): StructuredEditTextEdit {
@@ -545,5 +741,8 @@ function formatLabel(format: StructuredEditableFormat): string {
   if (format === 'json') return 'JSON';
   if (format === 'jsonl') return 'JSONL';
   if (format === 'csv') return 'CSV';
+  if (format === 'yaml') return 'YAML';
+  if (format === 'toml') return 'TOML';
+  if (format === 'xml') return 'XML';
   return 'TSV';
 }

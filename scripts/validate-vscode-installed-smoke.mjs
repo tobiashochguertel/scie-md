@@ -103,6 +103,38 @@ function assertInstalledExtension(installedExtensionDir) {
       throw new Error(`Installed extension is missing ${relativePath}.`);
     }
   }
+
+  const installedFiles = listFiles(installedExtensionDir);
+  for (const assetName of [
+    'ibm-plex-mono-400-normal.woff2',
+    'ibm-plex-mono-400-italic.woff2',
+    'ibm-plex-mono-500-normal.woff2',
+    'ibm-plex-mono-700-normal.woff2',
+    'noto-sans-mono-greek-400-normal.woff2',
+  ]) {
+    if (!installedFiles.some((file) => basename(file) === assetName)) {
+      throw new Error(`Installed extension is missing packaged source-font asset ${assetName}.`);
+    }
+  }
+  const packagedCss = readFileSync(join(installedExtensionDir, 'dist/webview/assets/main.css'), 'utf8');
+  if (!packagedCss.includes('IBM Plex Mono') || !packagedCss.includes('--vscode-editor-font-family')) {
+    throw new Error('Installed webview CSS does not preserve VS Code font precedence with IBM Plex Mono fallback.');
+  }
+  const ibmLicense = installedFiles.find((file) => basename(file) === 'OFL.txt');
+  const supplementalLicense = installedFiles.find((file) => basename(file) === 'OFL-Noto-Sans-Mono.txt');
+  if (!ibmLicense || !supplementalLicense) {
+    throw new Error('Installed extension is missing IBM Plex Mono or supplemental Greek OFL evidence.');
+  }
+}
+
+function listFiles(directory) {
+  const files = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const fullPath = join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...listFiles(fullPath));
+    else if (entry.isFile()) files.push(fullPath);
+  }
+  return files;
 }
 
 function findInstalledExtensionDir(extensionsDir, extensionId, version) {

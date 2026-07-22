@@ -6,7 +6,7 @@
   height: 100%;
   background: var(--editor-bg);
   color: var(--text);
-  font-family: var(--mono-font);
+  font-family: var(--source-editor-font);
   font-size: calc(14px * var(--font-scale));
 }
 
@@ -23,6 +23,7 @@
   min-height: 100%;
   margin: 0 auto;
   padding: 0 var(--source-pad-x);
+  font-family: var(--source-editor-font);
   line-height: var(--editor-line-height);
 }
 

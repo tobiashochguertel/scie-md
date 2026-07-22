@@ -1,12 +1,12 @@
-# XML Read-Only Adapter Policy
+# XML Source-Preserving Adapter Policy
 
-Status: implemented as a read-only adapter in Round 12 of `structured_data_next_refactor_plan.md`.
+Status: the Round 12 read-only projection was superseded by guarded, namespace-aware scalar writes in Round 9 of `document_runtime_structured_editing_foundations_wave.md`.
 
-ScieMD accepts XML as a structured text document for source editing, diagnostics, source reveal, and read-only tree inspection. Source text remains authoritative. Visual mode is a projection over the source and does not serialize, canonicalize, format, or write XML.
+ScieMD accepts XML as a structured text document for source editing, diagnostics, source reveal, tree inspection, and a deliberately narrow set of reviewed scalar edits. Source text remains authoritative. Visual mode plans guarded source patches and never serializes or canonicalizes the document.
 
 ## Parser Decision
 
-The XML adapter uses `@lezer/xml` because it provides a local syntax tree with source offsets and does not load external resources. This fits ScieMD's read-only visual projection requirement better than DOM-style XML parsing, which can blur source ranges and is easier to accidentally pair with entity expansion or normalization behavior.
+The XML adapter uses `@lezer/xml` because it provides a local syntax tree with source offsets and does not load external resources. This retains exact source ranges for projection and guarded writes without pairing parsing with entity expansion, resource loading, or normalization.
 
 ## Security Policy
 
@@ -16,7 +16,7 @@ The XML adapter uses `@lezer/xml` because it provides a local syntax tree with s
 - XML source parsing is bounded by `XML_PARSE_BUDGET_BYTES`; larger files stay editable in source mode but do not get a background tree preview.
 - XML values copied from visual mode must be treated as untrusted document data, not instructions or executable content.
 
-## Projection Policy
+## Projection and Write Policy
 
 The read-only tree keeps XML-specific constructs distinct:
 
@@ -25,13 +25,14 @@ The read-only tree keeps XML-specific constructs distinct:
 - Namespace declarations are represented separately from ordinary attributes.
 - Text, comments, CDATA, processing instructions, entity references, and DTD nodes are separate node kinds.
 - Source-map entries are available for document, element, attribute, namespace declaration, text, comment, CDATA, processing instruction, entity reference, and DTD projection nodes.
+- `replaceScalar` is available only for an ordinary attribute value without an existing entity-reference token, or an element's sole non-whitespace text value.
+- Attribute edits preserve the existing quote delimiter and escape for attribute context; text edits escape for text context.
+- Every edit is reviewed, guarded by the source hash and exact expected range, reparsed, checked for namespace/content identity, and committed through the shared structured mutation executor.
+- Namespace declarations, element/attribute rename, structural add/delete, mixed content, whitespace-only text, comments, CDATA, processing instructions, and entity-bearing values remain source-only.
 
 ## Non-Goals
 
-- No XML visual edits.
 - No XML conversion writes.
 - No XML schema, XSD, DTD, XPath, XSLT, or canonicalization support.
-- No comment/CDATA/processing-instruction rewrite or preservation strategy beyond read-only source mapping.
-
-Future XML write support would require a separate source-preserving edit planner with namespace-aware patching, untouched-region preservation fixtures, explicit whitespace policy, and security review.
-
+- No structural XML visual operations without separate fixture-backed proof.
+- No comment, CDATA, processing-instruction, namespace-declaration, or entity-reference rewrites.

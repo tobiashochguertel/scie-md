@@ -1,7 +1,7 @@
 # Source Preservation Adapter Contract
 
 Date: 2026-07-01
-Status: contract established; YAML, TOML, and XML visual writes remain disabled
+Status: contract established; guarded YAML, native TOML, and namespace-aware XML writes implemented
 
 ## Purpose
 
@@ -21,27 +21,33 @@ A production `SourcePreservationAdapter` must provide:
 - Byte-for-byte no-op round-trip evidence.
 - Untouched-region comparison after every planned edit.
 
-Until those guards exist for a concrete operation, visual writes must return an unsupported plan and keep `visualWritesEnabled` false.
+Until those guards exist for a concrete operation, visual writes must return an unsupported plan. YAML, desktop-native TOML, and XML satisfy the contract only for their registered operation matrices.
 
 ## Format Decisions
 
 ### YAML
 
-YAML has a useful CST boundary through the `yaml` package with `keepSourceTokens`, node ranges, comments, anchors, aliases, tags, block scalars, flow collections, and merge-key evidence. ScieMD now keeps a fixture corpus in `docs/refactor/yaml_preservation_fixtures/`, including `comprehensive-preservation.yaml`, and tests source-map spans plus blocker classification. Future YAML writes should start with a very narrow scalar replacement only when the path has a local source span and no nearby unsupported feature.
+YAML uses the `yaml` package CST boundary (`keepSourceTokens`, node ranges, and source tokens). `packages/core/src/formats/yaml/yamlEdits.ts` plans narrow guarded patches for scalar replacement, simple-key rename, block-mapping add/delete, block-sequence append, and unambiguous sequence-item delete. Every YAML operation requires review and commits through the shared structured-mutation executor, which rechecks revision, SHA-256 source/plan/validator seals, expected source text, untouched regions, authoritative YAML parsing, and an operation-specific semantic assertion. Scalar style is retained where representable; an explicit quoted-style change is surfaced in review otherwise.
+
+Aliases, anchors, explicit tags, merge keys, flow collections, block scalars, complex keys, multi-document streams, duplicate keys, non-local visual nodes, non-append sequence insertion, collection-valued insertion, and comment-owned deletion spans remain source-only. Comments and whitespace outside an authorized patch remain byte-for-byte exact.
 
 ### TOML
 
-TOML production visual parsing in the webview remains `smol-toml`, which is value-only and intentionally read-only. The native Rust command `inspect_toml_source_map` is registered only as `experimental-readonly-evidence`: it exposes `toml_edit` source-map evidence, unsupported feature classification, and no-op round-trip status, but it does not plan or apply patches. Future TOML writes should be Rust-backed unless a better lossless parser boundary is proven.
+Desktop TOML production display, navigation, conflict review, and edit planning use the versioned Rust `toml_edit` commands `inspect_toml_source_map` and `plan_toml_mutation`. Native code returns identity-bearing source maps and one guarded patch but never writes files; the shared structured executor rechecks seals, guards, limits, parse/semantic postconditions, and exact untouched regions before the document aggregate commits. `smol-toml` remains only a non-authoritative preview and defense-in-depth parse fallback for hosts without native capability, which remain visually read-only.
 
 ### XML
 
-XML writes need a separate design round. A source-preserving XML adapter must define namespace-aware node identity, default namespace behavior for unprefixed attributes, attribute versus element versus text mutation rules, whitespace policy, comments, CDATA, processing instructions, and entity-reference policy. DTD and DOCTYPE declarations remain blocked, and external entities must never be loaded or expanded.
+XML uses the Lezer CST and namespace-aware source-map identities to plan one reviewed `replaceScalar` operation for ordinary attribute values and sole non-whitespace element text. The planner escapes for the exact attribute delimiter or text context, verifies QName/local-name/namespace/content postconditions, and preserves every untouched byte. Namespace declarations, mixed content, whitespace-only text, comments, CDATA, processing instructions, and entity-reference-bearing values remain source-only. DTD and DOCTYPE declarations remain blocked, and external entities are never loaded or expanded.
 
 ## Current Proof Gates
 
 - `packages/core/src/formats/structured/sourcePreservationAdapter.test.ts` covers source hashes, expected-old-source guards, patch application, overlap rejection, no-op evidence, and untouched-region comparison.
 - `packages/core/src/formats/yaml/yamlSourceMap.test.ts` covers the expanded YAML fixture corpus and CRLF comment spans.
+- `packages/core/src/formats/yaml/yamlEdits.test.ts` covers the production operation matrix, exact untouched bytes, stale guards, and fail-closed exclusions.
+- `src/app/structured/structuredMutationExecutor.test.ts` proves reviewed YAML plans reach the sole production commit port with semantic postconditions.
 - `packages/core/src/formats/xml/parseXmlDocument.test.ts` covers XML namespace/comment/CDATA/entity fixtures and DTD blocking.
+- `packages/core/src/formats/xml/xmlEdits.test.ts` covers namespace-aware scalar planning, exact untouched bytes, escaping, stale guards, size bounds, and fail-closed entity/DTD handling.
+- `src/app/structured/structuredMutationExecutor.test.ts` proves reviewed XML plans reach the sole production commit port with namespace/content semantic postconditions.
 - `src-tauri/tests/toml_preservation_spike.rs` covers TOML no-op preservation, scalar edit spikes, array-of-table insertion spikes, span exposure, duplicate rejection, and fixture behavior.
 - `scripts/validate-tauri-command-contract.mjs` keeps the TOML source-map command experimental by ensuring production TypeScript does not invoke it.
 

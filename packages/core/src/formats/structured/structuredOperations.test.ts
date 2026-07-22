@@ -52,7 +52,7 @@ describe('structured operation metadata', () => {
       expect.objectContaining({ id: 'copyJson', group: 'clipboard', enabled: true }),
       expect.objectContaining({ id: 'copyText', group: 'clipboard', enabled: true }),
       expect.objectContaining({ id: 'revealSource', group: 'navigation', enabled: true }),
-      expect.objectContaining({ id: 'replaceScalar', label: 'Edit value', group: 'edit', requiresReview: true }),
+      expect.objectContaining({ id: 'replaceScalar', label: 'Edit value', group: 'edit', requiresReview: false }),
       expect.objectContaining({ id: 'renameObjectKey', label: 'Rename key', group: 'edit', requiresReview: true }),
       expect.objectContaining({ id: 'deleteObjectField', label: 'Delete field', group: 'delete', destructive: true }),
     ]));

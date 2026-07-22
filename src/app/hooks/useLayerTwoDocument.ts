@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { safeParseScienfyDocument } from '@sciemd/core';
 import type { DocumentDiagnostic } from '@sciemd/core';
 import { cancelScienfyDocumentParse, isTransientParserWorkerFailure, parseScienfyDocumentAsync } from '../../domain/document/documentParserWorker';
@@ -9,9 +9,15 @@ import type { DocumentHost } from '../host/documentHost';
 import { isTauriRuntime } from '../runtime';
 import { canonicalComparisonKey } from '../documentIdentity';
 import type { DocumentEffectTarget } from '../effects/documentEffectCoordinator';
+import {
+  acquireAnalysisSnapshot,
+  analysisSourceFingerprint,
+  canonicalFingerprint,
+  documentAnalysisRuntime,
+} from '../runtime/documentAnalysisRuntime';
+import { projectParsedScienfyDocument } from '../runtime/analysisArtifactProjection';
 
 export function useLayerTwoDocument(target: DocumentEffectTarget, markdown: string, filePath: string | null, host: Pick<DocumentHost, 'file' | 'watcher'>) {
-  const deferredMarkdown = useDeferredValue(markdown);
   const bibliographyWatchScopeRef = useRef(`bibliography:${Math.random().toString(36).slice(2)}`);
   const variableWatchScopeRef = useRef(`variables:${Math.random().toString(36).slice(2)}`);
   const bibliographyOwnerRef = useRef(target.documentId);
@@ -35,27 +41,48 @@ export function useLayerTwoDocument(target: DocumentEffectTarget, markdown: stri
     }),
     [bibliographyDiagnostics, bibliographyText, externalVariableDefinitions, target.documentId, variableFileDiagnostics],
   );
+  const sourceFingerprint = analysisSourceFingerprint(target, markdown);
+  const dependencyFingerprint = canonicalFingerprint(parseOptions);
   const [parsedState, setParsedState] = useState(() => ({
     documentId: target.documentId,
-    markdown,
-    document: safeParseScienfyDocument(markdown, parseOptions),
+    sourceFingerprint: '',
+    dependencyFingerprint: '',
+    document: projectParsedScienfyDocument(safeParseScienfyDocument('', parseOptions)),
   }));
-  const fallbackDocument = useMemo(
-    () => safeParseScienfyDocument(markdown, parseOptions),
-    [markdown, parseOptions, target.documentId],
+  const emptyDocument = useMemo(
+    () => projectParsedScienfyDocument(safeParseScienfyDocument('', parseOptions)),
+    [parseOptions],
   );
   const liveDocument = parsedState.documentId === target.documentId
     ? parsedState.document
-    : fallbackDocument;
+    : emptyDocument;
 
   useEffect(() => {
     const token = target.effects.begin(target.documentId, 'layer-two-parse');
     if (!token) return undefined;
+    documentAnalysisRuntime.cancelDocument(target.documentId, token.sourceRevision);
     target.effects.apply(token, () => setDocumentParsingPending(true));
-    void parseScienfyDocumentAsync(deferredMarkdown, parseOptions, token)
+    void documentAnalysisRuntime.request({
+      key: {
+        documentId: target.documentId,
+        sourceRevision: token.sourceRevision,
+        analyzer: 'markdown-parse',
+        optionsFingerprint: canonicalFingerprint({ analyzer: 'markdown-parse:v1', sourceFingerprint }),
+        dependencyFingerprint,
+      },
+      priority: 'active',
+      transport: 'worker-structured-clone',
+      acquireSnapshot: () => acquireAnalysisSnapshot(target, token, markdown),
+      run: (sourceText, signal) => {
+        if (signal.aborted) return Promise.reject(new Error('Document analysis was cancelled.'));
+        return parseScienfyDocumentAsync(sourceText, parseOptions, token);
+      },
+      project: projectParsedScienfyDocument,
+      cancel: () => { cancelScienfyDocumentParse(token); },
+    })
       .then((document) => {
         target.effects.commit(token, () => {
-          setParsedState({ documentId: target.documentId, markdown: deferredMarkdown, document });
+          setParsedState({ documentId: target.documentId, sourceFingerprint, dependencyFingerprint, document });
           setDocumentParsingPending(false);
         });
       })
@@ -66,16 +93,13 @@ export function useLayerTwoDocument(target: DocumentEffectTarget, markdown: stri
           target.effects.commit(token, () => setDocumentParsingPending(false));
           return;
         }
-        target.effects.commit(token, () => {
-          setParsedState({ documentId: target.documentId, markdown: deferredMarkdown, document: safeParseScienfyDocument(deferredMarkdown, parseOptions) });
-          setDocumentParsingPending(false);
-        });
+        console.warn('Document parser failed; keeping the last revision-indexed artifact while source editing remains available.', error);
+        target.effects.commit(token, () => setDocumentParsingPending(false));
       });
     return () => {
-      cancelScienfyDocumentParse(token);
       target.effects.cancel(token);
     };
-  }, [deferredMarkdown, parseOptions, target.documentId, target.effects]);
+  }, [dependencyFingerprint, markdown, parseOptions, sourceFingerprint, target.documentId, target.effects, target.leaseSource]);
 
   const bibliographyFilesKey = liveDocument.bibliographyFiles.join('|');
   const variableFilesKey = liveDocument.variableFiles.join('|');
@@ -131,8 +155,8 @@ export function useLayerTwoDocument(target: DocumentEffectTarget, markdown: stri
           try {
             const response = await host.file.readTextFile(resolvedPath);
             return {
-              content: response.content,
-              diagnostic: response.content.trim()
+              content: response.sourceText,
+              diagnostic: response.sourceText.trim()
                 ? null
                 : bibliographyDiagnostic(bibliographyPath, 'Bibliography file is empty.'),
             };
@@ -289,10 +313,10 @@ export function useLayerTwoDocument(target: DocumentEffectTarget, markdown: stri
             }
             try {
               const response = await host.file.readTextFile(resolvedPath);
-              const parsedDefinitions = parseVariableDataFile(response.content, variablePath);
+              const parsedDefinitions = parseVariableDataFile(response.sourceText, variablePath);
               return {
                 definitions: parsedDefinitions,
-                diagnostic: response.content.trim() && parsedDefinitions.length === 0
+                diagnostic: response.sourceText.trim() && parsedDefinitions.length === 0
                   ? variableFileDiagnostic(variablePath, 'Linked variable file did not contain readable JSON or CSV variables.')
                   : null,
               };
@@ -398,7 +422,11 @@ export function useLayerTwoDocument(target: DocumentEffectTarget, markdown: stri
 
   return {
     document: liveDocument,
-    parsedMarkdown: parsedState.documentId === target.documentId ? parsedState.markdown : '',
+    parsedMarkdown: parsedState.documentId === target.documentId
+      && parsedState.sourceFingerprint === sourceFingerprint
+      && parsedState.dependencyFingerprint === dependencyFingerprint
+      ? markdown
+      : '',
     bibliographyLoading,
     documentParsingPending,
     linkedVariableLoading,
