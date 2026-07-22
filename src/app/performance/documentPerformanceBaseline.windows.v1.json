@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-22T14:41:28.462Z",
+  "generatedAt": "2026-07-22T16:16:45.420Z",
   "candidate": {
     "sourceIdentity": {
-      "head": "f28bb9cf7abeb504402f702e8d8a78bdf302e03a",
+      "head": "ce77ada5d61f5779a2edf560346adcfc24624973",
       "buildInputManifestSha256": "a3b5ce28ccffa7ed04b231051e3aa73c792e65651c015e03fa86ec0d5b3330cc",
       "fileCount": 1207
     },
     "executablePath": "src-tauri/target/release/sciemd.exe",
-    "executableSha256": "f744ca205762fd2d643f0334de01a4884dd7b031e23177d0f3f8a1cd2b813d8c"
+    "executableSha256": "b65d26c3532c86506e67d30daf5193a2f646fa0fed99c7ed4f2f516f609669bf"
   },
   "environment": {
     "os": "win32 x64",
@@ -140,69 +140,69 @@
   "distributions": {
     "warm_reactivation_editor_attach_ms": {
       "samples": [
-        14.899999976158142,
-        14.900000035762787,
-        15.800000011920929,
-        15.800000011920929,
-        16
+        15.399999976158142,
+        15.5,
+        15.600000023841858,
+        16.69999998807907,
+        16.700000047683716
       ],
-      "median": 15.800000011920929,
-      "p95": 16
+      "median": 15.600000023841858,
+      "p95": 16.700000047683716
     },
     "cold_open_first_editable_ms": {
       "samples": [
-        326.9000000357628,
-        491.4000000357628,
-        903.4000000357628,
-        1750.3999999761581,
-        2989,
-        2993.599999964237,
-        3050
+        472.69999998807907,
+        893.6999999880791,
+        2972.099999964237,
+        3026.199999988079,
+        3054.699999988079,
+        5806.5,
+        9449.399999976158
       ],
-      "median": 1750.3999999761581,
-      "p95": 3050
+      "median": 3026.199999988079,
+      "p95": 9449.399999976158
     },
     "accepted_to_visibly_echoed_input_ms": {
       "samples": [
-        39.5,
-        40.30000001192093,
-        41.5,
-        43.30000001192093,
-        50.39999997615814
+        37.19999998807907,
+        37.90000003576279,
+        38.39999997615814,
+        47.59999996423721,
+        49.5
       ],
-      "median": 41.5,
-      "p95": 50.39999997615814
+      "median": 38.39999997615814,
+      "p95": 49.5
     },
     "native_cancel_stop_ms": {
       "samples": [
-        0.0523,
-        5.9162,
-        6.2055,
-        11.5537,
-        16.688100000000002
+        0.08839999999999999,
+        5.8713999999999995,
+        6.2325,
+        6.4562,
+        8.9336
       ],
-      "median": 6.2055,
-      "p95": 16.688100000000002
+      "median": 6.2325,
+      "p95": 8.9336
     }
   },
   "coldProbes": [
     {
       "id": "unicode-below-threshold",
       "outcome": "editable",
-      "elapsedMs": 2993.599999964237,
-      "processWorkingSetBytes": 41398272
+      "elapsedMs": 3026.199999988079,
+      "processWorkingSetBytes": 42958848
     },
     {
       "id": "unicode-at-threshold",
       "outcome": "editable",
-      "elapsedMs": 2989,
-      "processWorkingSetBytes": 40603648
+      "elapsedMs": 3054.699999988079,
+      "processWorkingSetBytes": 43991040
     },
     {
       "id": "markdown-5mib-many-line",
       "outcome": "editable",
-      "elapsedMs": 3050,
-      "processWorkingSetBytes": 40792064
+      "elapsedMs": 2972.099999964237,
+      "processWorkingSetBytes": 43851776
     }
   ],
   "coldTraceSummary": {
@@ -239,7 +239,7 @@
       "materializedBytes": 0,
       "fullDocumentTransactions": 0
     },
-    "processTreeWorkingSetBytes": 3356409856
+    "processTreeWorkingSetBytes": 1748647936
   },
   "counts": {
     "openOperations": 4,
@@ -251,10 +251,10 @@
     "fullDocumentTransactions": 0
   },
   "memory": {
-    "prePressureWebviewHeapBytes": 101349438,
-    "prePressureProcessWorkingSetBytes": 122318848,
-    "pressureProcessTreeWorkingSetBytes": 718110720,
-    "pressureWebviewHeapBytes": 133945116,
+    "prePressureWebviewHeapBytes": 101437846,
+    "prePressureProcessWorkingSetBytes": 125816832,
+    "pressureProcessTreeWorkingSetBytes": 717033472,
+    "pressureWebviewHeapBytes": 133944992,
     "pressureHeapReason": null
   },
   "semanticGates": {
@@ -280,30 +280,30 @@
         {
           "accepted": true,
           "stopped": true,
-          "stopMs": 11.5537
+          "stopMs": 8.9336
         },
         {
           "accepted": true,
           "stopped": true,
-          "stopMs": 16.688100000000002
+          "stopMs": 0.08839999999999999
         },
         {
           "accepted": true,
           "stopped": true,
-          "stopMs": 6.2055
+          "stopMs": 6.4562
         },
         {
           "accepted": true,
           "stopped": true,
-          "stopMs": 5.9162
+          "stopMs": 5.8713999999999995
         },
         {
           "accepted": true,
           "stopped": true,
-          "stopMs": 0.0523
+          "stopMs": 6.2325
         }
       ],
-      "p95Ms": 16.688100000000002,
+      "p95Ms": 8.9336,
       "budgetMs": 500
     },
     "nativeTransport": {
@@ -318,23 +318,23 @@
         "boundedChannelCandidate": {
           "invokeWall": {
             "samples": [
-              44.59999996423721,
-              116.60000002384186,
-              126.30000001192093,
-              240.69999998807907
+              41.5,
+              112.39999997615814,
+              5004.700000047684,
+              8232
             ],
-            "median": 116.60000002384186,
-            "p95": 240.69999998807907
+            "median": 112.39999997615814,
+            "p95": 8232
           },
           "invokeWallResidual": {
             "samples": [
-              22.704,
-              68.777,
-              87.422,
-              163.201
+              20.46,
+              76.348,
+              4980.817,
+              8163.733
             ],
-            "median": 68.777,
-            "p95": 163.201
+            "median": 76.348,
+            "p95": 8163.733
           }
         }
       },
@@ -343,7 +343,7 @@
     },
     "analysisRuntime": {
       "metrics": {
-        "hits": 32,
+        "hits": 33,
         "misses": 43,
         "completed": 43,
         "cancellations": 0,
@@ -402,8 +402,8 @@
       "resources": [
         "http://tauri.localhost/fonts/vendor/ibm-plex-mono/ibm-plex-mono-400-normal.woff2",
         "http://tauri.localhost/fonts/vendor/ibm-plex-mono/noto-sans-mono-greek-400-normal.woff2",
-        "http://tauri.localhost/fonts/vendor/ibm-plex-mono/ibm-plex-mono-400-italic.woff2",
         "http://tauri.localhost/fonts/vendor/ibm-plex-mono/ibm-plex-mono-700-normal.woff2",
+        "http://tauri.localhost/fonts/vendor/ibm-plex-mono/ibm-plex-mono-400-italic.woff2",
         "http://tauri.localhost/fonts/vendor/ibm-plex-mono/ibm-plex-mono-500-normal.woff2"
       ],
       "offlineFace": {
@@ -414,64 +414,64 @@
   },
   "dominantPhases": [
     {
+      "name": "recovery-draft",
+      "phase": "missing",
+      "durationMs": 8300.600000023842
+    },
+    {
+      "name": "ipc-read",
+      "phase": "invoke-wall-residual:8163.733ms",
+      "durationMs": 8232
+    },
+    {
       "name": "whole-source-materialization",
       "phase": "recovery-checkpoint",
-      "durationMs": 8763.599999964237
-    },
-    {
-      "name": "long-task",
-      "phase": "renderer-main-thread",
-      "durationMs": 1972
-    },
-    {
-      "name": "whole-source-materialization",
-      "phase": "recovery-checkpoint",
-      "durationMs": 1334.3999999761581
-    },
-    {
-      "name": "aggregate-commit",
-      "phase": null,
-      "durationMs": 1247
-    },
-    {
-      "name": "long-task",
-      "phase": "renderer-main-thread",
-      "durationMs": 1139
-    },
-    {
-      "name": "long-task",
-      "phase": "renderer-main-thread",
-      "durationMs": 1016
-    },
-    {
-      "name": "long-task",
-      "phase": "renderer-main-thread",
-      "durationMs": 902
-    },
-    {
-      "name": "long-task",
-      "phase": "renderer-main-thread",
-      "durationMs": 577
-    },
-    {
-      "name": "long-task",
-      "phase": "renderer-main-thread",
-      "durationMs": 506
+      "durationMs": 7891.899999976158
     },
     {
       "name": "recovery-draft",
       "phase": "missing",
-      "durationMs": 312.2999999523163
+      "durationMs": 5021.399999976158
+    },
+    {
+      "name": "ipc-read",
+      "phase": "invoke-wall-residual:4980.817ms",
+      "durationMs": 5004.700000047684
+    },
+    {
+      "name": "whole-source-materialization",
+      "phase": "recovery-checkpoint",
+      "durationMs": 1971.3999999761581
     },
     {
       "name": "long-task",
       "phase": "renderer-main-thread",
-      "durationMs": 290
+      "durationMs": 1693
     },
     {
       "name": "long-task",
       "phase": "renderer-main-thread",
-      "durationMs": 288
+      "durationMs": 1079
+    },
+    {
+      "name": "long-task",
+      "phase": "renderer-main-thread",
+      "durationMs": 1010
+    },
+    {
+      "name": "aggregate-commit",
+      "phase": null,
+      "durationMs": 984.1999999880791
+    },
+    {
+      "name": "long-task",
+      "phase": "renderer-main-thread",
+      "durationMs": 930
+    },
+    {
+      "name": "locator-resolved",
+      "phase": null,
+      "durationMs": 595.3999999761581
     }
   ]
 }

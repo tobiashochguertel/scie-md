@@ -892,7 +892,7 @@ Round 11 is now the sole `OPEN` round. Rounds 1-10 are `CLOSED`; no following ro
 
 #### Status
 
-`CLOSED` on 2026-07-22 (America/Toronto). Exact baseline/tree identity: Git `HEAD f28bb9cf7abeb504402f702e8d8a78bdf302e03a` plus build-input manifest SHA-256 `a3b5ce28ccffa7ed04b231051e3aa73c792e65651c015e03fa86ec0d5b3330cc` over 1,207 files. Candidate and final identities are identical under the declared exclusion of this roadmap, the certification JSON, and the generated desktop performance baseline. The shared integration tree remains intentionally dirty with preserved predecessor work; no staging, commit, push, or pull request was performed.
+`CLOSED` on 2026-07-22 (America/Toronto). Exact certified candidate identity: Git `HEAD ce77ada5d61f5779a2edf560346adcfc24624973` plus build-input manifest SHA-256 `a3b5ce28ccffa7ed04b231051e3aa73c792e65651c015e03fa86ec0d5b3330cc` over 1,207 files. Candidate and final identities are identical under the declared exclusion of this roadmap, the certification JSON, and the generated desktop performance baseline. Commit `ce77ada` contains the complete production wave; the subsequent evidence-only seal changes only those excluded mutable evidence paths.
 
 #### Outcome delivered
 
@@ -931,20 +931,20 @@ No stored document, workspace, recovery, public format, native command, extensio
 
 - `npx vitest run src/components/SourceTextEditor.test.ts src/components/SourceMarkdownEditor.test.ts src/styles/fontLicensing.test.ts`: 3 files, 29 tests passed; 0 failed.
 - `npm --prefix scie-md-vscode-extension test -- SourceMarkdownEditor font`: corrected package-local filter exercised the source editor/font suites; 13 tests passed; 0 failed.
-- `npm run validate:document-foundations-wave -- --required`: 32/32 DAG nodes passed in 572 seconds on the sealed candidate. Its exact manifest records `fonts:scie-sans`, `fonts:ibm-plex-mono`, `fonts:verify`, version/distribution/Tauri/format/app/export/style/UX/structured checks, desktop `test:all` (209 files, 1,423 tests plus offline Milkdown round-trip), extension test (60 files, 321 tests), extension host/visual smoke (8 and 20 tests), `cargo test` (134 unit/integration tests plus doc tests), strict Clippy, large-document stress, desktop build, VSIX package/content/budgets, packaged desktop smoke, packaged TOML edit, installed-VSIX smoke, packaged performance, tab visuals, artifact staging, generated-output policy, and `git diff --check`; every command exited 0.
-- Packaged performance passed all cold/warm/pressure fixtures with five warm samples of 14.9-16.0 ms, heap `101,349,438` bytes, process working set `122,318,848` bytes, and pressure process-tree working set `718,110,720` bytes. Tab validation passed 1/2/12/30/60 tabs, 200% zoom, forced colors, reduced motion, accessibility, and zero pixel difference under fixture `round11-dense-tabs-ibm-plex-mono-v1`.
+- `npm run validate:document-foundations-wave -- --required`: 32/32 DAG nodes passed in 490.7 seconds on committed candidate `ce77ada`. Its exact manifest records `fonts:scie-sans`, `fonts:ibm-plex-mono`, `fonts:verify`, version/distribution/Tauri/format/app/export/style/UX/structured checks, desktop `test:all` (209 files, 1,423 tests plus offline Milkdown round-trip), extension test (60 files, 321 tests), extension host/visual smoke (8 and 20 tests), `cargo test` (134 unit/integration tests plus doc tests), strict Clippy, large-document stress, desktop build, VSIX package/content/budgets, packaged desktop smoke, packaged TOML edit, installed-VSIX smoke, packaged performance, tab visuals, artifact staging, generated-output policy, and `git diff --check`; every command exited 0.
+- Packaged performance passed all cold/warm/pressure fixtures with five warm samples of 15.4-16.7 ms, heap `101,437,846` bytes, process working set `125,816,832` bytes, and pressure process-tree working set `717,033,472` bytes. Tab validation passed 1/2/12/30/60 tabs, 200% zoom, forced colors, reduced motion, accessibility, and zero pixel difference under fixture `round11-dense-tabs-ibm-plex-mono-v1`.
 - `git diff --check`: passed inside the terminal DAG; 0 whitespace errors.
 
 #### Generated outputs and candidate identity
 
-The generator order was Scie Sans then IBM Plex Mono, followed by font verification, all contract/test gates, one desktop build, one VSIX build, package consumers, performance/tab evidence, staging, and final guards. The extension font mirror is hash-identical to the authoritative directory. Candidate and final manifests both equal `a3b5ce28ccffa7ed04b231051e3aa73c792e65651c015e03fa86ec0d5b3330cc` at `HEAD f28bb9cf7abeb504402f702e8d8a78bdf302e03a`; expensive-node counts are all exactly one.
+The generator order was Scie Sans then IBM Plex Mono, followed by font verification, all contract/test gates, one desktop build, one VSIX build, package consumers, performance/tab evidence, staging, and final guards. The extension font mirror is hash-identical to the authoritative directory. Candidate and final manifests both equal `a3b5ce28ccffa7ed04b231051e3aa73c792e65651c015e03fa86ec0d5b3330cc` at committed candidate `HEAD ce77ada5d61f5779a2edf560346adcfc24624973`; expensive-node counts are all exactly one.
 
 Certified artifacts:
 
-- `src-tauri/target/release/sciemd.exe`: 18,243,072 bytes, SHA-256 `f744ca205762fd2d643f0334de01a4884dd7b031e23177d0f3f8a1cd2b813d8c`.
-- `src-tauri/target/release/bundle/msi/ScieMD_1.1.0_x64_en-US.msi`: 9,478,144 bytes, SHA-256 `bb68cbe59dddacae094270d9587f285926c5e15c81421421cdb0ea989215349a`.
-- `src-tauri/target/release/bundle/nsis/ScieMD_1.1.0_x64-setup.exe`: 8,027,205 bytes, SHA-256 `b46dc1a5812a8ba15bc130ab007f0fd1f101c5fdb72cf5d5e4fb536ee3659163`.
-- `scie-md-vscode-extension/sciemd-vscode-1.1.0.vsix`: 4,989,898 bytes, SHA-256 `bd7bf801257199230909c5c668c4910ee7dda466851ee5db0204180dee0d4061`.
+- `src-tauri/target/release/sciemd.exe`: 18,243,072 bytes, SHA-256 `b65d26c3532c86506e67d30daf5193a2f646fa0fed99c7ed4f2f516f609669bf`.
+- `src-tauri/target/release/bundle/msi/ScieMD_1.1.0_x64_en-US.msi`: 9,478,144 bytes, SHA-256 `30cc23418fc19d021c661d5f3d502a7ff6c03561670351f1a2fb9be73703f230`.
+- `src-tauri/target/release/bundle/nsis/ScieMD_1.1.0_x64-setup.exe`: 8,028,135 bytes, SHA-256 `898209a288d3403585d7ac8cc2022d9ac88098a469de249ad5bc1f3d399f3dc6`.
+- `scie-md-vscode-extension/sciemd-vscode-1.1.0.vsix`: 4,989,898 bytes, SHA-256 `250af9349b0e2a851fe8acfbbcd93a17283b8e4213a7de7fc20d8037e83d58af`.
 
 The generated certification record is `docs/refactor/document_runtime_structured_editing_foundations_wave_certification.v1.json`; staged installer/VSIX copies and `artifacts/SHA256SUMS.txt` agree with the built artifacts.
 
