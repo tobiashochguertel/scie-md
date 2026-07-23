@@ -196,21 +196,17 @@
   --fragment-directive-label: #ffb276;
 }
 
-:root[data-visual-style="journal-manuscript"] .scie-md-visual-atom-content > .directive-card:not(.directive-figure),
 :root[data-visual-style="nature"] .scie-md-visual-atom-content > .directive-card:not(.directive-figure) {
   border-left: 0;
   border-top: 1px solid color-mix(in srgb, var(--fragment-directive-accent), var(--border) 58%);
   padding: 0.44em 0;
 }
 
-:root[data-visual-style="journal-manuscript"] .scie-md-visual-atom-content > .directive-card.directive-note,
 :root[data-visual-style="nature"] .scie-md-visual-atom-content > .directive-card.directive-note,
-:root[data-visual-style="journal-manuscript"] .scie-md-visual-atom-content > .directive-card.directive-tip,
 :root[data-visual-style="nature"] .scie-md-visual-atom-content > .directive-card.directive-tip {
   border-top-style: dotted;
 }
 
-:root[data-visual-style="journal-manuscript"] .scie-md-visual-atom-content > .directive-card.directive-callout,
 :root[data-visual-style="nature"] .scie-md-visual-atom-content > .directive-card.directive-callout {
   margin-left: 1.2em;
   padding-left: 0.8em;
@@ -223,7 +219,6 @@
   background: linear-gradient(90deg, color-mix(in srgb, var(--fragment-directive-accent), transparent 90%), transparent 80%);
 }
 
-:root[data-visual-style="technical-code"] .scie-md-visual-atom-content > .directive-card:not(.directive-figure),
 :root[data-visual-style="codex"] .scie-md-visual-atom-content > .directive-card:not(.directive-figure) {
   border-left: 0;
   border-radius: 4px;
@@ -337,6 +332,50 @@
 .scie-md-visual-atom-content svg {
   max-width: 100%;
   height: auto;
+}
+
+.mermaid-figure svg {
+  color: var(--diagram-node-text);
+  font-family: var(--doc-font);
+}
+
+.mermaid-figure svg .node :is(rect, circle, ellipse, polygon, path) {
+  fill: var(--diagram-node-bg) !important;
+  stroke: var(--diagram-node-border) !important;
+}
+
+.mermaid-figure svg :is(.nodeLabel, .label text, .cluster-label text) {
+  fill: var(--diagram-node-text) !important;
+  color: var(--diagram-node-text) !important;
+  font-family: var(--doc-font) !important;
+}
+
+.mermaid-figure svg :is(.flowchart-link, .edge-thickness-normal, .edge-thickness-thick) {
+  stroke: var(--diagram-line) !important;
+}
+
+.mermaid-figure svg marker path {
+  fill: var(--diagram-line) !important;
+  stroke: var(--diagram-line) !important;
+}
+
+.mermaid-figure svg .edgeLabel {
+  color: var(--diagram-node-text) !important;
+  background: var(--diagram-label-bg) !important;
+}
+
+.mermaid-figure svg .edgeLabel rect {
+  fill: var(--diagram-label-bg) !important;
+  opacity: 0.96 !important;
+}
+
+.mermaid-figure svg .cluster rect {
+  fill: var(--diagram-cluster-bg) !important;
+  stroke: var(--diagram-node-border) !important;
+}
+
+.mermaid-figure svg .cluster-label text {
+  fill: var(--diagram-cluster-text) !important;
 }
 
 .scie-md-visual-atom-content .svg-figure svg,

@@ -16,7 +16,7 @@
     "specimen-record.xml"
   ],
   "qualifierPattern": "projects/study-{group}/run-{index}",
-  "visualStyles": ["scienfy", "scientific-draft", "journal-manuscript"],
+  "visualStyles": ["scienfy", "cursor", "claude"],
   "assertions": {
     "rowHeightCssPx": 38,
     "maxToolZoneCssPx": 110,

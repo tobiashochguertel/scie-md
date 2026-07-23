@@ -1,27 +1,15 @@
 export const VISUAL_STYLE_OPTIONS = [
   {
-    id: 'scientific-draft',
-    label: 'Scientific Draft',
-    shortLabel: 'Scientific',
-    detail: 'Balanced serif writing surface for papers, reports, and research notes.',
-  },
-  {
-    id: 'journal-manuscript',
-    label: 'Journal Manuscript',
-    shortLabel: 'Journal',
-    detail: 'Narrower manuscript rhythm, restrained headings, and publication-like tables.',
+    id: 'cursor',
+    label: 'Cursor',
+    shortLabel: 'Cursor',
+    detail: 'Cursor-inspired reading surface with a focused column, compact rhythm, neutral panels, and crisp blue links.',
   },
   {
     id: 'lab-notebook',
     label: 'Lab Notebook',
     shortLabel: 'Lab',
     detail: 'Tighter spacing, scan-friendly headings, and compact tables for daily records.',
-  },
-  {
-    id: 'technical-code',
-    label: 'Technical Code',
-    shortLabel: 'Code',
-    detail: 'Wide, sans-led technical writing with dense code blocks and tables.',
   },
   {
     id: 'codex',
@@ -58,6 +46,9 @@ export const VISUAL_STYLE_OPTIONS = [
 export type VisualStyleId = (typeof VISUAL_STYLE_OPTIONS)[number]['id'];
 
 const VISUAL_STYLE_ALIASES: Record<string, VisualStyleId> = {
+  'scientific-draft': 'cursor',
+  'journal-manuscript': 'cursor',
+  'technical-code': 'cursor',
   amin: 'scienfy',
   'amin-style': 'scienfy',
   'research-statement': 'scienfy',

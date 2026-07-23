@@ -78,10 +78,18 @@ try {
   await delay(500);
 
   const samples = [];
-  for (const style of ['scienfy', 'science', 'nature']) {
+  for (const style of ['cursor', 'scienfy', 'science', 'nature']) {
     samples.push(await sampleStyle(page, style));
   }
 
+  assertStyle(samples, 'cursor', {
+    contentWidth: 'min(1088px, 64vw)',
+    bodySize: '18px',
+    h1: '34px',
+    h2: '28px',
+    lineHeight: '1.52',
+    accent: '#2684d8',
+  });
   assertStyle(samples, 'science', {
     contentWidth: '980px',
     bodySize: '19.25px',

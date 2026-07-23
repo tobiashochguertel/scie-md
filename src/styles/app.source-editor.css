@@ -8,6 +8,7 @@
   color: var(--text);
   font-family: var(--source-editor-font);
   font-size: calc(14px * var(--font-scale));
+  font-weight: 300;
 }
 
 .source-editor .cm-scroller {
@@ -23,8 +24,19 @@
   min-height: 100%;
   margin: 0 auto;
   padding: 0 var(--source-pad-x);
+  caret-color: transparent;
   font-family: var(--source-editor-font);
   line-height: var(--editor-line-height);
+}
+
+.source-editor .cm-cursor,
+.source-editor .cm-dropCursor {
+  border-left-color: var(--focus-ring);
+  border-left-width: 2px;
+}
+
+.source-editor .cm-source-syntax-marker {
+  color: var(--source-syntax-marker);
 }
 
 .source-editor-long-line-reveal {

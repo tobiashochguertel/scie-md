@@ -75,7 +75,8 @@ expect((allDesktopCss.match(/--source-editor-font\s*:/g) ?? []).length === 1, 'D
 expect(desktopTokens.includes('--source-editor-font: "IBM Plex Mono", monospace;'), 'Desktop source token is not IBM Plex Mono.');
 expect(!/data-visual-style[\s\S]{0,500}--source-editor-font\s*:/.test(desktopTokens), 'A visual-style block overrides the desktop source token.');
 expect(readFileSync(join(root, 'src', 'styles', 'app.source-editor.css'), 'utf8').includes('font-family: var(--source-editor-font);'), 'Desktop CodeMirror does not consume the dedicated token.');
-expect(readFileSync(join(root, 'src', 'styles', 'app.panels.css'), 'utf8').includes('font: 14px/1.65 var(--source-editor-font);'), 'Desktop raw fallback does not consume the dedicated token.');
+expect(readFileSync(join(root, 'src', 'styles', 'app.source-editor.css'), 'utf8').includes('font-weight: 300;'), 'Desktop CodeMirror does not consume the light source weight.');
+expect(readFileSync(join(root, 'src', 'styles', 'app.panels.css'), 'utf8').includes('font: 300 14px/1.65 var(--source-editor-font);'), 'Desktop raw fallback does not consume the dedicated light source weight.');
 
 const webviewStyles = readFileSync(join(root, 'scie-md-vscode-extension', 'src', 'webview', 'styles.css'), 'utf8');
 expect(webviewStyles.includes('--source-editor-font: var(--vscode-editor-font-family, "IBM Plex Mono", monospace);'), 'VS Code host-font precedence or IBM fallback is missing.');

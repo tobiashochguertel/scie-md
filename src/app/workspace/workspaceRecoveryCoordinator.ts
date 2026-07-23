@@ -120,12 +120,17 @@ export function createWorkspaceRecoveryCoordinator(
     }
   };
 
+  const recoverableDocumentIds = (): readonly DocumentId[] => {
+    const state = getState();
+    return state.tabOrder.filter((documentId) => state.documentsById[documentId]?.lifecycle.content === 'dirty');
+  };
+
   const checkpointSync = (documentId: DocumentId, _reason: RecoveryLifecycleReason = 'beforeunload'): RecoveryCatalogEntry | null => {
     flushEditor?.(documentId);
     const record = getState().documentsById[documentId];
     if (!record || record.lifecycle.content !== 'dirty') return null;
     const started = monotonicNow();
-    const leased = leasedInputForRecord(record, now());
+    const leased = leasedInputForRecord(record, now(), recoverableDocumentIds());
     let entry: RecoveryCatalogEntry;
     try {
       entry = backend.checkpointSync(leased.input);
@@ -157,7 +162,7 @@ export function createWorkspaceRecoveryCoordinator(
         }
         try {
           const started = monotonicNow();
-          const leased = leasedInputForRecord(record, now());
+          const leased = leasedInputForRecord(record, now(), recoverableDocumentIds());
           let entry: RecoveryCatalogEntry;
           try {
             entry = await backend.checkpoint(leased.input);
@@ -273,19 +278,24 @@ export function createWorkspaceRecoveryCoordinator(
   };
 }
 
-function leasedInputForRecord(record: DocumentRecord, savedAt: number): { input: RecoveryCheckpointInput; release(): void } {
+function leasedInputForRecord(
+  record: DocumentRecord,
+  savedAt: number,
+  protectedDocumentIds: readonly DocumentId[],
+): { input: RecoveryCheckpointInput; release(): void } {
   const current = sourceSnapshotService.lease(record.id, record.source.buffer.current, 'recovery');
   const saved = sourceSnapshotService.lease(record.id, record.source.buffer.saved, 'recovery', 'saved');
   return {
     input: {
-    documentId: record.id,
-    sourceRevision: record.source.revision,
-    locator: record.locator,
-    sourceText: current.sourceText,
-    savedSourceText: saved.sourceText,
-    format: record.format,
-    savedAt,
-    baseMetadata: record.locator.kind === 'file' ? record.fileBaseline : null,
+      documentId: record.id,
+      sourceRevision: record.source.revision,
+      locator: record.locator,
+      sourceText: current.sourceText,
+      savedSourceText: saved.sourceText,
+      format: record.format,
+      savedAt,
+      baseMetadata: record.locator.kind === 'file' ? record.fileBaseline : null,
+      protectedDocumentIds,
     },
     release: () => { current.release(); saved.release(); },
   };

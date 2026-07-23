@@ -36,6 +36,7 @@ export function WorkspaceShell({
   children,
   overlays,
 }: WorkspaceShellProps) {
+  const activeTab = workspaceTabsModel.tabs.find((tab) => tab.active) ?? null;
   return (
     <div className={`app-shell ${focusMode ? 'focus-mode' : ''}`}>
       <a className="skip-link" href="#editor-stage">{skipToEditorLabel}</a>
@@ -49,19 +50,28 @@ export function WorkspaceShell({
         onCloseMenus={onCloseTopbarMenus}
       />
       {tabStrip}
-      {workspaceTabsModel.tabs.map((tab) => (
+      {workspaceTabsModel.tabs.filter((tab) => !tab.active).map((tab) => (
         <div
           key={tab.documentId}
           className="workspace-active-panel"
           role="tabpanel"
           id={workspaceTabPanelId(tab.documentId)}
           aria-labelledby={workspaceTabId(tab.documentId)}
-          hidden={!tab.active}
-          tabIndex={tab.active ? 0 : -1}
-        >
-          {tab.active ? children : null}
-        </div>
+          hidden
+          tabIndex={-1}
+        />
       ))}
+      {activeTab && (
+        <div
+          className="workspace-active-panel"
+          role="tabpanel"
+          id={workspaceTabPanelId(activeTab.documentId)}
+          aria-labelledby={workspaceTabId(activeTab.documentId)}
+          tabIndex={0}
+        >
+          {children}
+        </div>
+      )}
       <StatusBar {...statusBar} />
       {overlays}
     </div>

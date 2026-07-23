@@ -1,30 +1,24 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 from fontTools.ttLib import TTFont
 
 
 ROOT = Path(__file__).resolve().parents[2]
-INTER_VERSION = "4.1"
-SOURCE_DIR = ROOT / "vendor" / "inter" / f"Inter-{INTER_VERSION}" / "extras" / "ttf"
-OUTPUT_DIR = ROOT / "public" / "fonts" / "scie-sans"
-COMPACT_OUTPUT_SUBDIR = "compact-v1.320"
-
-FONT_STYLES = {
-    "ScieSans-Light": {"source": "Light", "italic": False, "check_shapes": True, "width_class": 5, "compact": False},
-    "ScieSans-Regular": {"source": "Regular", "italic": False, "check_shapes": True, "width_class": 5, "compact": False},
-    "ScieSans-Medium": {"source": "Medium", "italic": False, "check_shapes": True, "width_class": 5, "compact": False},
-    "ScieSans-Bold": {"source": "Bold", "italic": False, "check_shapes": True, "width_class": 5, "compact": False},
-    "ScieSans-LightItalic": {"source": "LightItalic", "italic": True, "check_shapes": False, "width_class": 5, "compact": False},
-    "ScieSans-Italic": {"source": "Italic", "italic": True, "check_shapes": False, "width_class": 5, "compact": False},
-    "ScieSans-MediumItalic": {"source": "MediumItalic", "italic": True, "check_shapes": False, "width_class": 5, "compact": False},
-    "ScieSans-BoldItalic": {"source": "BoldItalic", "italic": True, "check_shapes": False, "width_class": 5, "compact": False},
-    "ScieSansCompact-Light": {"source": "Light", "italic": False, "check_shapes": False, "width_class": 4, "compact": True},
-    "ScieSansCompact-Regular": {"source": "Regular", "italic": False, "check_shapes": False, "width_class": 4, "compact": True},
-    "ScieSansCompact-Medium": {"source": "Medium", "italic": False, "check_shapes": False, "width_class": 4, "compact": True},
-}
-USER_FACING_NAME_IDS = (1, 2, 3, 4, 6, 16, 17, 21, 22)
+AUTHORITATIVE_DIR = ROOT / "public" / "fonts" / "scie-sans"
+MIRROR_DIR = (
+    ROOT
+    / "scie-md-vscode-extension"
+    / "src"
+    / "scie-md"
+    / "styles"
+    / "fonts"
+    / "scie-sans"
+)
+MANIFEST_PATH = AUTHORITATIVE_DIR / "manifest.json"
 REQUIRED_FEATURES = {"zero", "tnum", "pnum", "sups", "subs", "sinf", "numr", "dnom", "frac"}
 REQUIRED_CODEPOINTS = {
     0x00B5: "micro sign",
@@ -39,126 +33,110 @@ REQUIRED_CODEPOINTS = {
     0x202F: "narrow no-break space",
     0x212B: "angstrom sign",
     0x2212: "minus sign",
-    0x2219: "bullet operator",
     0x2032: "prime",
     0x2033: "double prime",
 }
 
 
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def main() -> None:
-    for output_style, metadata in FONT_STYLES.items():
-        verify_style(output_style, metadata)
-    print("Scie Sans font verification OK")
+    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    if manifest["authoritativeDirectory"] != "public/fonts/scie-sans":
+        raise AssertionError("Scie Sans manifest authority drifted")
+    if manifest["generatedMirror"] != "scie-md-vscode-extension/src/scie-md/styles/fonts/scie-sans":
+        raise AssertionError("Scie Sans manifest mirror drifted")
+
+    for record in manifest["files"]:
+        verify_projection(record)
+    for face in manifest["faces"]:
+        verify_face(face)
+
+    authoritative_files = relative_files(AUTHORITATIVE_DIR)
+    mirror_files = relative_files(MIRROR_DIR)
+    if authoritative_files != mirror_files:
+        raise AssertionError(
+            f"Scie Sans projection file set drifted: authoritative={authoritative_files}, mirror={mirror_files}"
+        )
+    if MANIFEST_PATH.read_bytes() != (MIRROR_DIR / "manifest.json").read_bytes():
+        raise AssertionError("Scie Sans projection manifest is not byte-identical")
+    print(f"Scie Sans font verification OK ({len(manifest['faces'])} faces, hash-identical projection)")
 
 
-def verify_style(output_style: str, metadata: dict[str, str | bool | int]) -> None:
-    source = TTFont(SOURCE_DIR / f"Inter-{metadata['source']}.ttf")
-    output_dir = OUTPUT_DIR / COMPACT_OUTPUT_SUBDIR if metadata["compact"] else OUTPUT_DIR
-    font_path = output_dir / f"{output_style}.woff2"
-    if not font_path.exists():
-        raise AssertionError(f"Missing WOFF2 for {output_style}: {font_path}")
-    font = TTFont(font_path)
-
-    assert font["OS/2"].fsType == 0, f"{output_style}: fsType must allow embedding"
-    assert font["OS/2"].achVendID == "SCIE", f"{output_style}: vendor id should be SCIE"
-    assert is_italic(font) is bool(metadata["italic"]), f"{output_style}: italic metadata does not match the style"
-    assert font["OS/2"].usWidthClass == int(metadata["width_class"]), f"{output_style}: unexpected width class"
-
-    verify_names(font, output_style)
-    verify_features(font, output_style)
-    verify_coverage(font, output_style)
-    if metadata["check_shapes"]:
-        verify_design_deltas(source, font, output_style)
-    verify_zero_distinction(source, font, output_style)
-    if metadata["compact"]:
-        verify_compact_width(source, font, output_style)
-    verify_metrics(font, output_style)
+def relative_files(root: Path) -> list[str]:
+    return sorted(path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file())
 
 
-def verify_names(font: TTFont, weight: str) -> None:
-    for name_id in USER_FACING_NAME_IDS:
-        value = font["name"].getDebugName(name_id)
-        if value and "Inter" in value:
-            raise AssertionError(f"{weight}: user-facing name ID {name_id} still mentions Inter: {value}")
-    postscript = font["name"].getDebugName(6)
-    if not postscript or not (postscript.startswith("ScieSans-") or postscript.startswith("ScieSansCompact-")):
-        raise AssertionError(f"{weight}: unexpected PostScript name {postscript}")
+def verify_projection(record: dict[str, str | int]) -> None:
+    relative = str(record["name"])
+    authoritative = AUTHORITATIVE_DIR / relative
+    mirror = MIRROR_DIR / relative
+    for label, path in (("authoritative", authoritative), ("mirror", mirror)):
+        if not path.is_file():
+            raise AssertionError(f"Missing {label} Scie Sans file: {path}")
+        if path.stat().st_size != int(record["bytes"]):
+            raise AssertionError(f"{label} size drift for {relative}")
+        if sha256(path) != record["sha256"]:
+            raise AssertionError(f"{label} hash drift for {relative}")
 
 
-def verify_features(font: TTFont, weight: str) -> None:
-    if "GSUB" not in font:
-        raise AssertionError(f"{weight}: missing GSUB")
-    feature_tags = {record.FeatureTag for record in font["GSUB"].table.FeatureList.FeatureRecord}
-    missing = REQUIRED_FEATURES - feature_tags
+def verify_face(face: dict[str, str | int]) -> None:
+    relative = str(face["file"])
+    path = AUTHORITATIVE_DIR / relative
+    font = TTFont(path)
+    family = str(face["family"])
+    label = f"{family} {face['weight']} {face['style']}"
+    typographic_family = font["name"].getDebugName(16) or font["name"].getDebugName(1)
+    if typographic_family != family:
+        raise AssertionError(f"{label}: family metadata is {typographic_family!r}")
+    if font["OS/2"].usWeightClass != int(face["weight"]):
+        raise AssertionError(f"{label}: unexpected weight class {font['OS/2'].usWeightClass}")
+    expected_width = 4 if family.endswith("Compact") else 5
+    if font["OS/2"].usWidthClass != expected_width:
+        raise AssertionError(f"{label}: unexpected width class {font['OS/2'].usWidthClass}")
+    expected_italic = str(face["style"]) == "italic"
+    if is_italic(font) != expected_italic:
+        raise AssertionError(f"{label}: italic metadata does not match")
+    if font["OS/2"].fsType != 0:
+        raise AssertionError(f"{label}: embedding must be unrestricted")
+    verify_features(font, label)
+    verify_coverage(font, label)
+    verify_scientific_metrics(font, label)
+
+
+def verify_features(font: TTFont, label: str) -> None:
+    if "GSUB" not in font or not font["GSUB"].table.FeatureList:
+        raise AssertionError(f"{label}: missing GSUB feature list")
+    tags = {record.FeatureTag for record in font["GSUB"].table.FeatureList.FeatureRecord}
+    missing = REQUIRED_FEATURES - tags
     if missing:
-        raise AssertionError(f"{weight}: missing GSUB features {sorted(missing)}")
+        raise AssertionError(f"{label}: missing GSUB features {sorted(missing)}")
 
 
-def verify_coverage(font: TTFont, weight: str) -> None:
+def verify_coverage(font: TTFont, label: str) -> None:
     cmap = font.getBestCmap()
-    missing = [f"U+{codepoint:04X} {label}" for codepoint, label in REQUIRED_CODEPOINTS.items() if codepoint not in cmap]
+    missing = [
+        f"U+{codepoint:04X} {name}"
+        for codepoint, name in REQUIRED_CODEPOINTS.items()
+        if codepoint not in cmap
+    ]
     if missing:
-        raise AssertionError(f"{weight}: missing required codepoints: {', '.join(missing)}")
-    if cmap[0x2219] != "periodcentered":
-        raise AssertionError(f"{weight}: U+2219 should map to periodcentered")
-    if cmap[0x212B] != "Aring":
-        raise AssertionError(f"{weight}: U+212B should map to Aring")
+        raise AssertionError(f"{label}: missing required codepoints: {', '.join(missing)}")
 
 
-def verify_design_deltas(source: TTFont, font: TTFont, weight: str) -> None:
-    source_i = bounds(source, "I")
-    scie_i = bounds(font, "I")
-    if not (scie_i[0] < source_i[0] and scie_i[2] > source_i[2]):
-        raise AssertionError(f"{weight}: capital I bars did not widen the glyph")
-
-    source_l = bounds(source, "l")
-    scie_l = bounds(font, "l")
-    if not scie_l[2] > source_l[2]:
-        raise AssertionError(f"{weight}: lowercase l terminal did not extend the glyph")
-
-    source_one = bounds(source, "one")
-    scie_one = bounds(font, "one")
-    if not (scie_one[0] < source_one[0] and scie_one[2] > source_one[2]):
-        raise AssertionError(f"{weight}: digit one foot did not widen the glyph")
-
-
-def verify_zero_distinction(source: TTFont, font: TTFont, weight: str) -> None:
-    source_zero = bounds(source, "zero")
-    scie_zero = bounds(font, "zero")
-    scie_o = bounds(font, "O")
-    source_zero_width = source_zero[2] - source_zero[0]
-    scie_zero_width = scie_zero[2] - scie_zero[0]
-    scie_o_width = scie_o[2] - scie_o[0]
-    if scie_zero_width > round(source_zero_width * 0.94):
-        raise AssertionError(f"{weight}: plain zero was not narrowed enough for O/0 distinction")
-    if scie_zero_width >= round(scie_o_width * 0.78):
-        raise AssertionError(f"{weight}: plain zero is still too close to capital O width")
-
-
-def verify_compact_width(source: TTFont, font: TTFont, weight: str) -> None:
-    sample = ("H", "n", "m", "zero", "one", "A", "a")
-    source_average = sum(source["hmtx"][glyph_name][0] for glyph_name in sample) / len(sample)
-    scie_average = sum(font["hmtx"][glyph_name][0] for glyph_name in sample) / len(sample)
-    ratio = scie_average / source_average
-    if not 0.76 <= ratio <= 0.80:
-        raise AssertionError(f"{weight}: compact advance ratio should be near 0.78, got {ratio:.3f}")
-
-
-def verify_metrics(font: TTFont, weight: str) -> None:
-    upem = font["head"].unitsPerEm
-    hmtx = font["hmtx"]
-    if hmtx["minus"][0] != hmtx["zero.tf"][0]:
-        raise AssertionError(f"{weight}: U+2212 minus should be tabular figure width")
-    if hmtx["uni202F"][0] != round(upem / 6):
-        raise AssertionError(f"{weight}: U+202F should be one-sixth em")
-    if hmtx["uni00A0"][0] != hmtx["space"][0]:
-        raise AssertionError(f"{weight}: no-break space should match regular space")
-
-
-def bounds(font: TTFont, glyph_name: str) -> tuple[int, int, int, int]:
-    glyph = font["glyf"][glyph_name]
-    glyph.recalcBounds(font["glyf"])
-    return glyph.xMin, glyph.yMin, glyph.xMax, glyph.yMax
+def verify_scientific_metrics(font: TTFont, label: str) -> None:
+    cmap = font.getBestCmap()
+    minus = cmap[0x2212]
+    if font["hmtx"][minus][0] <= 0:
+        raise AssertionError(f"{label}: minus sign has no usable advance")
+    if font["hmtx"][cmap[0x202F]][0] >= font["hmtx"][cmap[0x20]][0]:
+        raise AssertionError(f"{label}: narrow no-break space must remain narrower than word space")
 
 
 def is_italic(font: TTFont) -> bool:

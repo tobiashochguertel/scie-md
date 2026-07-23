@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-22T16:16:45.420Z",
+  "generatedAt": "2026-07-23T06:10:05.843Z",
   "candidate": {
     "sourceIdentity": {
-      "head": "ce77ada5d61f5779a2edf560346adcfc24624973",
-      "buildInputManifestSha256": "a3b5ce28ccffa7ed04b231051e3aa73c792e65651c015e03fa86ec0d5b3330cc",
-      "fileCount": 1207
+      "head": "f90182b70707d83963ed6a005fdaffff712e6c78",
+      "buildInputManifestSha256": "49bfcedad583383c87c257fe355ca3140f433a58a00dce8374b93af3546d43c1",
+      "fileCount": 1211
     },
     "executablePath": "src-tauri/target/release/sciemd.exe",
-    "executableSha256": "b65d26c3532c86506e67d30daf5193a2f646fa0fed99c7ed4f2f516f609669bf"
+    "executableSha256": "de3045a9019da7e2539dbed07af3190be6c34a69a9f1402356a30725edf28fe6"
   },
   "environment": {
     "os": "win32 x64",
@@ -135,81 +135,104 @@
         "state": "clean"
       }
     ],
+    "visualWarm": [
+      {
+        "id": "vw-a-512k",
+        "bytes": 524288,
+        "state": "clean"
+      },
+      {
+        "id": "vw-b-768k",
+        "bytes": 786432,
+        "state": "clean"
+      }
+    ],
     "sampleCount": 5
   },
   "distributions": {
     "warm_reactivation_editor_attach_ms": {
       "samples": [
-        15.399999976158142,
-        15.5,
-        15.600000023841858,
-        16.69999998807907,
-        16.700000047683716
+        13.199999999254942,
+        13.399999998509884,
+        14.099999997764826,
+        15.300000000745058,
+        15.5
       ],
-      "median": 15.600000023841858,
-      "p95": 16.700000047683716
+      "median": 14.099999997764826,
+      "p95": 15.5
+    },
+    "visual_warm_reactivation_next_frame_ms": {
+      "samples": [
+        151.19999999925494,
+        151.89999999850988,
+        167.5,
+        171.69999999925494,
+        172.39999999850988
+      ],
+      "median": 167.5,
+      "p95": 172.39999999850988
     },
     "cold_open_first_editable_ms": {
       "samples": [
-        472.69999998807907,
-        893.6999999880791,
-        2972.099999964237,
-        3026.199999988079,
-        3054.699999988079,
-        5806.5,
-        9449.399999976158
+        474.5,
+        644.3000000007451,
+        665.8999999985099,
+        679,
+        948.6000000014901,
+        949.8000000007451,
+        1660.6000000014901
       ],
-      "median": 3026.199999988079,
-      "p95": 9449.399999976158
+      "median": 679,
+      "p95": 1660.6000000014901
     },
     "accepted_to_visibly_echoed_input_ms": {
       "samples": [
-        37.19999998807907,
-        37.90000003576279,
-        38.39999997615814,
-        47.59999996423721,
-        49.5
+        32,
+        38.899999998509884,
+        40.400000002235174,
+        41.30000000074506,
+        62.599999997764826
       ],
-      "median": 38.39999997615814,
-      "p95": 49.5
+      "median": 40.400000002235174,
+      "p95": 62.599999997764826
     },
     "native_cancel_stop_ms": {
       "samples": [
-        0.08839999999999999,
-        5.8713999999999995,
-        6.2325,
-        6.4562,
-        8.9336
+        1.6408,
+        1.6415,
+        1.8522,
+        2.1692,
+        2.6325
       ],
-      "median": 6.2325,
-      "p95": 8.9336
+      "median": 1.8522,
+      "p95": 2.6325
     }
   },
   "coldProbes": [
     {
       "id": "unicode-below-threshold",
       "outcome": "editable",
-      "elapsedMs": 3026.199999988079,
-      "processWorkingSetBytes": 42958848
+      "elapsedMs": 644.3000000007451,
+      "processWorkingSetBytes": 34476032
     },
     {
       "id": "unicode-at-threshold",
       "outcome": "editable",
-      "elapsedMs": 3054.699999988079,
-      "processWorkingSetBytes": 43991040
+      "elapsedMs": 679,
+      "processWorkingSetBytes": 33157120
     },
     {
       "id": "markdown-5mib-many-line",
       "outcome": "editable",
-      "elapsedMs": 2972.099999964237,
-      "processWorkingSetBytes": 43851776
+      "elapsedMs": 665.8999999985099,
+      "processWorkingSetBytes": 34328576
     }
   ],
   "coldTraceSummary": {
     "openOperations": 4,
     "activations": 0,
     "mainDocumentByteAcquisitions": 4,
-    "acquiredBytes": 127661083,
+    "acquiredBytes": 133103619,
     "wholeSourceMaterializations": 2,
     "materializedBytes": 1048576,
     "fullDocumentTransactions": 0
@@ -234,27 +257,27 @@
       "openOperations": 6,
       "activations": 0,
       "mainDocumentByteAcquisitions": 6,
-      "acquiredBytes": 65872,
+      "acquiredBytes": 262480,
       "wholeSourceMaterializations": 1,
       "materializedBytes": 0,
       "fullDocumentTransactions": 0
     },
-    "processTreeWorkingSetBytes": 1748647936
+    "processTreeWorkingSetBytes": 527114240
   },
   "counts": {
-    "openOperations": 4,
-    "activations": 16,
-    "mainDocumentByteAcquisitions": 7,
-    "acquiredBytes": 150726708,
-    "wholeSourceMaterializations": 14,
-    "materializedBytes": 8128789,
-    "fullDocumentTransactions": 0
+    "openOperations": 3,
+    "activations": 29,
+    "mainDocumentByteAcquisitions": 5,
+    "acquiredBytes": 171242537,
+    "wholeSourceMaterializations": 31,
+    "materializedBytes": 23855142,
+    "fullDocumentTransactions": 3
   },
   "memory": {
-    "prePressureWebviewHeapBytes": 101437846,
-    "prePressureProcessWorkingSetBytes": 125816832,
-    "pressureProcessTreeWorkingSetBytes": 717033472,
-    "pressureWebviewHeapBytes": 133944992,
+    "prePressureWebviewHeapBytes": 115679416,
+    "prePressureProcessWorkingSetBytes": 36536320,
+    "pressureProcessTreeWorkingSetBytes": 748003328,
+    "pressureWebviewHeapBytes": 134074438,
     "pressureHeapReason": null
   },
   "semanticGates": {
@@ -280,30 +303,30 @@
         {
           "accepted": true,
           "stopped": true,
-          "stopMs": 8.9336
+          "stopMs": 1.8522
         },
         {
           "accepted": true,
           "stopped": true,
-          "stopMs": 0.08839999999999999
+          "stopMs": 2.6325
         },
         {
           "accepted": true,
           "stopped": true,
-          "stopMs": 6.4562
+          "stopMs": 2.1692
         },
         {
           "accepted": true,
           "stopped": true,
-          "stopMs": 5.8713999999999995
+          "stopMs": 1.6415
         },
         {
           "accepted": true,
           "stopped": true,
-          "stopMs": 6.2325
+          "stopMs": 1.6408
         }
       ],
-      "p95Ms": 8.9336,
+      "p95Ms": 2.6325,
       "budgetMs": 500
     },
     "nativeTransport": {
@@ -318,23 +341,23 @@
         "boundedChannelCandidate": {
           "invokeWall": {
             "samples": [
-              41.5,
-              112.39999997615814,
-              5004.700000047684,
-              8232
+              38.30000000074506,
+              70.70000000298023,
+              105.60000000149012,
+              238.60000000149012
             ],
-            "median": 112.39999997615814,
-            "p95": 8232
+            "median": 70.70000000298023,
+            "p95": 238.60000000149012
           },
           "invokeWallResidual": {
             "samples": [
-              20.46,
-              76.348,
-              4980.817,
-              8163.733
+              32.727,
+              58.611,
+              81.787,
+              174.728
             ],
-            "median": 76.348,
-            "p95": 8163.733
+            "median": 58.611,
+            "p95": 174.728
           }
         }
       },
@@ -343,18 +366,18 @@
     },
     "analysisRuntime": {
       "metrics": {
-        "hits": 33,
-        "misses": 43,
-        "completed": 43,
+        "hits": 78,
+        "misses": 53,
+        "completed": 53,
         "cancellations": 0,
         "evictions": 30,
         "rejections": 0,
-        "requestTransferBytes": 7340047,
-        "responseRetainedBytes": 4878,
+        "requestTransferBytes": 8650767,
+        "responseRetainedBytes": 8512,
         "activeLeases": 0,
         "queued": 0,
         "running": 0,
-        "artifacts": 13
+        "artifacts": 23
       },
       "workerPayloadDecision": {
         "strategy": "one-shot-structured-clone",
@@ -365,12 +388,24 @@
     },
     "sourceFont": {
       "loads": [
+        1,
+        1,
         2,
         1,
         1,
         1
       ],
       "faces": [
+        {
+          "status": "loaded",
+          "weight": "300",
+          "style": "normal"
+        },
+        {
+          "status": "loaded",
+          "weight": "300",
+          "style": "italic"
+        },
         {
           "status": "loaded",
           "weight": "400",
@@ -400,11 +435,13 @@
       "computedFamily": "\"IBM Plex Mono\", monospace",
       "remeasure": "loaded",
       "resources": [
+        "http://tauri.localhost/fonts/vendor/ibm-plex-mono/ibm-plex-mono-300-normal.woff2",
+        "http://tauri.localhost/fonts/vendor/ibm-plex-mono/ibm-plex-mono-300-italic.woff2",
+        "http://tauri.localhost/fonts/vendor/ibm-plex-mono/ibm-plex-mono-500-normal.woff2",
         "http://tauri.localhost/fonts/vendor/ibm-plex-mono/ibm-plex-mono-400-normal.woff2",
         "http://tauri.localhost/fonts/vendor/ibm-plex-mono/noto-sans-mono-greek-400-normal.woff2",
-        "http://tauri.localhost/fonts/vendor/ibm-plex-mono/ibm-plex-mono-700-normal.woff2",
         "http://tauri.localhost/fonts/vendor/ibm-plex-mono/ibm-plex-mono-400-italic.woff2",
-        "http://tauri.localhost/fonts/vendor/ibm-plex-mono/ibm-plex-mono-500-normal.woff2"
+        "http://tauri.localhost/fonts/vendor/ibm-plex-mono/ibm-plex-mono-700-normal.woff2"
       ],
       "offlineFace": {
         "status": "loaded",
@@ -414,64 +451,64 @@
   },
   "dominantPhases": [
     {
-      "name": "recovery-draft",
-      "phase": "missing",
-      "durationMs": 8300.600000023842
-    },
-    {
-      "name": "ipc-read",
-      "phase": "invoke-wall-residual:8163.733ms",
-      "durationMs": 8232
+      "name": "long-task",
+      "phase": "renderer-main-thread",
+      "durationMs": 1886
     },
     {
       "name": "whole-source-materialization",
       "phase": "recovery-checkpoint",
-      "durationMs": 7891.899999976158
-    },
-    {
-      "name": "recovery-draft",
-      "phase": "missing",
-      "durationMs": 5021.399999976158
-    },
-    {
-      "name": "ipc-read",
-      "phase": "invoke-wall-residual:4980.817ms",
-      "durationMs": 5004.700000047684
-    },
-    {
-      "name": "whole-source-materialization",
-      "phase": "recovery-checkpoint",
-      "durationMs": 1971.3999999761581
-    },
-    {
-      "name": "long-task",
-      "phase": "renderer-main-thread",
-      "durationMs": 1693
-    },
-    {
-      "name": "long-task",
-      "phase": "renderer-main-thread",
-      "durationMs": 1079
-    },
-    {
-      "name": "long-task",
-      "phase": "renderer-main-thread",
-      "durationMs": 1010
+      "durationMs": 1360
     },
     {
       "name": "aggregate-commit",
       "phase": null,
-      "durationMs": 984.1999999880791
+      "durationMs": 1163.800000000745
+    },
+    {
+      "name": "whole-source-materialization",
+      "phase": "recovery-checkpoint",
+      "durationMs": 1080.199999999255
     },
     {
       "name": "long-task",
       "phase": "renderer-main-thread",
-      "durationMs": 930
+      "durationMs": 990
     },
     {
-      "name": "locator-resolved",
-      "phase": null,
-      "durationMs": 595.3999999761581
+      "name": "long-task",
+      "phase": "renderer-main-thread",
+      "durationMs": 981
+    },
+    {
+      "name": "whole-source-materialization",
+      "phase": "recovery-checkpoint",
+      "durationMs": 760.3000000007451
+    },
+    {
+      "name": "whole-source-materialization",
+      "phase": "recovery-checkpoint",
+      "durationMs": 681.1999999992549
+    },
+    {
+      "name": "recovery-draft",
+      "phase": "missing",
+      "durationMs": 632.6000000014901
+    },
+    {
+      "name": "long-task",
+      "phase": "renderer-main-thread",
+      "durationMs": 554
+    },
+    {
+      "name": "whole-source-materialization",
+      "phase": "recovery-checkpoint",
+      "durationMs": 530.1000000014901
+    },
+    {
+      "name": "whole-source-materialization",
+      "phase": "recovery-checkpoint",
+      "durationMs": 492.5
     }
   ]
 }

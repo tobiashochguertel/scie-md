@@ -9,6 +9,7 @@ import {
 import {
   clearNativeRecoverySnapshot,
   listNativeRecoverySnapshots,
+  maintainNativeRecoverySnapshots,
   writeNativeRecoverySnapshot,
   type NativeRecoverySnapshot,
 } from './nativeRecoveryService';
@@ -96,6 +97,7 @@ export interface RecoveryCheckpointInput {
   baseMetadata?: FileMetadata | null;
   /** Optional bounded native fallback; browser catalog always retains sourceText. */
   nativeSourceText?: string;
+  protectedDocumentIds?: readonly DocumentId[];
 }
 
 export function checkpointRecoveryEntrySync(input: RecoveryCheckpointInput): RecoveryCatalogEntry {
@@ -126,6 +128,7 @@ export async function checkpointRecoveryEntry(input: RecoveryCheckpointInput): P
     sourceRevision: entry.sourceRevision,
     catalogSchemaVersion: entry.schemaVersion,
     mediaType: entry.mediaType,
+    protectedDocumentIds: input.protectedDocumentIds,
   });
   return entry;
 }
@@ -169,14 +172,18 @@ export async function loadRecoveryCatalog(options: { includeNative?: boolean } =
     }
   }
   for (const [key, raw] of await listIndexedCatalogValues()) collectDecoded(key, raw, candidates);
+  const tombstones = readTombstones();
   if (options.includeNative !== false) {
+    const protectedDocumentIds = candidates
+      .filter((entry) => (tombstones.get(entry.documentId)?.sourceRevision ?? -1) < entry.sourceRevision)
+      .map((entry) => entry.documentId);
+    await maintainNativeRecoverySnapshots(protectedDocumentIds);
     for (const snapshot of await listNativeRecoverySnapshots()) {
       const entry = nativeSnapshotToEntry(snapshot);
       if (entry) candidates.push(entry);
     }
   }
   const byDocument = new Map<DocumentId, RecoveryCatalogEntry>();
-  const tombstones = readTombstones();
   for (const entry of candidates) {
     if ((tombstones.get(entry.documentId)?.sourceRevision ?? -1) >= entry.sourceRevision) continue;
     const current = byDocument.get(entry.documentId);

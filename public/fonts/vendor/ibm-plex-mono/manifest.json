@@ -11,6 +11,16 @@
   "generatedBy": "scripts/fonts/sync-ibm-plex-mono.mjs",
   "faces": [
     {
+      "weight": 300,
+      "style": "normal",
+      "file": "ibm-plex-mono-300-normal.woff2"
+    },
+    {
+      "weight": 300,
+      "style": "italic",
+      "file": "ibm-plex-mono-300-italic.woff2"
+    },
+    {
       "weight": 400,
       "style": "normal",
       "file": "ibm-plex-mono-400-normal.woff2"
@@ -42,6 +52,16 @@
     "purpose": "Greek glyph coverage within the IBM Plex Mono CSS composite family"
   },
   "files": [
+    {
+      "name": "ibm-plex-mono-300-normal.woff2",
+      "bytes": 49384,
+      "sha256": "d02d3197935e15bcf305b67aacc034da872523e118dc12ffae3382a3a1fa0d0c"
+    },
+    {
+      "name": "ibm-plex-mono-300-italic.woff2",
+      "bytes": 53920,
+      "sha256": "0562a7e637fb320083ec942f6cd1578d29036beca17c9c06e1bd9002f1cd0760"
+    },
     {
       "name": "ibm-plex-mono-400-normal.woff2",
       "bytes": 49248,

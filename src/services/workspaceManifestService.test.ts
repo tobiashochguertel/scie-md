@@ -74,8 +74,25 @@ describe('workspace manifest persistence', () => {
     const visible = createDocumentRecord({ locator: fallbackFileLocator('C:\\visible.md') });
     const preserved = createWorkspaceManifestPayload(createWorkspaceState(createDocumentRecord({ locator: fallbackFileLocator('C:\\hidden.md') })), [], null, 1);
     preserved.invalidEntries.push({ documentId: 'bad', reason: 'invalid-shape' });
-    const next = createWorkspaceManifestPayload(createWorkspaceState(visible), [], preserved, 2);
+    const next = createWorkspaceManifestPayload(
+      createWorkspaceState(visible),
+      [],
+      preserved,
+      2,
+      new Set(preserved.tabOrder),
+    );
     expect(next.tabOrder).toEqual([visible.id, preserved.tabOrder[0]]);
     expect(next.invalidEntries).toEqual([{ documentId: 'bad', reason: 'invalid-shape' }]);
+  });
+
+  it('does not resurrect an instantiated document after the user closes it', () => {
+    const closed = createDocumentRecord({ locator: fallbackFileLocator('C:\\closed.md') });
+    const remaining = createDocumentRecord({ locator: fallbackFileLocator('C:\\remaining.md') });
+    const preserved = createWorkspaceManifestPayload(createWorkspaceState(closed), [], null, 1);
+
+    const next = createWorkspaceManifestPayload(createWorkspaceState(remaining), [], preserved, 2);
+
+    expect(next.tabOrder).toEqual([remaining.id]);
+    expect(next.documents.map((entry) => entry.documentId)).toEqual([remaining.id]);
   });
 });

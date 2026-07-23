@@ -76,7 +76,8 @@ describe('VS Code webview visual smoke', () => {
     const styleMenu = menuByLabel('Style options');
     expect(styleMenu).not.toBeNull();
     expect(styleMenu?.querySelectorAll('[role="menuitemradio"]').length).toBeGreaterThan(6);
-    expect(styleMenu?.textContent).toContain('Scientific Draft');
+    expect(styleMenu?.textContent).toContain('Cursor');
+    expect(styleMenu?.textContent).not.toContain('Scientific Draft');
     expect(styleMenu?.textContent).toContain('Scienfy');
 
     const content = container.querySelector<HTMLElement>('.vscode-scie-content');
@@ -110,7 +111,7 @@ describe('VS Code webview visual smoke', () => {
       expect(document.documentElement.dataset.themeMode).toBe(scenario.theme);
       expect(container.querySelector('select')).toBeNull();
       expect(container.querySelector('.vscode-scie-choice-menu')).not.toBeNull();
-      expect(container.querySelector('.vscode-scie-choice-menu')?.textContent).toMatch(/VS Code|Scientific Draft/);
+      expect(container.querySelector('.vscode-scie-choice-menu')?.textContent).toMatch(/VS Code|Cursor/);
       expect(container.querySelector('.vscode-scie-choice-menu')?.querySelector('[aria-checked="true"]')).not.toBeNull();
     }
   });

@@ -248,11 +248,18 @@ export function createWorkspaceCloseCoordinator(
         const cleanAuthorizations: WorkspaceCloseAuthorization[] = [];
         for (const target of targets) {
           dispatch({ type: 'requestClose', documentId: target.documentId, requestId: id });
-          try {
-            await withTimeout(recovery.flushDocument(target.documentId, 'destructive-barrier'), timeoutMs);
+          if (target.dirty || target.recoveryPending) {
+            try {
+              await withTimeout(recovery.flushDocument(target.documentId, 'destructive-barrier'), timeoutMs);
+              record(id, 'recovery-settled', target.documentId);
+            } catch {
+              transaction.failed.add(target.documentId);
+            }
+          } else {
+            // Clean documents have no recoverable source delta. Their prior
+            // catalog cleanup is best-effort and must not gate tab or window
+            // responsiveness.
             record(id, 'recovery-settled', target.documentId);
-          } catch {
-            transaction.failed.add(target.documentId);
           }
           if (isProtected(target) || transaction.failed.has(target.documentId)) transaction.unresolved.add(target.documentId);
           else cleanAuthorizations.push(authorizationFor(transaction, target, 'clean'));

@@ -3,8 +3,9 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { EditorAdapter, EditorSurface } from '../components/editorAdapter';
 import { DocumentKeyedEditorGateway } from './documentEditorGateway';
-import { createDocumentId } from './documentIdentity';
+import { createDocumentId, sourceRevision } from './documentIdentity';
 import { recordDocumentEdit, undoDocumentHistory } from '../markdown/documentHistory';
+import { DocumentRuntimeRegistry } from './runtime/documentRuntimeRegistry';
 
 describe('DocumentKeyedEditorGateway', () => {
   it('keeps editor state access behind the one primary gateway writer', () => {
@@ -77,6 +78,52 @@ describe('DocumentKeyedEditorGateway', () => {
     expect(sourceAdapter.flushPendingEdits).not.toHaveBeenCalled();
     expect(commit).not.toHaveBeenCalled();
     expect(events).toEqual(['snapshot']);
+  });
+
+  it('treats a revision-matched exact visual state as warm and reattaches it through the gateway', () => {
+    const registry = new DocumentRuntimeRegistry({
+      lowWatermarkBytes: 8 * 1024 * 1024,
+      highWatermarkBytes: 12 * 1024 * 1024,
+      hardCeilingBytes: 24 * 1024 * 1024,
+      reservedActiveHeadroomBytes: 4 * 1024 * 1024,
+      minimumResidencyMs: 0,
+    });
+    const gateway = new DocumentKeyedEditorGateway(registry);
+    const documentId = createDocumentId();
+    const parkedState = { proseMirror: 'state' };
+    const visual = adapter('visual', '# Visual');
+    visual.runtimeKey = () => ({
+      documentId,
+      sourceRevision: sourceRevision(3),
+      surface: 'visual',
+      configurationFingerprint: 'visual-host-v1',
+    });
+    visual.suspendRuntime = () => ({
+      key: visual.runtimeKey!()!,
+      state: parkedState,
+      scrollTop: 42,
+      focused: false,
+      byteWeight: 1024,
+      historyBytes: 128,
+      kind: 'exact-state',
+    });
+    gateway.registerAdapter(documentId, 'visual', visual);
+    gateway.deactivate(documentId, vi.fn());
+
+    expect(gateway.hasWarmRuntime(documentId, 'visual')).toBe(true);
+
+    const reattached = adapter('visual', '# Visual');
+    reattached.runtimeKey = visual.runtimeKey;
+    reattached.attachRuntime = vi.fn((runtime) => runtime.state === parkedState);
+    reattached.rebuildRuntime = vi.fn(() => true);
+    gateway.registerAdapter(documentId, 'visual', reattached);
+
+    expect(reattached.attachRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      state: parkedState,
+      kind: 'exact-state',
+    }));
+    expect(reattached.rebuildRuntime).not.toHaveBeenCalled();
+    expect(registry.metrics()).toMatchObject({ hits: 1, misses: 1, entryCount: 0 });
   });
 
   it('fails safely for missing and stale registrations and focuses only the addressed editor', () => {

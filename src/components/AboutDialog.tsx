@@ -10,8 +10,10 @@ interface AboutDialogProps {
 }
 
 const bundledFonts = [
-  { name: 'Scie Sans', use: 'App UI and Scienfy Inc./Amin style typography', license: 'SIL OFL 1.1' },
+  { name: 'Scie Sans', use: 'Default app UI and legacy Scie Sans style typography', license: 'SIL OFL 1.1' },
   { name: 'Scie Sans Compact', use: 'Compact scientific prose and dense document tables', license: 'SIL OFL 1.1' },
+  { name: 'Scie Sans Text', use: 'Scienfy UI and document typography', license: 'SIL OFL 1.1' },
+  { name: 'Scie Sans Text Compact', use: 'Scienfy captions, directives, and dense document text', license: 'SIL OFL 1.1' },
   { name: 'Source Serif 4', use: 'Manuscript, journal, and Nature-style prose', license: 'SIL OFL 1.1' },
   { name: 'Lora', use: 'Science-style long-form reading surface', license: 'SIL OFL 1.1' },
   { name: 'IBM Plex Sans', use: 'Lab-note, technical, and label typography', license: 'SIL OFL 1.1' },

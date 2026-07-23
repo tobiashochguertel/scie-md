@@ -106,14 +106,39 @@ try {
     if (!await commandPaletteHas(page, expected)) throw new Error(`Command palette is missing "${expected}".`);
   }
 
-  const readinessOpened = await evaluate(page, `(() => {
+  const bottomStatusContract = await evaluate(page, `(() => {
     document.querySelector('[aria-label="Close command palette"]')?.click();
-    const readiness = document.querySelector('.status-readiness');
-    readiness?.click();
-    return Boolean(readiness);
+    const removedIndicators = document.querySelectorAll([
+      '.status-readiness',
+      '.status-badge',
+      '.ambient-pill.error',
+      '.ambient-pill.warning',
+    ].join(','));
+    const wordCount = document.querySelector('.status-word-count');
+    const lineCount = document.querySelector('.status-line-count');
+    const inspectorToggle = document.querySelector('[aria-label="Toggle inspector"]');
+    if (!document.querySelector('.inspector-pane')) inspectorToggle?.click();
+    return {
+      removedIndicatorsAbsent: removedIndicators.length === 0,
+      documentMetricsPresent: Boolean(wordCount && lineCount),
+      inspectorToggleFound: Boolean(inspectorToggle),
+    };
   })()`);
-  if (!readinessOpened) throw new Error('Readiness indicator was not found.');
+  if (!bottomStatusContract.removedIndicatorsAbsent) {
+    throw new Error('Removed bottom-bar readiness or warning badges reappeared.');
+  }
+  if (!bottomStatusContract.documentMetricsPresent) {
+    throw new Error('Bottom-bar word and line counts are missing.');
+  }
+  if (!bottomStatusContract.inspectorToggleFound) throw new Error('Inspector toggle was not found.');
   await waitForExpression(page, `Boolean(document.querySelector('.inspector-pane'))`, 5_000);
+  const inspectorReviewSurfaces = await evaluate(page, `Boolean(
+    document.querySelector('#inspector-section-readiness')
+    && document.querySelector('#inspector-section-validation')
+  )`);
+  if (!inspectorReviewSurfaces) {
+    throw new Error('Readiness and validation review surfaces must remain available in the Inspector.');
+  }
 
   const insertMenuOpened = await evaluate(page, `(() => {
     const insertButton = Array.from(document.querySelectorAll('button')).find((button) => button.getAttribute('aria-label') === 'Insert menu');
@@ -130,7 +155,8 @@ try {
   console.log(JSON.stringify({
     ok: true,
     commandPalette: ['Open insert menu', 'New document', 'Open settings', 'Open quick tour', 'Open full tutorial', 'Check external tools'],
-    readinessOpensInspector: readinessOpened,
+    bottomStatusIndicatorsRemoved: bottomStatusContract.removedIndicatorsAbsent,
+    inspectorReviewSurfaces,
     slashRootKeepsBlocksNested: true,
     workspaceTabContract,
   }, null, 2));

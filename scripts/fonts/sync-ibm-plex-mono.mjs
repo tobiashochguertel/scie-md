@@ -11,6 +11,8 @@ const supplementalPackageJson = JSON.parse(readFileSync(join(supplementalPackage
 const authoritativeRoot = join(root, 'public', 'fonts', 'vendor', 'ibm-plex-mono');
 const mirrorRoot = join(root, 'scie-md-vscode-extension', 'src', 'scie-md', 'styles', 'fonts', 'vendor', 'ibm-plex-mono');
 const faces = [
+  { weight: 300, style: 'normal', source: 'IBMPlexMono-Light.woff2', file: 'ibm-plex-mono-300-normal.woff2' },
+  { weight: 300, style: 'italic', source: 'IBMPlexMono-LightItalic.woff2', file: 'ibm-plex-mono-300-italic.woff2' },
   { weight: 400, style: 'normal', source: 'IBMPlexMono-Regular.woff2', file: 'ibm-plex-mono-400-normal.woff2' },
   { weight: 400, style: 'italic', source: 'IBMPlexMono-Italic.woff2', file: 'ibm-plex-mono-400-italic.woff2' },
   { weight: 500, style: 'normal', source: 'IBMPlexMono-Medium.woff2', file: 'ibm-plex-mono-500-normal.woff2' },

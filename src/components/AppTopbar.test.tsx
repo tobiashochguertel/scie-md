@@ -212,7 +212,8 @@ describe('AppTopbar menu architecture', () => {
 
   it('opens focused style and theme pickers from the topbar controls', () => {
     renderTopbar('visual-style');
-    expect(menuText()).toContain('Scientific Draft');
+    expect(menuText()).toContain('Cursor');
+    expect(menuText()).not.toContain('Scientific Draft');
     expect(menuText()).toContain('Nature');
     expect(menuText()).not.toContain('Visual Mode');
     expect(menuText()).not.toContain('Theme');

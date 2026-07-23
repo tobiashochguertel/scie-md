@@ -1,8 +1,9 @@
-import { Copy, MapPin, RotateCcw } from 'lucide-react';
+import { Copy, MapPin, Minus, Plus, RotateCcw } from 'lucide-react';
 import { useState, type KeyboardEvent, type MouseEvent } from 'react';
 import type { AutosaveStatus } from '../app/documentState';
 import type { MarkdownHeading } from '@sciemd/core';
 import { MARKDOWN_UI_CAPABILITIES, type FormatUiCapabilities } from '../app/formatCapabilities';
+import { FONT_SCALE_MAX, FONT_SCALE_MIN } from '../services/settingsService';
 import { ContextMenuCard, type ContextMenuSection } from './ContextMenuCard';
 import {
   copyContextMenuItem,
@@ -20,10 +21,8 @@ interface StatusBarProps {
   workspaceStatus?: string | null;
   headingPath: MarkdownHeading[];
   wordCount: number;
-  manuscriptScore: number;
-  manuscriptStatus: 'ready' | 'needs-review' | 'blocked';
-  errors: string[];
-  warnings: string[];
+  lineCount: number;
+  fontScale: number;
   externalConflict: boolean;
   filePath: string | null;
   onReviewConflict: () => void;
@@ -31,9 +30,9 @@ interface StatusBarProps {
   onReveal: () => void;
   onReload: () => void;
   onJumpToHeading: (heading: MarkdownHeading) => void;
-  onOpenReadiness: () => void;
-  onOpenValidation: () => void;
   onSaveNow: () => void;
+  onDecreaseFont: () => void;
+  onIncreaseFont: () => void;
   onCopyFeedback?: ContextMenuCopyFeedback;
 }
 
@@ -44,10 +43,8 @@ export function StatusBar({
   workspaceStatus = null,
   headingPath,
   wordCount,
-  manuscriptScore,
-  manuscriptStatus,
-  errors,
-  warnings,
+  lineCount,
+  fontScale,
   externalConflict,
   filePath,
   onReviewConflict,
@@ -55,16 +52,12 @@ export function StatusBar({
   onReveal,
   onReload,
   onJumpToHeading,
-  onOpenReadiness,
-  onOpenValidation,
   onSaveNow,
+  onDecreaseFont,
+  onIncreaseFont,
   onCopyFeedback,
 }: StatusBarProps) {
   const [contextMenu, setContextMenu] = useState<ContextMenuOpenState | null>(null);
-  const score = Math.max(0, Math.min(100, manuscriptScore));
-  const radius = 7;
-  const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset = circumference - (score / 100) * circumference;
   const currentHeading = headingPath.at(-1);
   const currentHeadingPath = headingPath.map((heading) => heading.text).join(' / ');
   const showManuscriptStatus = formatCapabilities.canUseManuscriptReadiness;
@@ -85,6 +78,10 @@ export function StatusBar({
       <div className="status-left">
         <span className={`status-dot ${autosaveStatus}`} />
         <span className="status-save-text">{statusText}</span>
+        <span className="status-document-metrics" aria-label={`${wordCount.toLocaleString()} words, ${lineCount.toLocaleString()} lines`}>
+          <span className="status-word-count">{formatCount(wordCount, 'word')}</span>
+          <span className="status-line-count">{formatCount(lineCount, 'line')}</span>
+        </span>
         {workspaceStatus && <span className="status-workspace-summary" role="status">Workspace: {workspaceStatus}</span>}
         {!filePath && (
           <button type="button" className="status-inline-action warning" onClick={onSaveNow}>
@@ -106,33 +103,6 @@ export function StatusBar({
             </span>
           </nav>
         )}
-        {showManuscriptStatus && <span className="status-word-count">{wordCount.toLocaleString()} words</span>}
-        {showManuscriptStatus && (
-          <button
-            type="button"
-            className={`status-readiness ${manuscriptStatus}`}
-            aria-label={`Submission readiness ${score} out of 100. Open review panel.`}
-            title={`Submission readiness ${score}/100. Open review panel.`}
-            onClick={onOpenReadiness}
-          >
-            <svg viewBox="0 0 20 20" aria-hidden="true">
-              <circle cx="10" cy="10" r={radius} />
-              <circle cx="10" cy="10" r={radius} style={{ strokeDasharray: circumference, strokeDashoffset }} />
-            </svg>
-            <span className="status-readiness-label">Readiness</span>
-            <span>{score}</span>
-          </button>
-        )}
-        {errors.length > 0 && (
-          <button type="button" className="status-badge error" aria-label={`${errors.length} validation errors. Open validation panel.`} title={`${errors[0]} Open validation panel.`} onClick={onOpenValidation}>
-            {errors.length}
-          </button>
-        )}
-        {warnings.length > 0 && (
-          <button type="button" className="status-badge warning" aria-label={`${warnings.length} validation warnings. Open validation panel.`} title={`${warnings[0]} Open validation panel.`} onClick={onOpenValidation}>
-            {warnings.length}
-          </button>
-        )}
       </div>
       <div className="status-actions">
         {externalConflict && filePath && <button type="button" onClick={onReviewConflict}>Review Disk Changes</button>}
@@ -141,6 +111,29 @@ export function StatusBar({
         <button type="button" aria-label="Reload from disk" title="Reload from disk" disabled={!filePath} onClick={onReload}>
           <RotateCcw size={15} />Reload
         </button>
+        <div className="status-font-size-controls" role="group" aria-label="Font size">
+          <button
+            type="button"
+            aria-label="Decrease font size"
+            title="Decrease font size"
+            disabled={fontScale <= FONT_SCALE_MIN}
+            onClick={onDecreaseFont}
+          >
+            <Minus size={15} aria-hidden="true" />
+          </button>
+          <output className="status-font-scale" aria-label="Current font size">
+            {Math.round(fontScale * 100)}%
+          </output>
+          <button
+            type="button"
+            aria-label="Increase font size"
+            title="Increase font size"
+            disabled={fontScale >= FONT_SCALE_MAX}
+            onClick={onIncreaseFont}
+          >
+            <Plus size={15} aria-hidden="true" />
+          </button>
+        </div>
       </div>
       {contextMenu && (
         <ContextMenuCard
@@ -153,6 +146,11 @@ export function StatusBar({
       )}
     </footer>
   );
+}
+
+function formatCount(count: number, singular: string): string {
+  const safeCount = Math.max(0, Math.round(count));
+  return `${safeCount.toLocaleString()} ${safeCount === 1 ? singular : `${singular}s`}`;
 }
 
 function statusHeadingMenuState(

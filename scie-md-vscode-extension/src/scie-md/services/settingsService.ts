@@ -31,10 +31,14 @@ const RECENT_LIMIT = 15;
 export const SIDEBAR_WIDTH_DEFAULT = 360;
 export const SIDEBAR_WIDTH_MIN = 248;
 export const SIDEBAR_WIDTH_MAX = 560;
+export const FONT_SCALE_DEFAULT = 1;
+export const FONT_SCALE_MIN = 0.3;
+export const FONT_SCALE_MAX = 2;
+export const FONT_SCALE_STEP = 0.05;
 const DEFAULT_SETTINGS: PersistedSettings = {
   recentFiles: [],
   themeMode: 'dark',
-  fontScale: 1,
+  fontScale: FONT_SCALE_DEFAULT,
   visualStyle: 'science',
   outlineOpen: true,
   sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
@@ -134,9 +138,14 @@ function isSidebarView(value: unknown): value is SidebarView {
   return value === 'files' || value === 'outline' || value === 'references' || value === 'data';
 }
 
-function normalizeFontScale(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_SETTINGS.fontScale;
-  return Math.min(1.35, Math.max(0.85, value));
+export function normalizeFontScale(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return FONT_SCALE_DEFAULT;
+  return Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, value));
+}
+
+export function stepFontScale(current: number, delta: number): number {
+  const stepped = Math.round((current + delta) / FONT_SCALE_STEP) * FONT_SCALE_STEP;
+  return normalizeFontScale(Number(stepped.toFixed(2)));
 }
 
 export function normalizeSidebarWidth(value: unknown): number {

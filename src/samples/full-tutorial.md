@@ -451,7 +451,7 @@ Use **Focus** for line editing. It dims surrounding text and keeps the active pa
 
 Use `Ctrl+K` for these presentation controls:
 
-- **Visual style**: Scientific Draft, Journal Manuscript, Lab Notebook, Technical Code, Codex, Scienfy, Science, or Nature.
+- **Visual style**: Cursor, Lab Notebook, Codex, Scienfy, Science, Nature, or Claude.
 - **Theme**: System, Dark, Sepia, or Light.
 - **Font size**: increase, decrease, or reset with shortcuts.
 

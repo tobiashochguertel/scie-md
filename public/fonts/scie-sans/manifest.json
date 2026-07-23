@@ -1,0 +1,247 @@
+{
+  "schemaVersion": 1,
+  "families": [
+    "Scie Sans",
+    "Scie Sans Compact",
+    "Scie Sans Text",
+    "Scie Sans Text Compact"
+  ],
+  "source": "Scienfy/scie-sans-tuning",
+  "sourceState": "2026-07-14 tuned Scie Sans v1.320 and ship-ready Scie Sans Text v1.1/Text Compact v1.2",
+  "license": "OFL-1.1",
+  "authoritativeDirectory": "public/fonts/scie-sans",
+  "generatedMirror": "scie-md-vscode-extension/src/scie-md/styles/fonts/scie-sans",
+  "generatedBy": "scripts/fonts/build-scie-sans.py",
+  "faces": [
+    {
+      "family": "Scie Sans",
+      "weight": 300,
+      "style": "normal",
+      "file": "ScieSans-Light.woff2"
+    },
+    {
+      "family": "Scie Sans",
+      "weight": 300,
+      "style": "italic",
+      "file": "ScieSans-LightItalic.woff2"
+    },
+    {
+      "family": "Scie Sans",
+      "weight": 400,
+      "style": "normal",
+      "file": "ScieSans-Regular.woff2"
+    },
+    {
+      "family": "Scie Sans",
+      "weight": 400,
+      "style": "italic",
+      "file": "ScieSans-Italic.woff2"
+    },
+    {
+      "family": "Scie Sans",
+      "weight": 500,
+      "style": "normal",
+      "file": "ScieSans-Medium.woff2"
+    },
+    {
+      "family": "Scie Sans",
+      "weight": 500,
+      "style": "italic",
+      "file": "ScieSans-MediumItalic.woff2"
+    },
+    {
+      "family": "Scie Sans",
+      "weight": 700,
+      "style": "normal",
+      "file": "ScieSans-Bold.woff2"
+    },
+    {
+      "family": "Scie Sans",
+      "weight": 700,
+      "style": "italic",
+      "file": "ScieSans-BoldItalic.woff2"
+    },
+    {
+      "family": "Scie Sans Compact",
+      "weight": 300,
+      "style": "normal",
+      "file": "compact-v1.320/ScieSansCompact-Light.woff2"
+    },
+    {
+      "family": "Scie Sans Compact",
+      "weight": 400,
+      "style": "normal",
+      "file": "compact-v1.320/ScieSansCompact-Regular.woff2"
+    },
+    {
+      "family": "Scie Sans Compact",
+      "weight": 500,
+      "style": "normal",
+      "file": "compact-v1.320/ScieSansCompact-Medium.woff2"
+    },
+    {
+      "family": "Scie Sans Text",
+      "weight": 400,
+      "style": "normal",
+      "file": "ScieSansText-Regular.woff2"
+    },
+    {
+      "family": "Scie Sans Text",
+      "weight": 400,
+      "style": "italic",
+      "file": "ScieSansText-Italic.woff2"
+    },
+    {
+      "family": "Scie Sans Text",
+      "weight": 500,
+      "style": "normal",
+      "file": "ScieSansText-Medium.woff2"
+    },
+    {
+      "family": "Scie Sans Text",
+      "weight": 700,
+      "style": "normal",
+      "file": "ScieSansText-Bold.woff2"
+    },
+    {
+      "family": "Scie Sans Text",
+      "weight": 700,
+      "style": "italic",
+      "file": "ScieSansText-BoldItalic.woff2"
+    },
+    {
+      "family": "Scie Sans Text Compact",
+      "weight": 400,
+      "style": "normal",
+      "file": "ScieSansTextCompact-Regular.woff2"
+    },
+    {
+      "family": "Scie Sans Text Compact",
+      "weight": 500,
+      "style": "normal",
+      "file": "ScieSansTextCompact-Medium.woff2"
+    }
+  ],
+  "files": [
+    {
+      "name": "compact-v1.320/ScieSansCompact-Light.woff2",
+      "bytes": 141376,
+      "sha256": "59c912908119cecf7b587aa2a6869870763735b9d62efe713b395ac071fee87b"
+    },
+    {
+      "name": "compact-v1.320/ScieSansCompact-Medium.woff2",
+      "bytes": 143452,
+      "sha256": "96ac719592ff85de28617862f5f2b3467e952c3d003374f29989a023d580cf61"
+    },
+    {
+      "name": "compact-v1.320/ScieSansCompact-Regular.woff2",
+      "bytes": 141264,
+      "sha256": "14a1f69e0940473d637057fb2db6d39f14094a69f16bf8dcaaee43a0b489757e"
+    },
+    {
+      "name": "FONTLOG.txt",
+      "bytes": 1621,
+      "sha256": "3d39d4c9e37c14d02010f4c01e0b428c344eda401f6092bb5571f10d5a360aaf"
+    },
+    {
+      "name": "OFL-Geist.txt",
+      "bytes": 4479,
+      "sha256": "cefeb05162a82a002f6665814fd3da60c97adca02d6229f85cc0acaa6be6de1e"
+    },
+    {
+      "name": "OFL.txt",
+      "bytes": 4585,
+      "sha256": "6082c25fbf6c31a101aba79681c23c24d91d5afdba04e30fa9c6b9d3e98e220d"
+    },
+    {
+      "name": "QA.md",
+      "bytes": 1105,
+      "sha256": "d09a038ff5d1ae299f8171703d728e483d990fecdad7b7253d7b9fb33856b1e0"
+    },
+    {
+      "name": "README.md",
+      "bytes": 1638,
+      "sha256": "2eb72e1bb831bca1a398b84945660db0e4ea07c8705b21f30ba3fe62433f7c57"
+    },
+    {
+      "name": "ScieSans-Bold.woff2",
+      "bytes": 144768,
+      "sha256": "1e9368496c85ff27b56a326fe91d7b6ee8f2bcd683fc86d8f58031539aa0c2a6"
+    },
+    {
+      "name": "ScieSans-BoldItalic.woff2",
+      "bytes": 151508,
+      "sha256": "bd23cacdfccd46d51b2860c88220d0014c7764427353909321e842b9a9c33a6d"
+    },
+    {
+      "name": "ScieSans-Italic.woff2",
+      "bytes": 147620,
+      "sha256": "467f21525e65c7d683c0465bca0a0ed26b49a57bc96d0c15b7778b36f6f77b2d"
+    },
+    {
+      "name": "ScieSans-Light.woff2",
+      "bytes": 142320,
+      "sha256": "60104c47fa67d5f41be482b84413c3d87a1241e3fca932029cf860a7bbf022aa"
+    },
+    {
+      "name": "ScieSans-LightItalic.woff2",
+      "bytes": 149108,
+      "sha256": "4894a9e8acdb211c8025140104b6ff311d4c57b1779f7c0d1bd7731d607046bc"
+    },
+    {
+      "name": "ScieSans-Medium.woff2",
+      "bytes": 143828,
+      "sha256": "eb54a60e7160ff92e00b73bf6f9f8f002a81e80aba75a384db428e72fbebef20"
+    },
+    {
+      "name": "ScieSans-MediumItalic.woff2",
+      "bytes": 150996,
+      "sha256": "d0602cdfadcb3e98b830629c2e1600fda4f8834114a7eddfdb8dd944a028b2af"
+    },
+    {
+      "name": "ScieSans-Regular.woff2",
+      "bytes": 140944,
+      "sha256": "2ac0d183227d9269a7a450906caecd427bcd7a87546fe1da0edbb6aab79c8f87"
+    },
+    {
+      "name": "ScieSansText-Bold.woff2",
+      "bytes": 78532,
+      "sha256": "909a117837e1031068ced81a7cf359756a8a2f6119f446155241f6c43c93f622"
+    },
+    {
+      "name": "ScieSansText-BoldItalic.woff2",
+      "bytes": 83764,
+      "sha256": "e46c931241745070f1191a1dfaf0508771a48478b10601693f216e42f90cd62f"
+    },
+    {
+      "name": "ScieSansText-Italic.woff2",
+      "bytes": 83048,
+      "sha256": "822c65f1b10f6bb11f83b7714bc9c81bcd9e6642758ea829d1aee04c11649030"
+    },
+    {
+      "name": "ScieSansText-Medium.woff2",
+      "bytes": 78132,
+      "sha256": "7e6362d5f358560b3ee9af622c1fa85a6d2e0cf4207d8c164d81269ae58ef097"
+    },
+    {
+      "name": "ScieSansText-Regular.woff2",
+      "bytes": 77724,
+      "sha256": "3b62cec8be94e221efd7748dab5748703841691256bbd4da02c545c22e043dfa"
+    },
+    {
+      "name": "ScieSansTextCompact-Medium.woff2",
+      "bytes": 78288,
+      "sha256": "592feba92d07b14fb0a32c7b87398c9478589eccc64cd62bb61335c9b16d51ec"
+    },
+    {
+      "name": "ScieSansTextCompact-Regular.woff2",
+      "bytes": 78520,
+      "sha256": "fa21facb37c76a4114a38dba127a800852b7f64222a1021e8e06d386c3c46ba0"
+    },
+    {
+      "name": "specimen.html",
+      "bytes": 5265,
+      "sha256": "17e0b66fe9f9725beea78543c7d57c2de8e9f4d5529c2bc1818d64ac535c48f6"
+    }
+  ]
+}

@@ -86,7 +86,7 @@ export function createLargeDocumentStressFixture(
     '  - variables.json',
     'scienfy:',
     '  documentType: research-note',
-    '  visualStyle: scientific-draft',
+    '  visualStyle: cursor',
     'cohort_n: 128',
     '---',
     '',

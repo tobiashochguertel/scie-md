@@ -6,6 +6,7 @@ import type { RecoveryCatalogEntry } from '../../services/recoveryCatalog';
 import { defaultManifestView, type WorkspaceManifestDocument, type WorkspaceManifestPayload } from '../../services/persistence';
 import type { WorkspaceCapabilityState } from './workspaceState';
 import { restoreSourceBufferRevisions } from '../source/revisionedSourceBuffer';
+import { normalizeVisualStyleId } from '../../services/visualStyleService';
 
 export type WorkspaceStartupWinner =
   | { kind: 'explicit-launch'; path: string }
@@ -217,7 +218,10 @@ async function hydrateDocument(
     savedSourceText,
     fileBaseline: metadata,
     mode: manifest.view.mode,
-    presentation: manifest.presentation as DocumentRecord['presentation'],
+    presentation: {
+      ...manifest.presentation,
+      visualStyle: normalizeVisualStyleId(manifest.presentation.visualStyle),
+    } as DocumentRecord['presentation'],
     view: manifest.view as DocumentRecord['view'],
   });
   const savedRevision = sourceText === savedSourceText ? revision : sourceRevision(Math.max(0, revision - 1));

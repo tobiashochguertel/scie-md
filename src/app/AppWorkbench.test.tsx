@@ -106,6 +106,7 @@ vi.mock('./AppEditorStage', async () => {
         'data-markdown': props.markdown,
       },
       React.createElement('button', { type: 'button', onClick: () => props.onMarkdownChange('edited') }, 'edit markdown'),
+      React.createElement('input', { 'data-testid': 'editor-lifecycle-probe', defaultValue: 'mounted' }),
     ),
   };
 });
@@ -143,14 +144,12 @@ vi.mock('../components/StatusBar', async () => {
   return {
     StatusBar: (props: {
       statusText: string;
-      wordCount: number;
       onSaveNow: () => void;
     }) => React.createElement(
       'footer',
       {
         'data-testid': 'status-bar',
         'data-status-text': props.statusText,
-        'data-word-count': String(props.wordCount),
       },
       React.createElement('button', { type: 'button', onClick: props.onSaveNow }, 'save now'),
     ),
@@ -195,7 +194,7 @@ describe('AppWorkbench', () => {
     expect(container.querySelector('[data-testid="editor-stage"]')?.getAttribute('data-markdown')).toBe('# Draft');
     expect(container.querySelector('[data-testid="inspector-pane"]')?.getAttribute('data-focus-section')).toBe('validation');
     expect(container.querySelector('[data-testid="ambient-suggestions"]')?.getAttribute('data-has-paste-review')).toBe('true');
-    expect(container.querySelector('[data-testid="status-bar"]')?.getAttribute('data-word-count')).toBe('123');
+    expect(container.querySelector('[data-testid="status-bar"]')?.getAttribute('data-status-text')).toBe('Saved');
     expect(container.querySelector('[data-testid="overlay-child"]')).not.toBeNull();
 
     const workbench = container.querySelector<HTMLElement>('.workbench');
@@ -322,6 +321,53 @@ describe('AppWorkbench', () => {
     clickButton('Save all documents');
     expect(callbacks.onReopenClosed).toHaveBeenCalledTimes(1);
     expect(callbacks.onSaveAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the one heavy editor subtree mounted while the active tabpanel identity changes', () => {
+    const firstId = createDocumentId();
+    const secondId = createDocumentId();
+    const firstProps = createProps({
+      activeProjection: { ...createActiveProjection('markdown'), documentId: firstId, chrome: { ...createActiveProjection('markdown').chrome, documentId: firstId } },
+      workspaceTabs: {
+        ...createProps().workspaceTabs,
+        model: {
+          activeDocumentId: firstId,
+          mruDocumentId: secondId,
+          recentlyClosedCount: 0,
+          tabs: [
+            tabFixture(firstId, 0, 2, true, 'first', 'markdown', 'Saved'),
+            tabFixture(secondId, 1, 2, false, 'second', 'markdown', 'Saved'),
+          ],
+        },
+      },
+    });
+    renderWorkbench(firstProps);
+    const lifecycleProbe = container.querySelector<HTMLInputElement>('[data-testid="editor-lifecycle-probe"]')!;
+    lifecycleProbe.value = 'retained across activation';
+
+    const secondProps = createProps({
+      activeProjection: { ...createActiveProjection('markdown'), documentId: secondId, chrome: { ...createActiveProjection('markdown').chrome, documentId: secondId } },
+      workspaceTabs: {
+        ...firstProps.workspaceTabs,
+        model: {
+          ...firstProps.workspaceTabs.model,
+          activeDocumentId: secondId,
+          mruDocumentId: firstId,
+          tabs: [
+            tabFixture(firstId, 0, 2, false, 'first', 'markdown', 'Saved'),
+            tabFixture(secondId, 1, 2, true, 'second', 'markdown', 'Saved'),
+          ],
+        },
+      },
+    });
+    renderWorkbench(secondProps);
+
+    const retainedProbe = container.querySelector<HTMLInputElement>('[data-testid="editor-lifecycle-probe"]')!;
+    expect(retainedProbe).toBe(lifecycleProbe);
+    expect(retainedProbe.value).toBe('retained across activation');
+    expect(container.querySelectorAll('[role="tabpanel"]')).toHaveLength(2);
+    expect(container.querySelectorAll('[role="tabpanel"]:not([hidden])')).toHaveLength(1);
+    expect(container.querySelector('[role="tabpanel"]:not([hidden])')?.id).toContain(encodeURIComponent(secondId));
   });
 });
 
@@ -661,7 +707,6 @@ function createProps(overrides: Partial<ComponentProps<typeof AppWorkbench>> = {
       },
     },
     ambientSuggestions: {
-      issues: [],
       hasPasteReview: true,
       onOpenPasteReview: vi.fn(),
     },
@@ -671,11 +716,9 @@ function createProps(overrides: Partial<ComponentProps<typeof AppWorkbench>> = {
       statusText: 'Saved',
       workspaceStatus: '1 unsaved',
       headingPath: [],
-      wordCount: 123,
-      manuscriptScore: 80,
-      manuscriptStatus: 'needs-review',
-      errors: [],
-      warnings: [],
+      wordCount: 2,
+      lineCount: 1,
+      fontScale: 1,
       externalConflict: false,
       filePath: 'C:\\docs\\paper.md',
       onReviewConflict: vi.fn(),
@@ -684,8 +727,8 @@ function createProps(overrides: Partial<ComponentProps<typeof AppWorkbench>> = {
       onReload: vi.fn(),
       onSaveNow: vi.fn(),
       onJumpToHeading: vi.fn(),
-      onOpenReadiness: vi.fn(),
-      onOpenValidation: vi.fn(),
+      onDecreaseFont: vi.fn(),
+      onIncreaseFont: vi.fn(),
     },
     children: <div data-testid="overlay-child" />,
     ...overrides,

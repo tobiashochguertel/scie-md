@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import { replaceDirectiveBlocks, replaceMermaidBlocks, replacePageBreakBlocks, replaceSvgBlocks } from './htmlExportBlocks';
+import { sanitizeHtmlFragment } from '../services/htmlSanitizer';
 
 vi.mock('mermaid', () => {
   return {
     default: {
       initialize: vi.fn(),
       render: vi.fn().mockImplementation(async (id: string, code: string) => {
-        return { svg: `<svg id="${id}">${code}</svg>` };
+        return {
+          svg: `<svg id="${id}"><text class="nodeLabel">${code}</text><foreignObject><div>unsafe label</div></foreignObject></svg>`,
+        };
       }),
     },
   };
@@ -74,11 +77,20 @@ describe('htmlExportBlocks', () => {
 
   it('renders Mermaid fences into reusable figure replacements', async () => {
     const result = await replaceMermaidBlocks('```mermaid\nflowchart LR\n  A --> B\n```\n');
+    const mermaid = (await import('mermaid')).default;
+    const sanitized = sanitizeHtmlFragment(result.replacements[0].html);
 
     expect(result.replacements).toHaveLength(1);
     expect(result.markdown).toBe(`${result.replacements[0].placeholder}\n`);
     expect(result.replacements[0].html).toContain('class="mermaid-figure"');
     expect(result.replacements[0].html).toContain('flowchart LR');
+    expect(mermaid.initialize).toHaveBeenCalledWith(expect.objectContaining({
+      securityLevel: 'strict',
+      htmlLabels: false,
+    }));
+    expect(sanitized).toContain('class="nodeLabel"');
+    expect(sanitized).toContain('flowchart LR');
+    expect(sanitized).not.toContain('foreignObject');
   });
 
   it('sanitizes svg fences and returns an explicit error card for rejected svg', () => {

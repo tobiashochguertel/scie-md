@@ -104,6 +104,19 @@ describe('workspace close coordinator', () => {
     expect(partial.decision?.unresolvedDocumentIds).toEqual([second.id]);
   });
 
+  it('closes clean documents without blocking on recovery catalog cleanup', async () => {
+    const clean = createDocumentRecord({ sourceText: 'clean' });
+    const events: string[] = [];
+    const store = createStore(clean, undefined, events);
+    events.length = 0;
+
+    const result = await store.close.begin({ kind: 'document', documentId: clean.id });
+
+    expect(result.status).toBe('closed');
+    expect(events).not.toContain('clear');
+    expect(store.getState().documentsById[clean.id]).toBeUndefined();
+  });
+
   it('shares the same transaction API for close-right and close-others scopes', async () => {
     const first = createDocumentRecord({ sourceText: 'first' });
     const second = documentRecordReducer(createDocumentRecord({ sourceText: 'second' }), { type: 'sourceChanged', sourceText: 'second dirty' });

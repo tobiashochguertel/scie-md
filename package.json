@@ -48,7 +48,8 @@
     "release:local": "npm run install:vscode && npm run validate:release && npm run build:desktop && npm run validate:desktop-smoke -- --required && npm run copy:exe && npm run package:vscode && npm run validate:vscode-package && npm run validate:vscode-installed-smoke -- --required && npm run stage:vscode && npm run validate:generated-outputs",
     "fonts:scie-sans": "node scripts/run-python.mjs scripts/fonts/build-scie-sans.py",
     "fonts:ibm-plex-mono": "node scripts/fonts/sync-ibm-plex-mono.mjs",
-    "fonts:verify": "node scripts/run-python.mjs scripts/fonts/verify-scie-sans.py && node scripts/fonts/verify-ibm-plex-mono.mjs",
+    "fonts:google-sans-flex": "node scripts/fonts/sync-google-sans-flex.mjs",
+    "fonts:verify": "node scripts/run-python.mjs scripts/fonts/verify-scie-sans.py && node scripts/fonts/verify-ibm-plex-mono.mjs && node scripts/fonts/verify-google-sans-flex.mjs",
     "spike:milkdown": "node scripts/milkdown-roundtrip.mjs",
     "spike:milkdown:review": "node scripts/milkdown-roundtrip.mjs --review",
     "spike:toml-preservation": "cargo test --manifest-path src-tauri/Cargo.toml --test toml_preservation_spike"

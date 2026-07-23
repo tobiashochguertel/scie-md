@@ -91,6 +91,80 @@
 }
 
 @font-face {
+  font-family: "Scie Sans Text";
+  src: url("./fonts/scie-sans/ScieSansText-Regular.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: "Scie Sans Text";
+  src: url("./fonts/scie-sans/ScieSansText-Italic.woff2") format("woff2");
+  font-display: swap;
+  font-style: italic;
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: "Scie Sans Text";
+  src: url("./fonts/scie-sans/ScieSansText-Medium.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 500;
+}
+
+@font-face {
+  font-family: "Scie Sans Text";
+  src: url("./fonts/scie-sans/ScieSansText-Bold.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 700;
+}
+
+@font-face {
+  font-family: "Scie Sans Text";
+  src: url("./fonts/scie-sans/ScieSansText-BoldItalic.woff2") format("woff2");
+  font-display: swap;
+  font-style: italic;
+  font-weight: 700;
+}
+
+@font-face {
+  font-family: "Scie Sans Text Compact";
+  src: url("./fonts/scie-sans/ScieSansTextCompact-Regular.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: "Scie Sans Text Compact";
+  src: url("./fonts/scie-sans/ScieSansTextCompact-Medium.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 500;
+}
+
+@font-face {
+  font-family: "Google Sans Flex";
+  src: url("./fonts/vendor/google-sans-flex/google-sans-flex-latin-ext-opsz-slnt-wght-normal.woff2") format("woff2");
+  font-display: swap;
+  font-style: oblique 0deg 10deg;
+  font-weight: 100 1000;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Google Sans Flex";
+  src: url("./fonts/vendor/google-sans-flex/google-sans-flex-latin-opsz-slnt-wght-normal.woff2") format("woff2");
+  font-display: swap;
+  font-style: oblique 0deg 10deg;
+  font-weight: 100 1000;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
   font-family: "Source Serif 4";
   src: url("./fonts/vendor/source-serif-4/source-serif-4-latin-400-normal.woff2") format("woff2");
   font-display: swap;
@@ -236,6 +310,24 @@
 
 @font-face {
   font-family: "IBM Plex Mono";
+  src: url("./fonts/vendor/ibm-plex-mono/ibm-plex-mono-300-normal.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 300;
+  unicode-range: U+0000-036F, U+0400-10FFFF;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./fonts/vendor/ibm-plex-mono/ibm-plex-mono-300-italic.woff2") format("woff2");
+  font-display: swap;
+  font-style: italic;
+  font-weight: 300;
+  unicode-range: U+0000-036F, U+0400-10FFFF;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
   src: url("./fonts/vendor/ibm-plex-mono/ibm-plex-mono-400-normal.woff2") format("woff2");
   font-display: swap;
   font-style: normal;
@@ -310,21 +402,22 @@
   --warning: #9a5b13;
   --source-syntax-heading: #173f35;
   --source-syntax-strong: #1f2933;
-  --source-syntax-emphasis: #5b4b78;
+  --source-syntax-emphasis: #0969da;
   --source-syntax-link: #0969da;
-  --source-syntax-code: #6f42c1;
+  --source-syntax-code: #0969da;
   --source-syntax-list: #7a4e00;
   --source-syntax-quote: #55645f;
-  --source-syntax-meta: #6f42c1;
+  --source-syntax-meta: #0969da;
   --source-syntax-comment: #59636e;
   --source-syntax-punctuation: #55645f;
+  --source-syntax-marker: #0969da;
   --source-syntax-property: #0550ae;
-  --source-syntax-tag: #6f42c1;
+  --source-syntax-tag: #0969da;
   --source-syntax-attribute: #953800;
   --source-syntax-string: #116329;
-  --source-syntax-number: #6f42c1;
+  --source-syntax-number: #0969da;
   --source-syntax-bool: #9a2f13;
-  --source-syntax-keyword: #6f42c1;
+  --source-syntax-keyword: #0969da;
   --source-syntax-invalid: #b42318;
   --source-selection-bg: rgb(29 127 98 / 24%);
   --source-search-bg: rgb(154 91 19 / 20%);
@@ -371,6 +464,13 @@
   --table-text: var(--text);
   --table-head-text: var(--text-strong);
   --table-border: var(--border-strong);
+  --diagram-node-bg: #e9efff;
+  --diagram-node-text: #172033;
+  --diagram-node-border: #6174b8;
+  --diagram-line: #556070;
+  --diagram-label-bg: #ffffff;
+  --diagram-cluster-bg: #f7f9fc;
+  --diagram-cluster-text: #172033;
   --ui-pad-y: 10px;
   --ui-pad-x: 14px;
   --control-height: 32px;
@@ -433,21 +533,22 @@
   --warning: #f4c37f;
   --source-syntax-heading: #a7e3ca;
   --source-syntax-strong: #f1f7f4;
-  --source-syntax-emphasis: #d2b8ff;
+  --source-syntax-emphasis: #7db7ff;
   --source-syntax-link: #7db7ff;
-  --source-syntax-code: #d2a8ff;
+  --source-syntax-code: #7db7ff;
   --source-syntax-list: #f0c36e;
   --source-syntax-quote: #b8c7c1;
-  --source-syntax-meta: #d2a8ff;
+  --source-syntax-meta: #7db7ff;
   --source-syntax-comment: #b8c7c1;
   --source-syntax-punctuation: #b8c7c1;
+  --source-syntax-marker: #7db7ff;
   --source-syntax-property: #79c0ff;
-  --source-syntax-tag: #d2a8ff;
+  --source-syntax-tag: #7db7ff;
   --source-syntax-attribute: #ffa657;
   --source-syntax-string: #8bd49c;
-  --source-syntax-number: #d2a8ff;
+  --source-syntax-number: #7db7ff;
   --source-syntax-bool: #ff9b82;
-  --source-syntax-keyword: #d2a8ff;
+  --source-syntax-keyword: #7db7ff;
   --source-syntax-invalid: #ffb3a8;
   --source-selection-bg: rgb(142 216 186 / 27%);
   --source-search-bg: rgb(244 195 127 / 22%);
@@ -460,6 +561,13 @@
   --table-text: #eef7f3;
   --table-head-text: #ffffff;
   --table-border: #4f635b;
+  --diagram-node-bg: #273247;
+  --diagram-node-text: #f2f6ff;
+  --diagram-node-border: #8fa6d8;
+  --diagram-line: #a5b2c4;
+  --diagram-label-bg: #151b19;
+  --diagram-cluster-bg: #1b2220;
+  --diagram-cluster-text: #f1f7f4;
 }
 
 :root[data-theme="sepia"] {
@@ -487,96 +595,122 @@
   --table-text: #3a3024;
   --table-head-text: #251e16;
   --table-border: #c9b99d;
+  --diagram-node-bg: #f1e7d4;
+  --diagram-node-text: #2e251a;
+  --diagram-node-border: #8b704b;
+  --diagram-line: #76664f;
+  --diagram-label-bg: #fffaf1;
+  --diagram-cluster-bg: #f7efdf;
+  --diagram-cluster-text: #251e16;
 }
 
-:root[data-visual-style="scientific-draft"] {
-  --ui-pad-y: 10px;
-  --ui-pad-x: 14px;
-  --control-height: 32px;
-  --control-pad-x: 10px;
-  --topbar-min-height: 46px;
-  --toolbar-gap: 6px;
-  --toolbar-min-height: 42px;
-  --statusbar-min-height: 38px;
-  --outline-width: 260px;
-  --outline-pad-y: 14px;
-  --outline-pad-x: 10px;
-  --outline-item-height: 28px;
-  --inspector-pad-y: 13px;
-  --inspector-pad-x: 12px;
-  --doc-font: "Source Serif 4", serif;
-  --document-body-size: 16px;
+:root[data-visual-style="cursor"] {
+  --ui-pad-y: 6px;
+  --ui-pad-x: 10px;
+  --control-height: 30px;
+  --control-pad-x: 8px;
+  --topbar-min-height: 40px;
+  --toolbar-gap: 4px;
+  --toolbar-min-height: 36px;
+  --statusbar-min-height: 32px;
+  --outline-width: 248px;
+  --outline-pad-y: 10px;
+  --outline-pad-x: 8px;
+  --outline-item-height: 24px;
+  --inspector-pad-y: 10px;
+  --inspector-pad-x: 10px;
+  --doc-font: "Google Sans Flex", sans-serif;
+  --document-body-size: 18px;
+  --document-body-weight: 400;
   --document-h1-size: 34px;
-  --document-h2-size: 24px;
-  --document-h3-size: 19px;
-  --document-table-size: 15px;
-  --document-pad-y: 36px;
-  --document-pad-x: 48px;
-  --document-pad-bottom: 72px;
-  --source-pad-y: 24px;
-  --source-pad-x: 40px;
-  --document-block-gap: 18px;
-  --document-h1-bottom: 22px;
-  --document-h2-top: 32px;
-  --document-h2-bottom: 14px;
-  --document-h3-top: 26px;
-  --document-h3-bottom: 10px;
+  --document-h2-size: 28px;
+  --document-h3-size: 22px;
+  --document-h4-size: 18px;
+  --document-table-size: 16px;
+  --document-code-size: 0.88em;
+  --document-pad-y: 44px;
+  --document-pad-x: 32px;
+  --document-pad-bottom: 88px;
+  --source-pad-y: 18px;
+  --source-pad-x: 28px;
+  --document-block-gap: 16px;
+  --document-h1-bottom: 18px;
+  --document-h2-top: 44px;
+  --document-h2-bottom: 16px;
+  --document-h3-top: 32px;
+  --document-h3-bottom: 12px;
   --blockquote-pad-x: 16px;
-  --code-block-pad: 14px;
+  --code-block-pad: 16px;
   --table-cell-pad-y: 8px;
   --table-cell-pad-x: 10px;
-  --editor-line-height: 1.62;
+  --editor-line-height: 1.52;
+  --content-width: min(1088px, 64vw);
   --visual-padding-scale: 1;
   --visual-block-scale: 1;
   --visual-heading-gap-scale: 1;
   --visual-table-scale: 1;
-  --visual-heading-weight: 760;
+  --visual-heading-weight: 650;
+  --visual-body-letter-spacing: -0.006em;
   --visual-heading-border: 0;
+  --visual-code-bg: #e9e9e9;
+  --visual-code-color: #202020;
+  --visual-link-color: #2684d8;
+  --visual-inline-code-bg: #e9e9e9;
+  --visual-inline-code-color: #242424;
+  --visual-inline-code-radius: 5px;
+  --visual-inline-code-pad-y: 1px;
+  --visual-inline-code-pad-x: 5px;
+  --visual-hr-color: #dedede;
 }
 
-:root[data-visual-style="journal-manuscript"] {
-  --ui-pad-y: 11px;
-  --ui-pad-x: 16px;
-  --control-height: 32px;
-  --control-pad-x: 10px;
-  --topbar-min-height: 48px;
-  --toolbar-gap: 6px;
-  --toolbar-min-height: 44px;
-  --statusbar-min-height: 39px;
-  --outline-width: 264px;
-  --outline-pad-y: 14px;
-  --outline-pad-x: 10px;
-  --outline-item-height: 29px;
-  --inspector-pad-y: 14px;
-  --inspector-pad-x: 12px;
-  --doc-font: "Source Serif 4", serif;
-  --document-body-size: 16.5px;
-  --document-h1-size: 31px;
-  --document-h2-size: 22px;
-  --document-h3-size: 18px;
-  --document-table-size: 14.5px;
-  --document-pad-y: 44px;
-  --document-pad-x: 56px;
-  --document-pad-bottom: 84px;
-  --source-pad-y: 28px;
-  --source-pad-x: 42px;
-  --document-block-gap: 20px;
-  --document-h1-bottom: 24px;
-  --document-h2-top: 36px;
-  --document-h2-bottom: 14px;
-  --document-h3-top: 28px;
-  --document-h3-bottom: 10px;
-  --blockquote-pad-x: 18px;
-  --code-block-pad: 14px;
-  --table-cell-pad-y: 7px;
-  --table-cell-pad-x: 9px;
-  --editor-line-height: 1.72;
-  --visual-padding-scale: 1.08;
-  --visual-block-scale: 1.08;
-  --visual-heading-gap-scale: 1.05;
-  --visual-table-scale: 0.94;
-  --visual-heading-weight: 720;
-  --visual-heading-border: 1px solid var(--border);
+:root[data-theme="light"][data-visual-style="cursor"] {
+  --bg: #f7f7f7;
+  --editor-bg: #f7f7f7;
+  --surface: #ffffff;
+  --surface-soft: #ededed;
+  --border: #dedede;
+  --border-strong: #cccccc;
+  --button-bg: #f4f4f4;
+  --button-hover: #e9e9e9;
+  --accent: #2684d8;
+  --accent-soft: #8bbce8;
+  --text: #242424;
+  --text-strong: #181818;
+  --text-muted: #616161;
+  --table-bg: #f7f7f7;
+  --table-alt-bg: #f1f1f1;
+  --table-head-bg: #e9e9e9;
+  --table-text: #242424;
+  --table-head-text: #181818;
+  --table-border: #d4d4d4;
+}
+
+:root[data-theme="dark"][data-visual-style="cursor"] {
+  --bg: #121212;
+  --editor-bg: #121212;
+  --surface: #181818;
+  --surface-soft: #242424;
+  --border: #303030;
+  --border-strong: #414141;
+  --button-bg: #202020;
+  --button-hover: #2a2a2a;
+  --accent: #6aa9e9;
+  --accent-soft: #416f9d;
+  --text: #e4e4e4;
+  --text-strong: #f1f1f1;
+  --text-muted: #a9a9a9;
+  --visual-link-color: #6aa9e9;
+  --visual-inline-code-bg: #272727;
+  --visual-inline-code-color: #ececec;
+  --visual-code-bg: #242424;
+  --visual-code-color: #ededed;
+  --visual-hr-color: #343434;
+  --table-bg: #151515;
+  --table-alt-bg: #1b1b1b;
+  --table-head-bg: #242424;
+  --table-text: #e4e4e4;
+  --table-head-text: #f1f1f1;
+  --table-border: #363636;
 }
 
 :root[data-visual-style="lab-notebook"] {
@@ -652,54 +786,6 @@
   --table-text: #e3dfd6;
   --table-head-text: #f4efe5;
   --table-border: #5c4329;
-}
-
-:root[data-visual-style="technical-code"] {
-  --ui-pad-y: 6px;
-  --ui-pad-x: 10px;
-  --control-height: 30px;
-  --control-pad-x: 8px;
-  --topbar-min-height: 40px;
-  --toolbar-gap: 4px;
-  --toolbar-min-height: 36px;
-  --statusbar-min-height: 32px;
-  --outline-width: 248px;
-  --outline-pad-y: 10px;
-  --outline-pad-x: 8px;
-  --outline-item-height: 24px;
-  --inspector-pad-y: 10px;
-  --inspector-pad-x: 10px;
-  --doc-font: "IBM Plex Sans", sans-serif;
-  --document-body-size: 15.5px;
-  --document-h1-size: 30px;
-  --document-h2-size: 21px;
-  --document-h3-size: 17px;
-  --document-table-size: 14px;
-  --document-code-size: 0.92em;
-  --document-pad-y: 24px;
-  --document-pad-x: 34px;
-  --document-pad-bottom: 52px;
-  --source-pad-y: 16px;
-  --source-pad-x: 28px;
-  --document-block-gap: 12px;
-  --document-h1-bottom: 16px;
-  --document-h2-top: 24px;
-  --document-h2-bottom: 10px;
-  --document-h3-top: 20px;
-  --document-h3-bottom: 8px;
-  --blockquote-pad-x: 12px;
-  --code-block-pad: 12px;
-  --table-cell-pad-y: 5px;
-  --table-cell-pad-x: 7px;
-  --editor-line-height: 1.5;
-  --visual-padding-scale: 0.92;
-  --visual-block-scale: 0.88;
-  --visual-heading-gap-scale: 0.9;
-  --visual-table-scale: 0.86;
-  --visual-heading-weight: 780;
-  --visual-heading-border: 1px solid var(--border);
-  --visual-code-bg: #121a17;
-  --visual-code-color: #e8f3ee;
 }
 
 :root[data-visual-style="codex"] {
@@ -912,6 +998,11 @@
 }
 
 :root[data-visual-style="scienfy"] {
+  font-family: "Scie Sans Text", sans-serif;
+  --ui-font: "Scie Sans Text", sans-serif;
+  --font-ui: var(--ui-font);
+  --doc-font: "Scie Sans Text", sans-serif;
+  --mono-font: "Scie Sans Text", sans-serif;
   --content-width: 61.2vw;
   --editor-line-height: 1.52;
   --visual-heading-weight: 730;

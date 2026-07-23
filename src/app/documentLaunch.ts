@@ -26,6 +26,7 @@ interface WelcomeFallbackParams {
   startupDocumentOpenFailed: boolean;
   filePath: string | null;
   markdown: string;
+  alreadyCommitted?: boolean;
 }
 
 export function parentDirectoryForDocument(path: string | null): string | null {
@@ -108,8 +109,10 @@ export function shouldCommitWelcomeAfterStartup({
   startupDocumentOpenFailed: _startupDocumentOpenFailed,
   filePath,
   markdown,
+  alreadyCommitted = false,
 }: WelcomeFallbackParams): boolean {
-  return onboardingComplete
+  return !alreadyCommitted
+    && onboardingComplete
     && !startupDocumentOpenPending
     && !filePath
     && markdown.trim().length === 0;

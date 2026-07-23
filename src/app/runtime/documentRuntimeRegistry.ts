@@ -163,8 +163,13 @@ export class DocumentRuntimeRegistry {
   }
 
   canGrowActiveSource(documentId: DocumentId, additionalBytes: number): RuntimeAdmissionResult {
-    const availableBytes = this.budgets.hardCeilingBytes - this.budgets.reservedActiveHeadroomBytes - this.totalWeight();
+    let availableBytes = this.budgets.hardCeilingBytes - this.budgets.reservedActiveHeadroomBytes - this.totalWeight();
     if (additionalBytes <= availableBytes) return { status: 'admitted', evicted: [] };
+
+    const evicted = this.shedToLowWatermark(documentId, 'memory-pressure', true);
+    availableBytes = this.budgets.hardCeilingBytes - this.budgets.reservedActiveHeadroomBytes - this.totalWeight();
+    if (additionalBytes <= availableBytes) return { status: 'admitted', evicted };
+
     this.refusals += 1;
     this.markDegraded(documentId);
     return { status: 'refused', reason: 'reserved-headroom', requiredBytes: additionalBytes, availableBytes: Math.max(0, availableBytes) };

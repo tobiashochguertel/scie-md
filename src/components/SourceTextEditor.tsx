@@ -9,14 +9,14 @@ import { lintGutter, linter } from '@codemirror/lint';
 import type { Diagnostic as CodeMirrorDiagnostic } from '@codemirror/lint';
 import { Annotation, Compartment, EditorState, Transaction } from '@codemirror/state';
 import type { Extension, TransactionSpec } from '@codemirror/state';
-import { Decoration, EditorView, keymap, ViewPlugin, WidgetType } from '@codemirror/view';
+import { Decoration, EditorView, drawSelection, keymap, ViewPlugin, WidgetType } from '@codemirror/view';
 import type { DecorationSet, ViewUpdate } from '@codemirror/view';
 import type { DocumentFormat, FormatDiagnostic, SourceEditorCapabilities, SourceSemanticPresentationMode } from '@sciemd/core';
 import { formatByteLengthUtf8, formatBytes, formatDefinitionFor, quoteAnchorPrefix, quoteAnchorSuffix, sourceEditorCapabilitiesFor, sourceSemanticPresentationMode } from '@sciemd/core';
 import type { EditorHistoryControls } from './editorControls';
 import type { EditorSelectionGetter } from './editorSelection';
 import type { EditorAdapter, EditorAdapterReady, EditorSelectionAnchor } from './editorAdapter';
-import { createScieMdSemanticHighlighting } from './sourceSemanticHighlighting';
+import { createScieMdMarkdownSyntaxMarkerHighlighting, createScieMdSemanticHighlighting } from './sourceSemanticHighlighting';
 import type { DocumentId, SourceRevision } from '../app/documentIdentity';
 import { documentPerformance, utf8ByteLength } from '../app/performance/documentPerformance';
 import type { SourceChangeResult, SourceChangeSet, SourceSpanChange } from '../app/source/revisionedSourceBuffer';
@@ -157,7 +157,6 @@ export function SourceTextEditor({
     [projectionFrom, semanticPresentationMode, value],
   );
   const projectionRef = useRef(projection);
-  projectionRef.current = projection;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const adapterRef = useRef<EditorAdapter | null>(null);
@@ -192,7 +191,6 @@ export function SourceTextEditor({
   const longLineViewportCompartmentRef = useRef(new Compartment());
   const diagnosticsCompartmentRef = useRef(new Compartment());
   const extraExtensionsCompartmentRef = useRef(new Compartment());
-  revisionRef.current = revision;
   languageRef.current = language;
   sourceEditorProfileRef.current = sourceEditorProfile;
   diagnosticsRef.current = diagnostics;
@@ -206,10 +204,6 @@ export function SourceTextEditor({
   useEffect(() => {
     performanceDocumentIdRef.current = performanceDocumentId;
   }, [performanceDocumentId]);
-
-  useEffect(() => {
-    valueRef.current = value;
-  }, [value]);
 
   useEffect(() => {
     onInsertReadyRef.current = onInsertReady;
@@ -302,6 +296,7 @@ export function SourceTextEditor({
           diagnosticsCompartmentRef.current.of(createDiagnosticsExtension(diagnosticsRef.current, sourceEditorProfileRef.current)),
           EditorState.tabSize.of(2),
           EditorState.allowMultipleSelections.of(true),
+          drawSelection(),
           lineWrappingCompartmentRef.current.of(createLineWrappingExtension(semanticPresentationModeRef.current)),
           longLineViewportCompartmentRef.current.of(createLongLineViewportExtension(semanticPresentationModeRef.current)),
           keymap.of([indentWithTab, ...defaultKeymap]),
@@ -311,7 +306,18 @@ export function SourceTextEditor({
             const documentId = performanceDocumentIdRef.current;
             if (!documentId || growthBytes === 0) return transaction;
             const admission = documentRuntimeRegistry.canGrowActiveSource(documentId, growthBytes);
-            if (admission.status === 'admitted') return transaction;
+            if (admission.status === 'admitted') {
+              for (const eviction of admission.evicted) {
+                documentPerformance.trace({
+                  name: 'runtime-eviction',
+                  documentId: eviction.documentId,
+                  surface: eviction.surface,
+                  byteCount: eviction.byteWeight,
+                  phase: eviction.reason,
+                });
+              }
+              return transaction;
+            }
             documentPerformance.trace({
               name: 'runtime-degraded', documentId, surface: 'source', byteCount: growthBytes, phase: admission.reason,
             });
@@ -391,6 +397,8 @@ export function SourceTextEditor({
                   if (projectionRef.current.active) {
                     const authoritative = reconcileSourceRef.current?.();
                     if (authoritative?.revision === result.revision) valueRef.current = authoritative.sourceText;
+                  } else {
+                    valueRef.current = projectionRef.current.text;
                   }
                   documentPerformance.trace({ name: 'input-accepted', documentId: tracedDocumentId, surface: 'source' });
                   requestAnimationFrame(() => documentPerformance.trace({
@@ -434,7 +442,7 @@ export function SourceTextEditor({
             if (update.docChanged || update.selectionSet) {
               emitCursorLine(update.view);
             }
-            if (update.selectionSet) {
+            if (shouldTypewriterScroll(update)) {
               maybeTypewriterScroll(update.view);
             }
             if (update.docChanged || update.viewportChanged) {
@@ -729,13 +737,29 @@ export function SourceTextEditor({
     const view = viewRef.current;
     if (!view) return;
     const projected = sourceEditorProjection(value, semanticPresentationMode, projectionFrom);
+    const runtimeOwner = runtimeOwnerRef.current;
+    const sameRuntimeDocument = Boolean(
+      performanceDocumentId
+      && runtimeOwner?.documentId === performanceDocumentId,
+    );
+    if (
+      sameRuntimeDocument
+      && revision !== undefined
+      && runtimeOwner
+      && revision < runtimeOwner.revision
+    ) {
+      return;
+    }
     if (performanceDocumentId && revision !== undefined
-      && runtimeOwnerRef.current?.documentId === performanceDocumentId
-      && runtimeOwnerRef.current.revision === revision
-      && projectionRef.current.from === projected.from
-      && view.state.doc.toString() === projected.text) {
+      && runtimeOwner?.documentId === performanceDocumentId
+      && runtimeOwner.revision === revision) {
+      // Revision identity is authoritative. The workspace intentionally publishes
+      // interactive source changes on the next frame, while its compatibility
+      // string can still describe the preceding revision. Replacing CodeMirror
+      // from that stale string would roll back the text but retain the newer
+      // numeric selection, making typing and deletion appear at different places.
       warmAttachmentRef.current = null;
-      valueRef.current = value;
+      revisionRef.current = revision;
       return;
     }
     const current = view.state.doc.toString();
@@ -747,12 +771,32 @@ export function SourceTextEditor({
       phase: 'external-value-compare',
     });
     projectionRef.current = projected;
+    valueRef.current = value;
+    if (revision !== undefined) revisionRef.current = revision;
+    if (performanceDocumentId && revision !== undefined) {
+      runtimeOwnerRef.current = { documentId: performanceDocumentId, revision };
+    }
     if (current === projected.text) return;
+    const selection = view.state.selection;
+    const scrollTop = view.scrollDOM.scrollTop;
+    const focused = view.hasFocus;
     if (programmaticEditBypassRef) programmaticEditBypassRef.current = true;
     try {
       view.dispatch({
         changes: { from: 0, to: current.length, insert: projected.text },
         annotations: [Transaction.addToHistory.of(false), authoritativeSourceReconciliation.of(true)],
+      });
+      const docLength = view.state.doc.length;
+      view.dispatch({
+        selection: {
+          anchor: Math.max(0, Math.min(selection.main.anchor, docLength)),
+          head: Math.max(0, Math.min(selection.main.head, docLength)),
+        },
+      });
+      if (focused && !view.hasFocus) view.focus();
+      view.scrollDOM.scrollTop = Math.max(0, scrollTop);
+      window.requestAnimationFrame(() => {
+        if (viewRef.current === view) view.scrollDOM.scrollTop = Math.max(0, scrollTop);
       });
       if (performanceDocumentId && revision !== undefined) {
         runtimeOwnerRef.current = { documentId: performanceDocumentId, revision };
@@ -831,9 +875,9 @@ export function remeasureSourceEditorAfterFontsReady(
     return;
   }
   void Promise.all([
-    fonts.load('400 14px "IBM Plex Mono"', 'α μ − ∞ {} []'),
-    fonts.load('italic 400 14px "IBM Plex Mono"', 'source'),
-    fonts.load('700 14px "IBM Plex Mono"', 'source'),
+    fonts.load('300 14px "IBM Plex Mono"', 'α μ − ∞ {} []'),
+    fonts.load('italic 300 14px "IBM Plex Mono"', 'source'),
+    fonts.load('500 14px "IBM Plex Mono"', 'source'),
     fonts.ready,
   ]).then(() => {
     view.requestMeasure();
@@ -1210,6 +1254,10 @@ function maybeTypewriterScroll(view: EditorView): void {
   });
 }
 
+export function shouldTypewriterScroll(update: Pick<ViewUpdate, 'selectionSet' | 'docChanged'>): boolean {
+  return update.selectionSet && !update.docChanged;
+}
+
 function viewportTopLine(view: EditorView): number {
   const block = view.lineBlockAtHeight(view.scrollDOM.scrollTop + 24);
   return view.state.doc.lineAt(block.from).number;
@@ -1237,7 +1285,9 @@ function sourceOffsetForLine(sourceText: string, requestedLine: number): number 
 
 export function createLanguageExtension(profile: SourceEditorCapabilities, mode: SourceSemanticPresentationMode = 'enabled'): Extension {
   if (mode !== 'enabled') return [];
-  if (profile.codeMirrorLanguage === 'markdown') return [markdownLanguage(), createScieMdSemanticHighlighting()];
+  if (profile.codeMirrorLanguage === 'markdown') {
+    return [markdownLanguage(), createScieMdSemanticHighlighting(), createScieMdMarkdownSyntaxMarkerHighlighting()];
+  }
   if (profile.codeMirrorLanguage === 'json') return [jsonLanguage(), createScieMdSemanticHighlighting()];
   if (profile.codeMirrorLanguage === 'yaml') return [yamlLanguage(), createScieMdSemanticHighlighting()];
   if (profile.codeMirrorLanguage === 'xml') return [xmlLanguage(), createScieMdSemanticHighlighting()];

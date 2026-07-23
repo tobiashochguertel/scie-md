@@ -82,7 +82,8 @@ describe('style CSS variables', () => {
   });
 
   it('keeps Scienfy document headings in a clear manuscript hierarchy', () => {
-    expect(appCss).toMatch(/:root\[data-visual-style="scienfy"\]\s*{[\s\S]*--editor-line-height:\s*1\.52;[\s\S]*--visual-heading-weight:\s*730;/);
+    expect(appCss).toMatch(/:root\[data-visual-style="scienfy"\]\s*{[\s\S]*--ui-font:\s*"Scie Sans Text", sans-serif;[\s\S]*--doc-font:\s*"Scie Sans Text", sans-serif;[\s\S]*--mono-font:\s*"Scie Sans Text", sans-serif;[\s\S]*--editor-line-height:\s*1\.52;[\s\S]*--visual-heading-weight:\s*730;/);
+    expect(scientificDocumentCss).toMatch(/:root\[data-visual-style="scienfy"\][\s\S]*font-family:\s*"Scie Sans Text Compact", "Scie Sans Text", sans-serif;/);
     expect(scientificDocumentCss).toMatch(/:root\[data-visual-style="scienfy"\]\s+\.visual-editor \.ProseMirror h1\s*{[\s\S]*font-weight:\s*760;[\s\S]*line-height:\s*1\.08;/);
     expect(scientificDocumentCss).toMatch(/:root\[data-visual-style="scienfy"\]\s+\.visual-editor \.ProseMirror h2\s*{[\s\S]*font-weight:\s*720;[\s\S]*line-height:\s*1\.14;/);
     expect(scientificDocumentCss).toMatch(/:root\[data-visual-style="scienfy"\]\s+\.visual-editor \.ProseMirror h3\s*{[\s\S]*font-weight:\s*660;[\s\S]*line-height:\s*1\.18;/);
@@ -109,6 +110,48 @@ describe('style CSS variables', () => {
     for (const [foreground, background] of pairs) {
       expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(4.5);
     }
+  });
+
+  it('keeps table and Mermaid label palettes legible in every theme family', () => {
+    const pairs = [
+      ['#1f2933', '#ffffff'],
+      ['#12251f', '#eef2f0'],
+      ['#eef7f3', '#151b19'],
+      ['#ffffff', '#202a27'],
+      ['#3a3024', '#fffaf1'],
+      ['#251e16', '#f2e6d0'],
+      ['#e3dfd6', '#1f160d'],
+      ['#f4efe5', '#342515'],
+      ['#f0f6fc', '#0d1117'],
+      ['#ffffff', '#21262d'],
+      ['#ecf0f1', '#1a1d1e'],
+      ['#ffffff', '#2a2d31'],
+      ['#f2f2f2', '#151515'],
+      ['#ffffff', '#252525'],
+      ['#f1f1f1', '#151515'],
+      ['#f0eee6', '#262624'],
+      ['#ffffff', '#30302e'],
+      ['#172033', '#e9efff'],
+      ['#f2f6ff', '#273247'],
+      ['#2e251a', '#f1e7d4'],
+    ] as const;
+
+    for (const [foreground, background] of pairs) {
+      expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(4.5);
+    }
+
+    expect(appCss).toContain('--diagram-node-text: #172033');
+    expect(appCss).toContain('--diagram-node-text: #f2f6ff');
+    expect(appCss).toContain('--diagram-node-text: #2e251a');
+    expect(scientificDocumentCss).toContain('.visual-editor .ProseMirror th :where(p, li, strong, em)');
+  });
+
+  it('overrides fixed Milkdown typography so document-wide font scaling reaches body content', () => {
+    expect(scientificDocumentCss).toMatch(/\.visual-editor \.ProseMirror p\s*{\s*font-size:\s*inherit;/);
+    expect(scientificDocumentCss).toMatch(/\.visual-editor \.ProseMirror h5\s*{\s*font-size:\s*0\.95em;/);
+    expect(scientificDocumentCss).toMatch(/\.visual-editor \.ProseMirror h6\s*{\s*font-size:\s*0\.9em;/);
+    expect(scientificDocumentCss).toMatch(/\.visual-editor \.ProseMirror pre\s*{[\s\S]*font-size:\s*calc\(var\(--document-body-size\) \* var\(--font-scale\) \* 0\.9\);/);
+    expect(scientificDocumentCss).toMatch(/\.visual-editor \.ProseMirror pre code\s*{[\s\S]*font-size:\s*inherit;/);
   });
 });
 

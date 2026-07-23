@@ -232,7 +232,7 @@
     0 16px 38px color-mix(in srgb, var(--shadow), transparent 16%),
     inset 0 1px 0 color-mix(in srgb, white 24%, transparent);
   backdrop-filter: blur(18px) saturate(1.18);
-  font-family: "Scie Sans", var(--ui-font);
+  font-family: var(--ui-font);
   font-size: 12px;
   font-weight: 400;
   line-height: 1.32;

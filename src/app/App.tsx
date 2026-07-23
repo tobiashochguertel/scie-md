@@ -14,6 +14,7 @@ import type { VariableDialogState } from '../components/VariableDialog';
 import type { EditorHistoryControls } from '../components/editorControls';
 import type { EditorSelectionSnapshot } from '../components/editorSelection';
 import type { SourceMarkdownFind, SourceMarkdownInsert, SourceMarkdownJump, SourceMarkdownSelection } from '../components/SourceMarkdownEditor';
+import { copyVisualEditorSelection } from '../components/VisualMarkdownEditor';
 import type { VisualMarkdownFind, VisualMarkdownInsert, VisualMarkdownJump, VisualMarkdownSelection } from '../components/VisualMarkdownEditor';
 import type { EditorAdapter } from '../components/editorAdapter';
 import { documentEditorGateway } from './documentEditorGateway';
@@ -89,7 +90,14 @@ import { desktopDocumentHost } from './host/desktopDocumentHost';
 import { desktopPlatformHost } from './host/desktopPlatformHost';
 import { exportDiagnosticsBundle } from '../services/nativeRecoveryService';
 import { documentPerformance, documentPerformanceReportText } from './performance/documentPerformance';
-import { loadSettings, normalizeSidebarWidth, updateSettings } from '../services/settingsService';
+import {
+  FONT_SCALE_DEFAULT,
+  FONT_SCALE_STEP,
+  loadSettings,
+  normalizeSidebarWidth,
+  stepFontScale,
+  updateSettings,
+} from '../services/settingsService';
 import type { DocumentType, SidebarView, ThemeMode } from '../services/settingsService';
 import { getVisualStyleOption, nextVisualStyle } from '../services/visualStyleService';
 import type { VisualStyleId } from '../services/visualStyleService';
@@ -1579,6 +1587,29 @@ export function App() {
     if (filePath) syncDocumentParentToExplorer(filePath);
   }, [filePath, syncDocumentParentToExplorer]);
 
+  const startupWelcomeCommittedRef = useRef(false);
+  const commitWelcomeIntoActiveSeed = useCallback(() => {
+    if (startupWelcomeCommittedRef.current) return false;
+    startupWelcomeCommittedRef.current = true;
+    const committed = commitOpenedDocument(
+      null,
+      welcomeMarkdown,
+      DEFAULT_METADATA,
+      'visual',
+      welcomeMarkdown,
+      {
+        targetDocumentId: documentId,
+        preserveStartupOpenFailure: Boolean(startupDocumentOpenFailure),
+      },
+    );
+    if (!committed) {
+      startupWelcomeCommittedRef.current = false;
+      return false;
+    }
+    recordStartupFallbackCommitted(welcomeMarkdown);
+    return true;
+  }, [commitOpenedDocument, documentId, recordStartupFallbackCommitted, startupDocumentOpenFailure]);
+
   useEffect(() => {
     if (!shouldCommitWelcomeAfterStartup({
       onboardingComplete: settings.onboardingComplete,
@@ -1586,24 +1617,15 @@ export function App() {
       startupDocumentOpenFailed,
       filePath,
       markdown,
+      alreadyCommitted: startupWelcomeCommittedRef.current,
     })) return;
-    commitOpenedDocument(
-      null,
-      welcomeMarkdown,
-      DEFAULT_METADATA,
-      'visual',
-      welcomeMarkdown,
-      { preserveStartupOpenFailure: Boolean(startupDocumentOpenFailure) },
-    );
-    recordStartupFallbackCommitted(welcomeMarkdown);
+    commitWelcomeIntoActiveSeed();
   }, [
-    commitOpenedDocument,
+    commitWelcomeIntoActiveSeed,
     filePath,
     markdown,
-    recordStartupFallbackCommitted,
     settings.onboardingComplete,
     startupDocumentOpenFailed,
-    startupDocumentOpenFailure,
     startupDocumentOpenPending,
   ]);
 
@@ -2097,13 +2119,13 @@ export function App() {
   }, [activeVisualStyle, setVisualStyle]);
 
   const adjustFontScale = useCallback((delta: number) => {
-    const next = Math.min(1.35, Math.max(0.85, Math.round((settings.fontScale + delta) * 20) / 20));
+    const next = stepFontScale(settings.fontScale, delta);
     updateUserSettings({ fontScale: next });
     pushToast(`Font size ${Math.round(next * 100)}%`, 'info');
   }, [pushToast, settings.fontScale, updateUserSettings]);
 
   const resetFontScale = useCallback(() => {
-    updateUserSettings({ fontScale: 1 });
+    updateUserSettings({ fontScale: FONT_SCALE_DEFAULT });
     pushToast('Font size reset', 'info');
   }, [pushToast, updateUserSettings]);
 
@@ -2112,44 +2134,28 @@ export function App() {
   }, [settings.focusMode, updateUserSettings]);
 
   const applyDocumentType = useCallback((documentType: DocumentType) => {
-    const defaults: Record<DocumentType, { fontScale: number; visualStyle: VisualStyleId }> = {
-      'lab-note': { fontScale: 0.95, visualStyle: 'lab-notebook' },
-      report: { fontScale: 1, visualStyle: 'scientific-draft' },
-      memo: { fontScale: 0.95, visualStyle: 'journal-manuscript' },
-      notes: { fontScale: 1, visualStyle: 'scientific-draft' },
-      other: { fontScale: 1, visualStyle: 'scientific-draft' },
-    };
+      const defaults: Record<DocumentType, { fontScale: number; visualStyle: VisualStyleId }> = {
+        'lab-note': { fontScale: 0.95, visualStyle: 'lab-notebook' },
+        report: { fontScale: 1, visualStyle: 'cursor' },
+        memo: { fontScale: 0.95, visualStyle: 'cursor' },
+        notes: { fontScale: 1, visualStyle: 'cursor' },
+        other: { fontScale: 1, visualStyle: 'cursor' },
+      };
     updateUserSettings({ ...defaults[documentType], documentType, onboardingComplete: true });
     setDocumentTypeDialogOpen(false);
     if (!startupDocumentOpenPending && !filePath && sourceTextRef.current.trim() === '') {
-      commitOpenedDocument(
-        null,
-        welcomeMarkdown,
-        DEFAULT_METADATA,
-        'visual',
-        welcomeMarkdown,
-        { preserveStartupOpenFailure: Boolean(startupDocumentOpenFailure) },
-      );
-      recordStartupFallbackCommitted(welcomeMarkdown);
+      commitWelcomeIntoActiveSeed();
     }
     pushToast('Writing defaults applied', 'success');
-  }, [commitOpenedDocument, filePath, pushToast, recordStartupFallbackCommitted, startupDocumentOpenFailure, startupDocumentOpenPending, updateUserSettings]);
+  }, [commitWelcomeIntoActiveSeed, filePath, pushToast, startupDocumentOpenPending, updateUserSettings]);
 
   const skipDocumentType = useCallback(() => {
     updateUserSettings({ onboardingComplete: true });
     setDocumentTypeDialogOpen(false);
     if (!startupDocumentOpenPending && !filePath && sourceTextRef.current.trim() === '') {
-      commitOpenedDocument(
-        null,
-        welcomeMarkdown,
-        DEFAULT_METADATA,
-        'visual',
-        welcomeMarkdown,
-        { preserveStartupOpenFailure: Boolean(startupDocumentOpenFailure) },
-      );
-      recordStartupFallbackCommitted(welcomeMarkdown);
+      commitWelcomeIntoActiveSeed();
     }
-  }, [commitOpenedDocument, filePath, recordStartupFallbackCommitted, startupDocumentOpenFailure, startupDocumentOpenPending, updateUserSettings]);
+  }, [commitWelcomeIntoActiveSeed, filePath, startupDocumentOpenPending, updateUserSettings]);
 
   const automaticDocumentTypeDialogOpen = shouldShowAutomaticOnboardingDialog({
     onboardingComplete: settings.onboardingComplete,
@@ -2328,6 +2334,17 @@ export function App() {
   } = useWindowChrome({ closeWindow });
 
   const copySelectionFromFloatingToolbar = useCallback(async () => {
+    if (mode === 'visual' && visualEditor) {
+      try {
+        if (await copyVisualEditorSelection(visualEditor)) {
+          pushToast('Selection copied with formatting.', 'success');
+          return;
+        }
+      } catch {
+        pushToast('Could not copy selection.', 'error');
+        return;
+      }
+    }
     const selectedText = getSelectedEditorText();
     if (!selectedText) {
       pushToast('Select text first.', 'warning');
@@ -2339,7 +2356,7 @@ export function App() {
     } catch {
       pushToast('Could not copy selection.', 'error');
     }
-  }, [getSelectedEditorText, pushToast]);
+  }, [getSelectedEditorText, mode, pushToast, visualEditor]);
 
   const convertSelectionToHeading = useCallback((level: 1 | 2 | 3 | 4 | 5 | 6) => {
     const selectedText = getSelectedEditorText();
@@ -2836,7 +2853,6 @@ export function App() {
         },
       }}
       ambientSuggestions={{
-        issues: ambientIssues,
         hasPasteReview: Boolean(pasteReview),
         onOpenPasteReview: openPasteReview,
       }}
@@ -2847,10 +2863,8 @@ export function App() {
         workspaceStatus: shellProjection.active.chrome.aggregateStatus,
         headingPath: currentHeadingPath,
         wordCount: validation.wordCount,
-        manuscriptScore: manuscriptReadiness.score,
-        manuscriptStatus: manuscriptReadiness.status,
-        errors: errors.map((error) => error.message),
-        warnings: warnings.map((warning) => warning.message),
+        lineCount: revisionedDocumentMetrics.lineCount,
+        fontScale: settings.fontScale,
         externalConflict,
         filePath,
         onReviewConflict: () => void openExternalConflictReview(),
@@ -2859,14 +2873,8 @@ export function App() {
         onReload: () => filePath && void handleReloadFromDisk(),
         onSaveNow: () => void saveCurrent({ forceSaveAs: true }),
         onJumpToHeading: jumpToHeading,
-        onOpenReadiness: () => {
-          setInspectorFocusSection('readiness');
-          updateUserSettings({ inspectorOpen: true });
-        },
-        onOpenValidation: () => {
-          setInspectorFocusSection('validation');
-          updateUserSettings({ inspectorOpen: true });
-        },
+        onDecreaseFont: () => adjustFontScale(-FONT_SCALE_STEP),
+        onIncreaseFont: () => adjustFontScale(FONT_SCALE_STEP),
         onCopyFeedback: pushToast,
       }}
     >

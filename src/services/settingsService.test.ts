@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { forgetRecentFile, loadSettings, rememberRecentFile, updateSettings } from './settingsService';
+import {
+  FONT_SCALE_MAX,
+  FONT_SCALE_MIN,
+  forgetRecentFile,
+  loadSettings,
+  rememberRecentFile,
+  stepFontScale,
+  updateSettings,
+} from './settingsService';
 
 describe('settingsService', () => {
   beforeEach(() => {
@@ -87,12 +95,20 @@ describe('settingsService', () => {
     expect(loadSettings().recentFiles).toEqual(['C:\\Lab\\Paper.md']);
   });
 
+  it('migrates a retired persisted visual style to Cursor', () => {
+    localStorage.setItem('scienfy.markdown.settings.v1', JSON.stringify({
+      visualStyle: 'technical-code',
+    }));
+
+    expect(loadSettings().visualStyle).toBe('cursor');
+  });
+
   it('persists display settings without losing recent files', () => {
     rememberRecentFile('/tmp/a.md');
     updateSettings({
       themeMode: 'sepia',
       fontScale: 1.2,
-      visualStyle: 'technical-code',
+      visualStyle: 'cursor',
       outlineOpen: false,
       sidebarWidth: 420,
       sidebarView: 'files',
@@ -109,7 +125,7 @@ describe('settingsService', () => {
       recentFiles: ['/tmp/a.md'],
       themeMode: 'sepia',
       fontScale: 1.2,
-      visualStyle: 'technical-code',
+      visualStyle: 'cursor',
       outlineOpen: false,
       sidebarWidth: 420,
       sidebarView: 'files',
@@ -160,7 +176,7 @@ describe('settingsService', () => {
 
     expect(loadSettings()).toMatchObject({
       themeMode: 'dark',
-      fontScale: 1.35,
+      fontScale: 2,
       visualStyle: 'science',
       sidebarWidth: 560,
       sidebarView: 'outline',
@@ -168,5 +184,15 @@ describe('settingsService', () => {
       inkscapePath: null,
       documentType: 'report',
     });
+  });
+
+  it('steps across the widened font range and clamps at its bounds', () => {
+    expect(FONT_SCALE_MIN).toBe(0.3);
+    expect(FONT_SCALE_MAX).toBe(2);
+    expect(stepFontScale(1, 0.05)).toBe(1.05);
+    expect(stepFontScale(1, -0.05)).toBe(0.95);
+    expect(stepFontScale(0.35, -0.05)).toBe(0.3);
+    expect(stepFontScale(FONT_SCALE_MAX, 0.05)).toBe(FONT_SCALE_MAX);
+    expect(stepFontScale(FONT_SCALE_MIN, -0.05)).toBe(FONT_SCALE_MIN);
   });
 });

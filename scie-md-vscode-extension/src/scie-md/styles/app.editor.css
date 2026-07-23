@@ -124,7 +124,7 @@
   left: 14px;
   z-index: 24;
   display: block;
-  font-family: "Scie Sans", var(--ui-font);
+  font-family: var(--ui-font);
   font-weight: 400;
 }
 
@@ -199,7 +199,7 @@
   transform-origin: top left;
   transition: opacity 90ms ease, transform 90ms ease;
   backdrop-filter: blur(18px);
-  font-family: "Scie Sans", var(--ui-font);
+  font-family: var(--ui-font);
   font-weight: 400;
 }
 

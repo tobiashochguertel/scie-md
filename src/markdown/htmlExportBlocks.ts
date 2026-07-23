@@ -29,6 +29,7 @@ let mermaidInitialized = false;
 let mermaidModulePromise: Promise<typeof import('mermaid')> | null = null;
 const mermaidRenderCache = new Map<string, string>();
 const MAX_MERMAID_RENDER_CACHE_SIZE = 100;
+const MERMAID_RENDER_PROFILE = 'native-svg-labels-v1';
 
 export function replacePageBreakBlocks(markdown: string): {
   markdown: string;
@@ -259,7 +260,7 @@ function safeClassName(value: string): string {
 }
 
 async function renderMermaidSvg(code: string, id: string): Promise<string> {
-  const cacheKey = code.trim();
+  const cacheKey = `${MERMAID_RENDER_PROFILE}\0${code.trim()}`;
   const cached = mermaidRenderCache.get(cacheKey);
   if (cached) return cached;
   try {
@@ -268,7 +269,27 @@ async function renderMermaidSvg(code: string, id: string): Promise<string> {
       mermaid.initialize({
         startOnLoad: false,
         securityLevel: 'strict',
-        theme: 'default',
+        theme: 'base',
+        htmlLabels: false,
+        fontFamily: 'Scie Sans Text, Scie Sans, sans-serif',
+        themeVariables: {
+          primaryColor: '#e9efff',
+          primaryTextColor: '#172033',
+          primaryBorderColor: '#6174b8',
+          secondaryColor: '#edf7f3',
+          secondaryTextColor: '#172033',
+          secondaryBorderColor: '#4f806c',
+          tertiaryColor: '#fff6e5',
+          tertiaryTextColor: '#332411',
+          tertiaryBorderColor: '#a7732d',
+          lineColor: '#556070',
+          textColor: '#172033',
+          mainBkg: '#e9efff',
+          nodeBorder: '#6174b8',
+          clusterBkg: '#f7f9fc',
+          clusterBorder: '#94a3b8',
+          edgeLabelBackground: '#ffffff',
+        },
       });
       mermaidInitialized = true;
     }

@@ -455,6 +455,29 @@ describe('useDocumentSession startup fallback', () => {
     expect(latestState?.workspaceState.activeDocumentId).toBe(initialId);
   });
 
+  it('replaces the empty startup seed when committing welcome content under multi-document production capability', async () => {
+    const host = createHost();
+    host.launch.getInitialDocumentPath.mockResolvedValue(null);
+    renderSession(host, PRODUCTION_WORKSPACE_CAPABILITY);
+    await flushAsync();
+    const seedId = latestState!.documentId;
+
+    act(() => {
+      latestState?.commitOpenedDocument(
+        null,
+        '# Welcome\n',
+        DEFAULT_METADATA,
+        'visual',
+        '# Welcome\n',
+        { targetDocumentId: seedId },
+      );
+    });
+
+    expect(latestState?.workspaceState.tabOrder).toEqual([seedId]);
+    expect(latestState?.workspaceState.activeDocumentId).toBe(seedId);
+    expect(latestState?.markdown).toBe('# Welcome\n');
+  });
+
   it('keeps above-threshold Markdown on the source surface without layer-two parsing', async () => {
     const host = createHost();
     host.launch.getInitialDocumentPath.mockResolvedValue(null);

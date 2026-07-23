@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
@@ -26,7 +26,8 @@ if (!existsSync(appPath)) throw new Error(`Packaged candidate was not found at $
 const executableSha256 = sha256(readFileSync(appPath));
 const runRoot = await mkdtemp(join(tmpdir(), 'sciemd-ui-performance-'));
 const fixtureRoot = join(runRoot, 'fixtures');
-const userDataRoot = join(runRoot, 'webview-data');
+const mainDataRoot = join(runRoot, 'main-process');
+const productionStateBefore = productionStateSnapshot();
 const port = options.port;
 let app;
 let page;
@@ -43,11 +44,7 @@ try {
   console.log(`[desktop-ui-performance] Launching ${appPath} (${executableSha256.slice(0, 12)}).`);
   app = spawn(appPath, [fixtures.cold[0].path], {
     cwd: root,
-    env: {
-      ...process.env,
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-allow-origins=*`,
-      WEBVIEW2_USER_DATA_FOLDER: userDataRoot,
-    },
+    env: isolatedAppEnvironment(mainDataRoot, port),
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   let appError = '';
@@ -84,6 +81,8 @@ try {
   await waitFor(page, `document.querySelector('.cm-editor')?.dataset.sourceFontRemeasured === 'loaded'`, options.timeoutMs);
   const fontEvidence = await evaluate(page, `(async () => {
     const requests = [
+      ['300 14px "IBM Plex Mono"', 'source α μ − ∞ {} []'],
+      ['italic 300 14px "IBM Plex Mono"', 'source'],
       ['400 14px "IBM Plex Mono"', 'source α μ − ∞ {} []'],
       ['italic 400 14px "IBM Plex Mono"', 'source'],
       ['500 14px "IBM Plex Mono"', 'source'],
@@ -119,8 +118,8 @@ try {
   const interactiveCold = fixtures.cold.slice(1).filter((item) => !knownSlowIds.has(item.id));
   for (const fixture of interactiveCold) {
     const beforeOpenSequence = lastSequence(await report(page));
-    await forwardDocumentOpen(appPath, fixture.path, root);
-    await waitFor(page, `Array.from(document.querySelectorAll('[role="tab"]')).some((tab) => tab.textContent?.includes(${JSON.stringify(basename(fixture.path))}))`, options.timeoutMs);
+    await openPerformanceDocument(page, fixture.path);
+    await waitFor(page, `Array.from(document.querySelectorAll('[role="tab"]')).some((tab) => (tab.getAttribute('aria-label') ?? tab.textContent ?? '').includes(${JSON.stringify(basename(fixture.path))}))`, options.timeoutMs);
     await waitFor(page, `window.__SCIEMD_DOCUMENT_PERFORMANCE__?.report().events.some((event) => event.name === 'editor-attach' && event.sequence > ${beforeOpenSequence})`, options.timeoutMs);
     await waitForBackgroundReadyAfterAttach(page, beforeOpenSequence, options.timeoutMs);
     console.log(`[desktop-ui-performance] Opened ${fixture.id}.`);
@@ -139,6 +138,8 @@ try {
   const inputName = basename(fixtures.cold[0].path);
   const firstName = basename(fixtures.cold[3].path);
   const secondName = basename(fixtures.cold[5].path);
+  const firstVisualName = basename(fixtures.visualWarm[0].path);
+  const secondVisualName = basename(fixtures.visualWarm[1].path);
   await activateTab(page, inputName);
   await selectSourceMode(page);
   const beforeInput = await report(page);
@@ -176,10 +177,59 @@ try {
   await waitFor(page, `window.__SCIEMD_DOCUMENT_PERFORMANCE__?.report().events.some((event) => event.name === 'next-frame' && event.sequence > ${warmAcquisitionStart})`, 10_000);
   await waitForBackgroundReadyAfterAttach(page, warmAcquisitionStart, options.timeoutMs);
 
+  const visualFixtureOpenStart = lastSequence(await report(page));
+  await openPerformanceDocument(page, fixtures.visualWarm[0].path);
+  await waitFor(page, `Array.from(document.querySelectorAll('[role="tab"]')).some((tab) => (tab.getAttribute('aria-label') ?? tab.textContent ?? '').includes(${JSON.stringify(firstVisualName)}))`, options.timeoutMs);
+  await waitFor(page, `window.__SCIEMD_DOCUMENT_PERFORMANCE__?.report().events.some((event) => event.name === 'editor-attach' && event.sequence > ${visualFixtureOpenStart})`, options.timeoutMs);
+  await waitForBackgroundReadyAfterAttach(page, visualFixtureOpenStart, options.timeoutMs);
+  const secondVisualFixtureOpenStart = lastSequence(await report(page));
+  await openPerformanceDocument(page, fixtures.visualWarm[1].path);
+  await waitFor(page, `Array.from(document.querySelectorAll('[role="tab"]')).some((tab) => (tab.getAttribute('aria-label') ?? tab.textContent ?? '').includes(${JSON.stringify(secondVisualName)}))`, options.timeoutMs);
+  await waitFor(page, `window.__SCIEMD_DOCUMENT_PERFORMANCE__?.report().events.some((event) => event.name === 'editor-attach' && event.sequence > ${secondVisualFixtureOpenStart})`, options.timeoutMs);
+  await waitForBackgroundReadyAfterAttach(page, secondVisualFixtureOpenStart, options.timeoutMs);
+  await activateTab(page, firstVisualName);
+  await selectVisualMode(page);
+  await activateTab(page, secondVisualName);
+  await selectVisualMode(page);
+  await activateVisualTab(page, firstVisualName);
+  const visualWarmSamples = [];
+  const visualWarmAcquisitionStart = lastSequence(await report(page));
+  for (let index = 0; index < 5; index += 1) {
+    await activateVisualTab(page, secondVisualName);
+    visualWarmSamples.push(await activateVisualAndMeasure(page, firstVisualName));
+  }
+  const visualWarmReport = await report(page);
+  const visualWarmEvents = visualWarmReport.events.filter((event) => event.sequence > visualWarmAcquisitionStart);
+  const visualWarmRuntimeHits = visualWarmEvents.filter((event) => (
+    event.name === 'runtime-attach'
+    && event.surface === 'visual'
+    && event.cache === 'hit'
+    && event.phase === 'exact-state'
+  ));
+  if (visualWarmRuntimeHits.length < 10) {
+    const runtimeEvidence = visualWarmEvents.filter((event) => (
+      event.surface === 'visual'
+      && ['runtime-suspend', 'runtime-attach', 'runtime-admission-refused', 'runtime-eviction'].includes(event.name)
+    ));
+    throw new Error(`Visual warm A-B-A reached only ${visualWarmRuntimeHits.length} exact runtime hit(s); expected at least 10. Runtime evidence: ${JSON.stringify(runtimeEvidence)}.`);
+  }
+  const visualWarmReplacements = visualWarmEvents.filter((event) => (
+    event.surface === 'visual'
+    && event.phase === 'milkdown-external-replace'
+  ));
+  if (visualWarmReplacements.length !== 0) {
+    throw new Error(`Visual warm A-B-A performed ${visualWarmReplacements.length} full Milkdown replacement(s).`);
+  }
+
   const finalReport = await report(page);
-  const postWarmAcquisitions = finalReport.events.filter((event) => event.sequence > warmAcquisitionStart
-    && event.name === 'byte-acquisition'
-    && (event.acquisitionReason === 'open' || event.acquisitionReason === 'coldCleanRehydrate'));
+  const postWarmAcquisitions = finalReport.events.filter((event) => (
+    event.name === 'byte-acquisition'
+    && (event.acquisitionReason === 'open' || event.acquisitionReason === 'coldCleanRehydrate')
+    && (
+      (event.sequence > warmAcquisitionStart && event.sequence < visualFixtureOpenStart)
+      || event.sequence > visualWarmAcquisitionStart
+    )
+  ));
   if (postWarmAcquisitions.length !== 0) {
     throw new Error(`Warm A-B-A acquired main-document bytes ${postWarmAcquisitions.length} time(s): ${JSON.stringify(postWarmAcquisitions)}.`);
   }
@@ -192,15 +242,14 @@ try {
   await collectGarbage(page);
   const heapBytes = await evaluate(page, `performance.memory?.usedJSHeapSize ?? null`);
   const workingSetBytes = processWorkingSet(app.pid);
+  await requireGracefulShutdown(page, app, mainDataRoot, options.timeoutMs);
   page.close();
   page = undefined;
-  if (app.exitCode === null) app.kill();
-  await waitForChildExit(app, 5_000);
   app = undefined;
   const pressureProbe = await probeWorkspacePressure(appPath, fixtures.workspace, port + 20, root, options.timeoutMs);
   const workspacePressure = pressureProbe.reached;
   const pressureProcessTreeWorkingSetBytes = pressureProbe.processTreeWorkingSetBytes;
-  assertRoundFiveBudgets({ warmSamples, inputLatencies, heapBytes, pressureProbe });
+  assertRoundFiveBudgets({ warmSamples, visualWarmSamples, inputLatencies, heapBytes, pressureProbe });
   const nativeTransport = nativeTransportEvidence(coldCoverageReport);
   const baseline = {
     schemaVersion: 1,
@@ -215,10 +264,12 @@ try {
       cold: fixtures.cold.map(({ id, bytes, state }) => ({ id, bytes, state })),
       workspace: fixtures.workspace.map(({ id, bytes, state }) => ({ id, bytes, state })),
       structured: fixtures.structured.map(({ id, bytes, state }) => ({ id, bytes, state })),
+      visualWarm: fixtures.visualWarm.map(({ id, bytes, state }) => ({ id, bytes, state })),
       sampleCount: 5,
     },
     distributions: {
       warm_reactivation_editor_attach_ms: distribution(warmSamples),
+      visual_warm_reactivation_next_frame_ms: distribution(visualWarmSamples),
       cold_open_first_editable_ms: distribution([...coldProbes.flatMap((probe) => probe.outcome === 'editable' ? [probe.elapsedMs] : []), ...coldOpenDurations(coldCoverageReport)]),
       accepted_to_visibly_echoed_input_ms: distribution(inputLatencies),
       native_cancel_stop_ms: nativeCancellationDistribution,
@@ -256,10 +307,11 @@ try {
   };
   const baselinePath = resolve('src/app/performance/documentPerformanceBaseline.windows.v1.json');
   await writeFile(baselinePath, `${JSON.stringify(baseline, null, 2)}\n`, 'utf8');
-  console.log(JSON.stringify({ ok: true, baselinePath, sourceIdentity, executableSha256, warmSamples, heapBytes, workingSetBytes, pressureProcessTreeWorkingSetBytes }, null, 2));
+  assertProductionStateUnchanged(productionStateBefore);
+  console.log(JSON.stringify({ ok: true, baselinePath, sourceIdentity, executableSha256, warmSamples, visualWarmSamples, heapBytes, workingSetBytes, pressureProcessTreeWorkingSetBytes }, null, 2));
 } finally {
   page?.close();
-  if (app && app.exitCode === null) app.kill();
+  if (app && app.exitCode === null) terminateProcessTree(app.pid);
   if (app) await waitForChildExit(app, 5_000);
   await rm(runRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 }).catch(() => undefined);
 }
@@ -307,19 +359,19 @@ async function createFixtures(directory) {
     await writeFile(path, source, 'utf8');
     structured.push({ id: `structured-${extension}`, path, bytes: Buffer.byteLength(source), state: 'clean' });
   }
-  return { cold, workspace, structured };
+  const visualWarm = [
+    await writeSized(directory, 'vw-a-512k', 512 * 1024, 'clean'),
+    await writeSized(directory, 'vw-b-768k', 768 * 1024, 'clean'),
+  ];
+  return { cold, workspace, structured, visualWarm };
 }
 
 async function probeColdFixture(appPath, fixture, port, cwd) {
   const startedAt = Date.now();
-  const probeData = join(fixture.path, '..', `probe-webview-${port}`);
+  const probeData = join(fixture.path, '..', `probe-${port}`);
   const child = spawn(appPath, [fixture.path], {
     cwd,
-    env: {
-      ...process.env,
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-allow-origins=*`,
-      WEBVIEW2_USER_DATA_FOLDER: probeData,
-    },
+    env: isolatedAppEnvironment(probeData, port),
     stdio: 'ignore',
   });
   let probePage;
@@ -336,22 +388,19 @@ async function probeColdFixture(appPath, fixture, port, cwd) {
   } catch (error) {
     return { id: fixture.id, outcome: 'timeout', elapsedMs: Date.now() - startedAt, processWorkingSetBytes: processWorkingSet(child.pid), detail: error instanceof Error ? error.message : String(error) };
   } finally {
+    if (probePage && child.exitCode === null) await requireGracefulShutdown(probePage, child, probeData, 30_000);
     probePage?.close();
-    if (child.exitCode === null) child.kill();
+    if (child.exitCode === null) terminateProcessTree(child.pid);
     await waitForChildExit(child, 5_000);
   }
 }
 
 async function probeStructuredWorkspace(appPath, fixtures, port, cwd, timeoutMs) {
   const launchableFixtures = fixtures.filter((fixture) => fixture.id !== 'structured-csv');
-  const userData = join(launchableFixtures[0].path, '..', `structured-probe-webview-${port}`);
+  const userData = join(launchableFixtures[0].path, '..', `structured-probe-${port}`);
   const child = spawn(appPath, [launchableFixtures[0].path], {
     cwd,
-    env: {
-      ...process.env,
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-allow-origins=*`,
-      WEBVIEW2_USER_DATA_FOLDER: userData,
-    },
+    env: isolatedAppEnvironment(userData, port),
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   let appError = '';
@@ -365,8 +414,8 @@ async function probeStructuredWorkspace(appPath, fixtures, port, cwd, timeoutMs)
     await waitForBackgroundReadyAfterAttach(probePage, 0, timeoutMs);
     for (const fixture of launchableFixtures.slice(1)) {
       const beforeOpenSequence = lastSequence(await report(probePage));
-      await forwardDocumentOpen(appPath, fixture.path, cwd);
-      await waitFor(probePage, `Array.from(document.querySelectorAll('[role="tab"]')).some((tab) => tab.textContent?.includes(${JSON.stringify(basename(fixture.path))}))`, timeoutMs);
+      await openPerformanceDocument(probePage, fixture.path);
+      await waitFor(probePage, `Array.from(document.querySelectorAll('[role="tab"]')).some((tab) => (tab.getAttribute('aria-label') ?? tab.textContent ?? '').includes(${JSON.stringify(basename(fixture.path))}))`, timeoutMs);
       await waitFor(probePage, `window.__SCIEMD_DOCUMENT_PERFORMANCE__?.report().events.some((event) => event.name === 'editor-attach' && event.sequence > ${beforeOpenSequence})`, timeoutMs);
       await waitForBackgroundReadyAfterAttach(probePage, beforeOpenSequence, timeoutMs);
     }
@@ -378,24 +427,21 @@ async function probeStructuredWorkspace(appPath, fixtures, port, cwd, timeoutMs)
       compatibilityExclusions: [{ id: 'structured-csv', reason: 'CSV remains deliberately excluded from OS startup/Open With arguments; Round 1 does not broaden file-association compatibility.' }],
       tabCount,
       traceSummary: trace.summary,
-      processTreeWorkingSetBytes: processTreeWorkingSet(child.pid),
+      processTreeWorkingSetBytes: processTreeMetrics(child.pid).totalBytes,
     };
   } finally {
+    if (probePage && child.exitCode === null) await requireGracefulShutdown(probePage, child, userData, timeoutMs);
     probePage?.close();
-    if (child.exitCode === null) child.kill();
+    if (child.exitCode === null) terminateProcessTree(child.pid);
     await waitForChildExit(child, 5_000);
   }
 }
 
 async function probeWorkspacePressure(appPath, fixtures, port, cwd, timeoutMs) {
-  const userData = join(fixtures[0].path, '..', `pressure-probe-webview-${port}`);
+  const userData = join(fixtures[0].path, '..', `pressure-probe-${port}`);
   const child = spawn(appPath, [fixtures[0].path], {
     cwd,
-    env: {
-      ...process.env,
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-allow-origins=*`,
-      WEBVIEW2_USER_DATA_FOLDER: userData,
-    },
+    env: isolatedAppEnvironment(userData, port),
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   let appError = '';
@@ -412,8 +458,8 @@ async function probeWorkspacePressure(appPath, fixtures, port, cwd, timeoutMs) {
     console.log(`[desktop-ui-performance] Opened pressure fixture ${fixtures[0].id}.`);
     for (const fixture of fixtures.slice(1)) {
       const beforeOpenSequence = lastSequence(await report(probePage));
-      await forwardDocumentOpen(appPath, fixture.path, cwd);
-      await waitFor(probePage, `Array.from(document.querySelectorAll('[role="tab"]')).some((tab) => tab.textContent?.includes(${JSON.stringify(basename(fixture.path))}))`, timeoutMs);
+      await openPerformanceDocument(probePage, fixture.path);
+      await waitFor(probePage, `Array.from(document.querySelectorAll('[role="tab"]')).some((tab) => (tab.getAttribute('aria-label') ?? tab.textContent ?? '').includes(${JSON.stringify(basename(fixture.path))}))`, timeoutMs);
       await waitFor(probePage, `window.__SCIEMD_DOCUMENT_PERFORMANCE__?.report().events.some((event) => event.name === 'editor-attach' && event.sequence > ${beforeOpenSequence})`, timeoutMs);
       await waitForBackgroundReadyAfterAttach(probePage, beforeOpenSequence, timeoutMs);
       reached.push(fixture.id);
@@ -423,18 +469,20 @@ async function probeWorkspacePressure(appPath, fixtures, port, cwd, timeoutMs) {
     await collectGarbage(probePage);
     await delay(1_000);
     const pressureTrace = await report(probePage);
+    const processTree = processTreeMetrics(child.pid);
     return {
       reached,
       webviewHeapBytes: await evaluate(probePage, `performance.memory?.usedJSHeapSize ?? null`),
-      processTreeWorkingSetBytes: processTreeWorkingSet(child.pid),
-      processTreeWorkingSet: processTreeWorkingSetBreakdown(child.pid),
+      processTreeWorkingSetBytes: processTree.totalBytes,
+      processTreeWorkingSet: processTree.processes,
       renderedSourceCodeUnits: await evaluate(probePage, `document.querySelector('.cm-content')?.textContent?.length ?? null`),
       coldTransitions: pressureTrace.events.filter((event) => event.name === 'cold-transition'),
       analysisRuntime: await evaluate(probePage, `window.__SCIEMD_DOCUMENT_PERFORMANCE__?.analysis()`),
     };
   } finally {
+    if (probePage && child.exitCode === null) await requireGracefulShutdown(probePage, child, userData, timeoutMs);
     probePage?.close();
-    if (child.exitCode === null) child.kill();
+    if (child.exitCode === null) terminateProcessTree(child.pid);
     await waitForChildExit(child, 5_000);
   }
 }
@@ -527,14 +575,20 @@ async function selectSourceMode(page) {
   await waitFor(page, `Boolean(document.querySelector('.cm-content'))`, 30_000);
 }
 
+async function selectVisualMode(page) {
+  const clicked = await evaluate(page, `(() => { const button = Array.from(document.querySelectorAll('[aria-label="Editor mode"] button')).find((item) => item.textContent?.includes('Visual')); button?.click(); return Boolean(button); })()`);
+  if (!clicked) throw new Error('Could not reach the packaged Visual mode control.');
+  await waitFor(page, `Boolean(document.querySelector('.visual-editor .ProseMirror'))`, 60_000);
+}
+
 async function clickTab(page, name) {
-  const clicked = await evaluate(page, `(() => { const tab = Array.from(document.querySelectorAll('[role="tab"]')).find((item) => item.textContent?.includes(${JSON.stringify(name)})); tab?.click(); return Boolean(tab); })()`);
+  const clicked = await evaluate(page, `(() => { const tab = Array.from(document.querySelectorAll('[role="tab"]')).find((item) => (item.getAttribute('aria-label') ?? item.textContent ?? '').includes(${JSON.stringify(name)})); tab?.click(); return Boolean(tab); })()`);
   if (!clicked) throw new Error(`Could not activate packaged tab ${name}.`);
 }
 
 async function activateTab(page, name) {
   await clickTab(page, name);
-  await waitFor(page, `Array.from(document.querySelectorAll('[role="tab"]')).some((tab) => tab.getAttribute('aria-selected') === 'true' && tab.textContent?.includes(${JSON.stringify(name)}))`, 60_000);
+  await waitFor(page, `Array.from(document.querySelectorAll('[role="tab"]')).some((tab) => tab.getAttribute('aria-selected') === 'true' && (tab.getAttribute('aria-label') ?? tab.textContent ?? '').includes(${JSON.stringify(name)}))`, 60_000);
   if (!await evaluate(page, `Boolean(document.querySelector('.cm-content'))`)) await selectSourceMode(page);
   await waitFor(page, `Boolean(document.querySelector('.cm-content'))`, 30_000);
 }
@@ -549,6 +603,24 @@ async function activateAndMeasure(page, name) {
   const attach = after.events.find((event) => event.name === 'editor-attach' && event.sequence > (start?.sequence ?? afterSequence));
   if (!start || !attach) throw new Error(`Activation trace for ${name} did not reach editor attach.`);
   return Math.max(0, attach.monotonicMs - start.monotonicMs);
+}
+
+async function activateVisualTab(page, name) {
+  await clickTab(page, name);
+  await waitFor(page, `Array.from(document.querySelectorAll('[role="tab"]')).some((tab) => tab.getAttribute('aria-selected') === 'true' && (tab.getAttribute('aria-label') ?? tab.textContent ?? '').includes(${JSON.stringify(name)}))`, 60_000);
+  await waitFor(page, `Boolean(document.querySelector('.visual-editor .ProseMirror'))`, 60_000);
+}
+
+async function activateVisualAndMeasure(page, name) {
+  const before = await report(page);
+  const afterSequence = lastSequence(before);
+  await activateVisualTab(page, name);
+  await waitFor(page, `window.__SCIEMD_DOCUMENT_PERFORMANCE__?.report().events.some((event) => event.name === 'next-frame' && event.surface === 'visual' && event.sequence > ${afterSequence})`, 10_000);
+  const after = await report(page);
+  const start = after.events.find((event) => event.name === 'activation-start' && event.surface === 'visual' && event.sequence > afterSequence);
+  const nextFrame = after.events.find((event) => event.name === 'next-frame' && event.surface === 'visual' && event.sequence > (start?.sequence ?? afterSequence));
+  if (!start || !nextFrame) throw new Error(`Visual activation trace for ${name} did not reach the next painted frame.`);
+  return Math.max(0, nextFrame.monotonicMs - start.monotonicMs);
 }
 
 async function report(page) {
@@ -608,28 +680,78 @@ async function probeNativeCancellation(page, path, sampleCount) {
 function lastSequence(value) { return value?.events?.at(-1)?.sequence ?? 0; }
 function delay(ms) { return new Promise((resolveDelay) => setTimeout(resolveDelay, ms)); }
 async function waitForChildExit(child, timeoutMs) {
-  if (child.exitCode !== null) return;
+  if (child.exitCode !== null) return true;
   await Promise.race([
     new Promise((resolveExit) => child.once('exit', resolveExit)),
     delay(timeoutMs),
   ]);
+  return child.exitCode !== null;
 }
-async function forwardDocumentOpen(appPath, path, cwd) {
-  const child = spawn(appPath, [path], { cwd, env: process.env, stdio: 'ignore' });
-  const result = await Promise.race([
-    new Promise((resolveExit, rejectExit) => {
-      child.once('error', rejectExit);
-      child.once('exit', (code, signal) => resolveExit({ code, signal }));
-    }),
-    delay(30_000).then(() => ({ timeout: true })),
-  ]);
-  if ('timeout' in result) {
-    child.kill();
-    throw new Error(`Secondary document launch did not exit after forwarding ${basename(path)}.`);
+async function openPerformanceDocument(page, path) {
+  await evaluate(page, `(async () => {
+    const invoke = window.__TAURI_INTERNALS__?.invoke;
+    if (typeof invoke !== 'function') throw new Error('Packaged Tauri invoke bridge is unavailable.');
+    await invoke('enqueue_performance_document_open', { path: ${JSON.stringify(path)} });
+    return true;
+  })()`);
+}
+
+function isolatedAppEnvironment(dataRoot, port) {
+  return {
+    ...process.env,
+    APPDATA: join(dataRoot, 'roaming'),
+    LOCALAPPDATA: join(dataRoot, 'local'),
+    XDG_DATA_HOME: join(dataRoot, 'xdg-data'),
+    SCIEMD_APP_DATA_DIR_OVERRIDE: join(dataRoot, 'native-data'),
+    SCIEMD_DISABLE_SINGLE_INSTANCE: '1',
+    SCIEMD_DESKTOP_PERFORMANCE_SELF_TEST: '1',
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-allow-origins=*`,
+    WEBVIEW2_USER_DATA_FOLDER: join(dataRoot, 'webview-data'),
+  };
+}
+
+async function requireGracefulShutdown(page, child, dataRoot, timeoutMs) {
+  if (child.exitCode !== null) {
+    assertCleanShutdown(dataRoot);
+    return;
   }
-  if (result.code !== 0) {
-    throw new Error(`Secondary document launch failed for ${basename(path)} (code=${result.code}, signal=${result.signal ?? 'none'}).`);
+  try {
+    await evaluate(page, `(async () => {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      if (typeof invoke !== 'function') throw new Error('Packaged Tauri invoke bridge is unavailable.');
+      await invoke('plugin:window|close', { label: 'main' });
+      return true;
+    })()`);
+  } catch { /* the DevTools target can disconnect while a clean window close completes */ }
+
+  const deadline = Date.now() + Math.max(10_000, Math.min(timeoutMs, 30_000));
+  let discardClicked = false;
+  while (child.exitCode === null && Date.now() < deadline) {
+    if (!discardClicked) {
+      try {
+        discardClicked = Boolean(await evaluate(page, `(() => {
+          const button = Array.from(document.querySelectorAll('button')).find((candidate) => candidate.textContent?.trim().startsWith('Discard'));
+          button?.click();
+          return Boolean(button);
+        })()`));
+      } catch { /* page may already be closing */ }
+    }
+    if (await waitForChildExit(child, 250)) break;
   }
+  if (child.exitCode === null) throw new Error(`Packaged process ${child.pid} did not complete its guarded graceful shutdown.`);
+  assertCleanShutdown(dataRoot);
+}
+
+function assertCleanShutdown(dataRoot) {
+  const heartbeatPath = join(dataRoot, 'native-data', 'diagnostics', 'renderer-heartbeat.json');
+  if (!existsSync(heartbeatPath)) throw new Error(`Packaged graceful shutdown did not produce ${heartbeatPath}.`);
+  const heartbeat = JSON.parse(readFileSync(heartbeatPath, 'utf8'));
+  if (heartbeat.cleanShutdown !== true) throw new Error(`Packaged graceful shutdown was not sealed: ${JSON.stringify(heartbeat)}.`);
+}
+
+function terminateProcessTree(pid) {
+  if (!Number.isInteger(pid)) return;
+  spawnSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
 }
 function withDeadline(promise, timeoutMs, label) {
   return Promise.race([
@@ -664,21 +786,60 @@ function processWorkingSet(pid) {
   return Number.isFinite(value) ? value : null;
 }
 
-function processTreeWorkingSet(pid) {
-  const script = `$root=${Number(pid)}; $all=Get-CimInstance Win32_Process; $ids=@($root); do { $before=$ids.Count; $ids += @($all | Where-Object { $ids -contains [int]$_.ParentProcessId } | ForEach-Object { [int]$_.ProcessId }); $ids=@($ids | Select-Object -Unique) } while ($ids.Count -gt $before); [long](($all | Where-Object { $ids -contains [int]$_.ProcessId } | Measure-Object -Property WorkingSetSize -Sum).Sum)`;
-  const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8' });
-  const value = Number(result.stdout.trim());
-  return Number.isFinite(value) ? value : null;
-}
-
-function processTreeWorkingSetBreakdown(pid) {
+function processTreeMetrics(pid) {
   const script = `$root=${Number(pid)}; $all=Get-CimInstance Win32_Process; $ids=@($root); do { $before=$ids.Count; $ids += @($all | Where-Object { $ids -contains [int]$_.ParentProcessId } | ForEach-Object { [int]$_.ProcessId }); $ids=@($ids | Select-Object -Unique) } while ($ids.Count -gt $before); @($all | Where-Object { $ids -contains [int]$_.ProcessId } | ForEach-Object { [pscustomobject]@{ name=$_.Name; workingSetBytes=[long]$_.WorkingSetSize } }) | ConvertTo-Json -Compress`;
   const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8' });
   try {
     const parsed = JSON.parse(result.stdout.trim() || '[]');
-    return Array.isArray(parsed) ? parsed : [parsed];
+    const processes = Array.isArray(parsed) ? parsed : [parsed];
+    return { processes, totalBytes: processes.reduce((sum, process) => sum + Number(process.workingSetBytes ?? 0), 0) };
   } catch {
-    return [];
+    return { processes: [], totalBytes: null };
+  }
+}
+
+function productionStateSnapshot() {
+  return {
+    fingerprint: fingerprintPaths([
+    process.env.APPDATA ? join(process.env.APPDATA, 'com.scienfy.sciemd') : null,
+    process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'com.scienfy.sciemd', 'EBWebView') : null,
+    ].filter(Boolean)),
+    activeExecutables: activeScieMdExecutables(),
+  };
+}
+
+function activeScieMdExecutables() {
+  const result = spawnSync('powershell.exe', [
+    '-NoProfile',
+    '-Command',
+    'Get-Process -Name sciemd -ErrorAction SilentlyContinue | ForEach-Object { $_.Path }',
+  ], { encoding: 'utf8' });
+  return result.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+}
+
+function fingerprintPaths(paths) {
+  const entries = [];
+  const visit = (path) => {
+    if (!existsSync(path)) return;
+    const stat = statSync(path);
+    if (!stat.isDirectory()) {
+      entries.push(`${path}|${stat.size}|${stat.mtimeMs}`);
+      return;
+    }
+    for (const name of readdirSync(path).sort()) visit(join(path, name));
+  };
+  for (const path of paths) visit(path);
+  return sha256(entries.join('\n'));
+}
+
+function assertProductionStateUnchanged(before) {
+  if (before.activeExecutables.length > 0) {
+    console.warn(`[desktop-ui-performance] Production app-data fingerprint check is not attributable while pre-existing ScieMD processes are active: ${before.activeExecutables.join(', ')}`);
+    return;
+  }
+  const after = productionStateSnapshot();
+  if (after.fingerprint !== before.fingerprint) {
+    throw new Error('Packaged performance validation modified the production ScieMD app-data profile.');
   }
 }
 
@@ -706,13 +867,15 @@ function assertInputCoverage(trace, before) {
   if (!trace.events.some((event) => event.name === 'input-echoed' && event.sequence > threshold)) throw new Error('Packaged CodeMirror input was not visibly echoed.');
 }
 
-function assertRoundFiveBudgets({ warmSamples, inputLatencies, heapBytes, pressureProbe }) {
+function assertRoundFiveBudgets({ warmSamples, visualWarmSamples, inputLatencies, heapBytes, pressureProbe }) {
   const warmP95 = distribution(warmSamples).p95 ?? Infinity;
+  const visualWarmP95 = distribution(visualWarmSamples).p95 ?? Infinity;
   const inputP95 = distribution(inputLatencies).p95 ?? Infinity;
   const heapLimit = performanceBudgets.webview_heap_mib * 1024 * 1024;
   const workingSetLimit = performanceBudgets.process_working_set_mib * 1024 * 1024;
   const failures = [];
   if (warmP95 > performanceBudgets.warm_reactivation_editor_attach_p95_ms) failures.push(`warm reactivation p95 ${warmP95} ms exceeds ${performanceBudgets.warm_reactivation_editor_attach_p95_ms} ms`);
+  if (visualWarmP95 > performanceBudgets.visual_warm_reactivation_next_frame_p95_ms) failures.push(`visual warm reactivation p95 ${visualWarmP95} ms exceeds ${performanceBudgets.visual_warm_reactivation_next_frame_p95_ms} ms`);
   if (inputP95 > performanceBudgets.visibly_echoed_input_p95_ms) failures.push(`accepted-to-visible input p95 ${inputP95} ms exceeds ${performanceBudgets.visibly_echoed_input_p95_ms} ms`);
   if (heapBytes === null || heapBytes > heapLimit) failures.push(`pre-pressure WebView heap ${heapBytes ?? 'unavailable'} bytes exceeds ${heapLimit} bytes`);
   if (pressureProbe.webviewHeapBytes === null || pressureProbe.webviewHeapBytes > heapLimit) failures.push(`pressure WebView heap ${pressureProbe.webviewHeapBytes ?? 'unavailable'} bytes exceeds ${heapLimit} bytes (renderedSourceCodeUnits=${pressureProbe.renderedSourceCodeUnits ?? 'unavailable'}, coldTransitions=${JSON.stringify(pressureProbe.coldTransitions)}, analysis=${JSON.stringify(pressureProbe.analysisRuntime)})`);

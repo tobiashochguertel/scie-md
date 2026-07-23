@@ -70,6 +70,18 @@
   font-size: calc(var(--document-h4-size) * var(--font-scale));
 }
 
+.visual-editor .ProseMirror h5 {
+  font-size: 0.95em;
+}
+
+.visual-editor .ProseMirror h6 {
+  font-size: 0.9em;
+}
+
+.visual-editor .ProseMirror p {
+  font-size: inherit;
+}
+
 .visual-editor .ProseMirror strong {
   color: var(--text-strong);
   font-weight: 760;
@@ -134,12 +146,14 @@
   padding: calc(var(--code-block-pad) * var(--visual-padding-scale));
   background: var(--visual-code-bg);
   color: var(--visual-code-color);
+  font-size: calc(var(--document-body-size) * var(--font-scale) * 0.9);
 }
 
 .visual-editor .ProseMirror pre code {
   padding: 0;
   background: transparent;
   color: inherit;
+  font-size: inherit;
 }
 
 .visual-editor .ProseMirror table {
@@ -172,9 +186,227 @@
   background: var(--table-alt-bg);
 }
 
+.visual-editor .ProseMirror th :where(p, li, strong, em),
+.visual-editor .ProseMirror td :where(p, li, strong, em) {
+  color: inherit;
+}
+
+.visual-editor .ProseMirror th > :first-child,
+.visual-editor .ProseMirror td > :first-child {
+  margin-top: 0;
+}
+
+.visual-editor .ProseMirror th > :last-child,
+.visual-editor .ProseMirror td > :last-child {
+  margin-bottom: 0;
+}
+
 .visual-editor .ProseMirror img {
   max-width: 100%;
   height: auto;
+}
+
+:root[data-visual-style="cursor"] .visual-editor [data-milkdown-root],
+:root[data-visual-style="cursor"] .visual-editor .milkdown {
+  background: var(--editor-bg);
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror {
+  color: var(--text);
+  font-family: "Google Sans Flex", sans-serif;
+  font-optical-sizing: auto;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror p {
+  margin: 0 0 var(--document-block-gap);
+  text-wrap: pretty;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror h1,
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror h2,
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror h3,
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror h4,
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror h5,
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror h6 {
+  color: var(--text-strong);
+  font-family: "Google Sans Flex", sans-serif;
+  font-optical-sizing: auto;
+  letter-spacing: -0.018em;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror h1 {
+  max-width: 31ch;
+  font-weight: 650;
+  line-height: 1.16;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror h2 {
+  border: 0;
+  padding: 0;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror h3 {
+  font-weight: 620;
+  line-height: 1.24;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror h4,
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror h5,
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror h6 {
+  margin:
+    calc(var(--document-h3-top) * 0.8)
+    0
+    calc(var(--document-h3-bottom) * 0.8);
+  font-size: calc(var(--document-h4-size) * var(--font-scale));
+  font-weight: 600;
+  line-height: 1.28;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror strong {
+  color: var(--text-strong);
+  font-weight: 650;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror em {
+  font-style: oblique 10deg;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror a {
+  color: var(--visual-link-color);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror a:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.16em;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror ul,
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror ol {
+  margin: 4px 0 16px;
+  padding-left: 1.35em;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror li {
+  margin: 0.14em 0;
+  padding-left: 0.18em;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror li::marker {
+  color: var(--text);
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror :is(p, li, td, th, h1, h2, h3, h4, h5, h6) code {
+  border: 0;
+  border-radius: 5px;
+  padding: 1px 5px;
+  background: var(--visual-inline-code-bg);
+  color: var(--visual-inline-code-color);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.84em;
+  font-weight: 400;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror pre {
+  margin: 20px 0;
+  border: 0;
+  border-radius: 10px;
+  padding: 16px 18px;
+  background: var(--visual-code-bg);
+  color: var(--visual-code-color);
+  font-family: "JetBrains Mono", monospace;
+  font-size: calc(14px * var(--font-scale));
+  line-height: 1.55;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror pre code {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror blockquote {
+  margin: 18px 0;
+  border-left: 2px solid var(--border-strong);
+  padding: 2px 0 2px var(--blockquote-pad-x);
+  background: transparent;
+  color: var(--text-muted);
+  font-style: normal;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror hr {
+  margin: 30px 0;
+  background: var(--visual-hr-color);
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror table {
+  width: 100%;
+  margin: 20px 0;
+  border: 1px solid var(--table-border);
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--table-bg);
+  color: var(--table-text);
+  font-family: "Google Sans Flex", sans-serif;
+  line-height: 1.45;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror th,
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror td {
+  border: 0;
+  border-bottom: 1px solid var(--table-border);
+  padding:
+    calc(var(--table-cell-pad-y) * var(--visual-table-scale))
+    calc(var(--table-cell-pad-x) * var(--visual-table-scale));
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror th + th,
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror td + td {
+  border-left: 1px solid var(--table-border);
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror tr:last-child td {
+  border-bottom: 0;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror th {
+  background: var(--table-head-bg);
+  color: var(--table-head-text);
+  font-weight: 620;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror td {
+  background: var(--table-bg);
+  color: var(--table-text);
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror tbody tr:nth-child(even) td {
+  background: var(--table-alt-bg);
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror img {
+  display: block;
+  max-width: 100%;
+  margin: 22px auto;
+  border-radius: 8px;
+}
+
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror ::selection {
+  background: color-mix(in srgb, var(--accent), transparent 72%);
+  color: var(--text-strong);
 }
 
 :root[data-visual-style="codex"] .visual-editor [data-milkdown-root],
@@ -683,13 +915,13 @@
 :root[data-visual-style="scienfy"] .visual-editor .directive-table-caption,
 :root[data-visual-style="scienfy"] .visual-editor .directive-table-caption strong,
 :root[data-visual-style="scienfy"] .visual-editor .directive-caption-prefix {
-  font-family: "Scie Sans Compact";
+  font-family: "Scie Sans Text Compact", "Scie Sans Text", sans-serif;
   font-style: normal;
   font-weight: 500;
 }
 
 :root[data-visual-style="scienfy"] .visual-editor .directive-card.is-rendered:not(.directive-figure) .directive-render-body::before {
-  font-family: "Scie Sans Compact";
+  font-family: "Scie Sans Text Compact", "Scie Sans Text", sans-serif;
   font-weight: 500;
 }
 

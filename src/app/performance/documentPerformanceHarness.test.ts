@@ -32,6 +32,7 @@ describe('Round 1 production-path performance contract', () => {
     });
     expect(budgets.sampleCount).toBeGreaterThanOrEqual(5);
     expect(budgets.budgets.native_cancel_stop_p95_ms).toBeGreaterThan(0);
+    expect(budgets.budgets.visual_warm_reactivation_next_frame_p95_ms).toBeGreaterThan(0);
   });
 
   it('drives the real document-addressed gateway across clean and dirty A-B-A without byte acquisition', () => {

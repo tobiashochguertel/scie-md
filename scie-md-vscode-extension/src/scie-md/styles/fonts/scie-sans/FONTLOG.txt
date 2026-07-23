@@ -1,6 +1,13 @@
 Scie Sans FONTLOG
 =================
 
+2026-07-23: tuned family adoption
+- Replaced the prior ScieMD-generated Scie Sans and Compact WOFF2 files with the tuned static sources from Scienfy/scie-sans-tuning.
+- Added Scie Sans Text 1.1 Regular, Italic, Medium, Bold, and Bold Italic.
+- Added optically compensated Scie Sans Text Compact 1.2 Regular and Medium.
+- Added Geist OFL attribution for the Text-family digit program.
+- Made this runtime bundle authoritative and the VS Code copy a hash-identical generated projection.
+
 2026-05-23: Scie Sans 1.320
 - Strengthened the v0.4.2 compact-width family pass after Helvetica Neue Compact comparison showed a much stronger prose-width reduction.
 - Derived normal-width Light, Regular, Medium, Bold, and matching italic fonts from Inter 4.1.

@@ -11,6 +11,7 @@
   "sampleCount": 5,
   "budgets": {
     "warm_reactivation_editor_attach_p95_ms": 250,
+    "visual_warm_reactivation_next_frame_p95_ms": 250,
     "cold_open_first_editable_p95_ms": 5000,
     "native_cancel_stop_p95_ms": 500,
     "accepted_input_p95_ms": 50,

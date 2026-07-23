@@ -13,11 +13,14 @@ proprietary system fonts.
 
 | Asset | Use | License | Bundled license text |
 | --- | --- | --- | --- |
-| Scie Sans | App UI, Scienfy Inc./Amin styles, SVG examples | SIL Open Font License 1.1 | `public/fonts/scie-sans/OFL.txt` |
+| Scie Sans | Default app UI, legacy styles, SVG examples | SIL Open Font License 1.1 | `public/fonts/scie-sans/OFL.txt` |
 | Scie Sans Compact | Compact scientific prose and dense UI text | SIL Open Font License 1.1 | `public/fonts/scie-sans/OFL.txt` |
-| Source Serif 4 | Manuscript, journal, and Nature-style prose | SIL Open Font License 1.1 | `public/fonts/vendor/source-serif-4/OFL.txt` |
+| Scie Sans Text | Scienfy UI and document typography; includes Geist-derived digit outlines | SIL Open Font License 1.1 | `public/fonts/scie-sans/OFL.txt`, `public/fonts/scie-sans/OFL-Geist.txt` |
+| Scie Sans Text Compact | Scienfy captions, directives, and dense document text; includes Geist-derived digit outlines | SIL Open Font License 1.1 | `public/fonts/scie-sans/OFL.txt`, `public/fonts/scie-sans/OFL-Geist.txt` |
+| Google Sans Flex | Cursor-style visual document typography | SIL Open Font License 1.1 | `public/fonts/vendor/google-sans-flex/OFL.txt` |
+| Source Serif 4 | Nature-style prose | SIL Open Font License 1.1 | `public/fonts/vendor/source-serif-4/OFL.txt` |
 | Lora | Science-style long-form reading surface | SIL Open Font License 1.1 | `public/fonts/vendor/lora/OFL.txt` |
-| IBM Plex Sans | Lab-note, technical, and label typography | SIL Open Font License 1.1 | `public/fonts/vendor/ibm-plex-sans/OFL.txt` |
+| IBM Plex Sans | Lab-note and label typography | SIL Open Font License 1.1 | `public/fonts/vendor/ibm-plex-sans/OFL.txt` |
 | IBM Plex Mono | Desktop source mode and VS Code Markdown-source fallback | SIL Open Font License 1.1 | `public/fonts/vendor/ibm-plex-mono/OFL.txt` |
 | Noto Sans Mono (Greek subset) | Greek glyph supplement for the IBM Plex Mono source-family face | SIL Open Font License 1.1 | `public/fonts/vendor/ibm-plex-mono/OFL-Noto-Sans-Mono.txt` |
 | JetBrains Mono | Code blocks, technical UI, structured previews, and SVG source labels | SIL Open Font License 1.1 | `public/fonts/vendor/jetbrains-mono/OFL.txt` |

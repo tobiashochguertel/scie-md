@@ -47,8 +47,8 @@ note app, but less friction than a full typesetting system.
   ScieMD Markdown without damaging figures, variables, comments, or text versions.
 - Keep multiple text versions for a sentence, abstract, title, or paragraph, then
   switch the active version with one click.
-- View the same document in familiar writing styles such as Scientific Draft,
-  Journal Manuscript, Lab Notebook, Science-inspired, Nature-inspired, and Scienfy.
+- View the same document in focused writing styles such as Cursor, Lab Notebook,
+  Codex, Science-inspired, Nature-inspired, Claude-inspired, and Scienfy.
 - Insert manuscript variables from front matter or local JSON/CSV analysis outputs
   so values can be reused consistently during writing and export.
 - Export styled HTML directly, or use Pandoc for DOCX, EPUB, LaTeX, PDF, ODT, JATS,

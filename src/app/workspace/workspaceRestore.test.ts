@@ -55,6 +55,19 @@ function reader(values: Record<string, string>) {
 }
 
 describe('workspace restart restoration', () => {
+  it('migrates retired visual styles in persisted workspace tabs to Cursor', async () => {
+    const storedDocument = document('legacy-style', 'C:\\legacy-style.md');
+    storedDocument.presentation = { visualStyle: 'journal-manuscript', documentType: 'report' };
+    const result = await restoreWorkspace({
+      manifest: manifest([storedDocument]),
+      recoveryEntries: [],
+      capability: enabled,
+      readFile: reader({ 'C:\\legacy-style.md': '# Legacy' }),
+    });
+
+    expect(result.records[0]?.presentation).toEqual({ visualStyle: 'cursor', documentType: 'report' });
+  });
+
   it('applies the cold-start precedence and never lets a manifest override an explicit launch', async () => {
     const dirty = recovery('dirty', 'C:\\dirty.md', 'recovered', 'disk');
     const stored = manifest([

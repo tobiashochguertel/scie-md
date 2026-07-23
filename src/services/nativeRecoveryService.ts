@@ -77,6 +77,7 @@ export async function writeNativeRecoverySnapshot(snapshot: {
   sourceRevision?: number | null;
   catalogSchemaVersion?: number | null;
   mediaType?: string | null;
+  protectedDocumentIds?: readonly string[];
 }): Promise<boolean> {
   if (!canUseNativeDiagnostics()) return false;
   const sourceText = snapshot.sourceText ?? snapshot.markdown ?? '';
@@ -93,12 +94,25 @@ export async function writeNativeRecoverySnapshot(snapshot: {
         filePath: snapshot.filePath,
         format: snapshot.format ?? 'markdown',
         updatedAtMs: snapshot.updatedAtMs,
+        protectedDocumentIds: snapshot.protectedDocumentIds ?? [],
       },
     });
     return true;
   } catch (error) {
     console.warn('Native recovery snapshot write failed.', error);
     return false;
+  }
+}
+
+export async function maintainNativeRecoverySnapshots(protectedDocumentIds: readonly string[]): Promise<number> {
+  if (!canUseNativeDiagnostics()) return 0;
+  try {
+    return await invoke<number>('maintain_recovery_snapshots', {
+      protectedDocumentIds: Array.from(new Set(protectedDocumentIds)),
+    });
+  } catch (error) {
+    console.warn('Native recovery catalog maintenance failed.', error);
+    return 0;
   }
 }
 
@@ -162,6 +176,16 @@ export async function markRendererCleanShutdown(sessionId: string): Promise<bool
   if (!canUseNativeDiagnostics()) return false;
   try {
     await invoke('mark_renderer_clean_shutdown', { sessionId });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function markCurrentRendererCleanShutdown(): Promise<boolean> {
+  if (!canUseNativeDiagnostics()) return false;
+  try {
+    await invoke('mark_current_renderer_clean_shutdown');
     return true;
   } catch {
     return false;

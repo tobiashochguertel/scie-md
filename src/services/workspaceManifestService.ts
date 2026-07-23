@@ -102,6 +102,7 @@ export function createWorkspaceManifestPayload(
   recoveryEntries: readonly RecoveryCatalogEntry[],
   preservedManifest: WorkspaceManifestPayload | null = null,
   savedAt = Date.now(),
+  preservedDocumentIds: ReadonlySet<string> = new Set(),
 ): WorkspaceManifestPayload {
   const recoveryByDocument = new Map(recoveryEntries.map((entry) => [entry.documentId, entry]));
   const currentDocuments = state.tabOrder.map((documentId) => {
@@ -121,7 +122,8 @@ export function createWorkspaceManifestPayload(
   });
   const currentIds = new Set<string>(currentDocuments.map((entry) => entry.documentId));
   const preservedDocuments = (preservedManifest?.documents ?? []).filter((entry) => (
-    !currentIds.has(entry.documentId)
+    preservedDocumentIds.has(entry.documentId)
+    && !currentIds.has(entry.documentId)
     && !currentDocuments.some((current) => sameDocumentLocator(current.locator as DocumentLocator, entry.locator as DocumentLocator))
   ));
   const documents = [...currentDocuments, ...preservedDocuments];

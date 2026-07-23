@@ -24,7 +24,9 @@ pub fn run() {
         .register_uri_scheme_protocol("scie-md-local-image", |_ctx, request| {
             commands::local_image_protocol::serve_local_image_request(request)
         });
-    let builder = if std::env::var_os("SCIEMD_DESKTOP_SMOKE_DISABLE_SINGLE_INSTANCE").is_some() {
+    let builder = if std::env::var_os("SCIEMD_DISABLE_SINGLE_INSTANCE").is_some()
+        || std::env::var_os("SCIEMD_DESKTOP_SMOKE_DISABLE_SINGLE_INSTANCE").is_some()
+    {
         builder
     } else {
         builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
@@ -76,6 +78,7 @@ pub fn run() {
             peek_pending_markdown_open,
             take_pending_document_open,
             take_pending_markdown_open,
+            enqueue_performance_document_open,
             clear_pending_document_open,
             clear_pending_markdown_open,
             commands::dialogs::pick_markdown_file,
@@ -92,7 +95,9 @@ pub fn run() {
             commands::diagnostics::clear_recovery_snapshot,
             commands::diagnostics::export_diagnostics_bundle,
             commands::diagnostics::mark_renderer_clean_shutdown,
+            commands::diagnostics::mark_current_renderer_clean_shutdown,
             commands::diagnostics::list_recovery_snapshots,
+            commands::diagnostics::maintain_recovery_snapshots,
             commands::diagnostics::read_recovery_snapshot,
             commands::diagnostics::record_renderer_heartbeat,
             commands::diagnostics::write_recovery_snapshot,
@@ -336,6 +341,7 @@ fn run_desktop_smoke_self_test(app: tauri::AppHandle, report_path: &Path) -> Res
             file_path: report.startup_path.clone(),
             format: Some("markdown".into()),
             updated_at_ms: timestamp_ms(),
+            protected_document_ids: Vec::new(),
         },
     )?;
     let restored = commands::diagnostics::read_recovery_snapshot(
@@ -517,6 +523,29 @@ fn take_pending_markdown_open() -> Option<String> {
 fn take_pending_document_open_value() -> Option<String> {
     let path = take_pending_document_open_path()?;
     grant_document_launch_path(&path)
+}
+
+#[tauri::command]
+fn enqueue_performance_document_open(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    use tauri::{Emitter, Manager};
+
+    if std::env::var_os("SCIEMD_DESKTOP_PERFORMANCE_SELF_TEST").is_none() {
+        return Err("Performance document ingress is disabled outside the packaged self-test.".into());
+    }
+    let path = PathBuf::from(path);
+    if !path.is_file() || !is_supported_document_path(&path) {
+        return Err("Performance document ingress requires an existing supported document.".into());
+    }
+    queue_document_open(&path);
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "The main window is unavailable.".to_string())?;
+    window
+        .emit(
+            "single-instance-open",
+            commands::path_utils::external_safe_path_string(&path),
+        )
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 #[cfg(not(windows))]
 use std::io::Read;
 use std::{
+    collections::HashSet,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -23,6 +24,7 @@ const DIAGNOSTICS_BUNDLE_PREFIX: &str = "diagnostics-bundle";
 const MAX_DIAGNOSTICS_LOG_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_RECOVERY_SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_RECOVERY_SNAPSHOT_COUNT: usize = 8;
+const MAX_RECOVERY_SNAPSHOT_TOTAL_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_BUNDLE_LOG_TAIL_BYTES: usize = 512 * 1024;
 const PREVIOUS_SESSION_CRASH_WINDOW_MS: u128 = 15_000;
 
@@ -106,6 +108,8 @@ pub struct RecoverySnapshotPayload {
     #[serde(default)]
     pub format: Option<String>,
     pub updated_at_ms: u128,
+    #[serde(default)]
+    pub protected_document_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -257,6 +261,17 @@ pub fn mark_renderer_clean_shutdown(app: AppHandle, session_id: String) -> Resul
 }
 
 #[tauri::command]
+pub fn mark_current_renderer_clean_shutdown(app: AppHandle) -> Result<(), String> {
+    let heartbeat_path = diagnostics_dir(&app)?.join(HEARTBEAT_FILE);
+    let Some(mut heartbeat) = read_heartbeat(&heartbeat_path)? else {
+        return Ok(());
+    };
+    heartbeat.clean_shutdown = true;
+    heartbeat.seen_at_ms = timestamp_ms();
+    write_json_atomically(&heartbeat_path, &heartbeat)
+}
+
+#[tauri::command]
 pub fn append_diagnostics_event(
     app: AppHandle,
     payload: DiagnosticsEventPayload,
@@ -356,12 +371,31 @@ pub fn write_recovery_snapshot(
         )?;
     }
     write_json_atomically(&latest_path, &snapshot)?;
-    prune_recovery_snapshots(&dir, &path)?;
+    let protected_document_ids = payload
+        .protected_document_ids
+        .into_iter()
+        .collect::<HashSet<_>>();
+    prune_recovery_snapshots(&dir, &path, &protected_document_ids)?;
     Ok(RecoverySnapshotMetadata {
         updated_at_ms: snapshot.updated_at_ms,
         markdown_bytes,
         path: path.to_string_lossy().to_string(),
     })
+}
+
+#[tauri::command]
+pub fn maintain_recovery_snapshots(
+    app: AppHandle,
+    protected_document_ids: Vec<String>,
+) -> Result<usize, String> {
+    let dir = diagnostics_dir(&app)?;
+    fs::create_dir_all(dir.join(RECOVERY_SNAPSHOT_DIR))
+        .map_err(|error| format!("Could not create recovery snapshot dir: {error}"))?;
+    prune_recovery_snapshots(
+        &dir,
+        &PathBuf::new(),
+        &protected_document_ids.into_iter().collect(),
+    )
 }
 
 #[tauri::command]
@@ -741,10 +775,21 @@ fn recovery_snapshot_matches(snapshot: &RecoverySnapshot, file_path: Option<&str
     }
 }
 
-fn prune_recovery_snapshots(diagnostics_dir: &Path, keep_path: &Path) -> Result<(), String> {
+fn prune_recovery_snapshots(
+    diagnostics_dir: &Path,
+    keep_path: &Path,
+    protected_document_ids: &HashSet<String>,
+) -> Result<usize, String> {
     let dir = diagnostics_dir.join(RECOVERY_SNAPSHOT_DIR);
     let Ok(entries) = fs::read_dir(&dir) else {
-        return Ok(());
+        return Ok(0);
+    };
+    let mut removed = cleanup_abandoned_recovery_temp_files(&dir);
+    let mut retained_count = usize::from(keep_path.exists());
+    let mut retained_bytes = if keep_path.exists() {
+        fs::metadata(keep_path).map(|metadata| metadata.len()).unwrap_or(0)
+    } else {
+        0
     };
     let mut snapshots = entries
         .filter_map(|entry| entry.ok())
@@ -758,18 +803,46 @@ fn prune_recovery_snapshots(diagnostics_dir: &Path, keep_path: &Path) -> Result<
             read_recovery_snapshot_file(&path)
                 .ok()
                 .flatten()
-                .filter(|snapshot| snapshot.document_id.is_none())
-                .map(|snapshot| (path, snapshot.updated_at_ms))
+                .map(|snapshot| {
+                    let is_protected = snapshot.document_id.as_ref()
+                        .is_some_and(|document_id| protected_document_ids.contains(document_id));
+                    let bytes = fs::metadata(&path).map(|metadata| metadata.len()).unwrap_or(0);
+                    (path, snapshot.updated_at_ms, is_protected, bytes)
+                })
         })
         .collect::<Vec<_>>();
     snapshots.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
-    for (path, _) in snapshots
-        .into_iter()
-        .skip(MAX_RECOVERY_SNAPSHOT_COUNT.saturating_sub(1))
-    {
-        let _ = fs::remove_file(path);
+    for (path, _, is_protected, bytes) in snapshots {
+        let within_count = retained_count < MAX_RECOVERY_SNAPSHOT_COUNT;
+        let within_bytes = retained_bytes.saturating_add(bytes) <= MAX_RECOVERY_SNAPSHOT_TOTAL_BYTES;
+        if is_protected || (within_count && within_bytes) {
+            retained_count += 1;
+            retained_bytes = retained_bytes.saturating_add(bytes);
+            continue;
+        }
+        if fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+        if fs::remove_file(previous_recovery_snapshot_path(&path)).is_ok() {
+            removed += 1;
+        }
     }
-    Ok(())
+    Ok(removed)
+}
+
+fn cleanup_abandoned_recovery_temp_files(directory: &Path) -> usize {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return 0;
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with('.') && name.ends_with(".tmp")
+        })
+        .filter(|entry| fs::remove_file(entry.path()).is_ok())
+        .count()
 }
 
 fn diagnostics_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -987,7 +1060,7 @@ fn atomic_replace(temp_path: &Path, target_path: &Path) -> Result<(), String> {
         .encode_wide()
         .chain(Some(0))
         .collect();
-    let result = if target_path.exists() {
+    let mut result = if target_path.exists() {
         unsafe {
             ReplaceFileW(
                 target.as_ptr(),
@@ -1007,6 +1080,19 @@ fn atomic_replace(temp_path: &Path, target_path: &Path) -> Result<(), String> {
             )
         }
     };
+    if result == 0 && target_path.exists() {
+        // Some Windows filesystem providers reject ReplaceFileW with
+        // ERROR_UNABLE_TO_REMOVE_REPLACED (1175) even after all handles are
+        // closed. MoveFileExW still provides same-volume atomic replacement
+        // and write-through durability for this case.
+        result = unsafe {
+            MoveFileExW(
+                temp.as_ptr(),
+                target.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+    }
     if result == 0 {
         Err(format!(
             "Could not replace diagnostics file atomically: {}",
@@ -1070,6 +1156,7 @@ mod tests {
     };
     use serde::Deserialize;
     use std::{
+        collections::HashSet,
         fs,
         path::{Path, PathBuf},
     };
@@ -1105,7 +1192,7 @@ mod tests {
     fn diagnostics_atomic_json_round_trips() {
         let dir = test_dir("atomic-json");
         let path = dir.join("heartbeat.json");
-        let payload = StoredHeartbeat {
+        let mut payload = StoredHeartbeat {
             session_id: "session-a".into(),
             seen_at_ms: 1234,
             clean_shutdown: false,
@@ -1113,10 +1200,15 @@ mod tests {
         };
 
         write_json_atomically(&path, &payload).unwrap();
+        payload.clean_shutdown = true;
+        payload.seen_at_ms = 5678;
+        write_json_atomically(&path, &payload).unwrap();
         let restored = read_heartbeat(&path).unwrap().unwrap();
 
         assert_eq!(restored.session_id, "session-a");
         assert_eq!(restored.payload.markdown_bytes, 42);
+        assert!(restored.clean_shutdown);
+        assert_eq!(restored.seen_at_ms, 5678);
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -1406,7 +1498,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_quota_pruning_never_removes_a_catalog_document() {
+    fn quota_pruning_bounds_catalog_and_legacy_snapshots_without_removing_protected_documents() {
         let dir = test_dir("catalog-pruning-fence");
         let recovery_dir = dir.join(super::RECOVERY_SNAPSHOT_DIR);
         fs::create_dir_all(&recovery_dir).unwrap();
@@ -1431,9 +1523,18 @@ mod tests {
             }
         }
 
-        prune_recovery_snapshots(&dir, &keep_path).unwrap();
+        let protected = HashSet::from(["current-dirty-document".to_string()]);
+        let abandoned_temp = recovery_dir.join(".document-orphan.json.123.tmp");
+        fs::write(&abandoned_temp, "interrupted").unwrap();
+        prune_recovery_snapshots(&dir, &keep_path, &protected).unwrap();
 
         assert!(catalog_path.exists());
+        assert!(!abandoned_temp.exists());
+        assert!(fs::read_dir(&recovery_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().and_then(|value| value.to_str()) == Some("json"))
+            .count() <= MAX_RECOVERY_SNAPSHOT_COUNT);
         assert_eq!(
             list_recovery_snapshots_in_dir(&dir).unwrap()[0]
                 .document_id

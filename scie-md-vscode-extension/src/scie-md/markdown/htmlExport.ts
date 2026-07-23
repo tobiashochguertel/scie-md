@@ -64,7 +64,7 @@ const fullRenderOptions: Required<RenderMarkdownOptions> = {
 
 const documentCss = `
   :root { color-scheme: light; }
-  body { margin: 0; background: #f6f8f7; color: #1f2933; font: 16px/1.65 "Scie Sans", sans-serif; }
+  body { margin: 0; background: #f6f8f7; color: #1f2933; font-family: var(--doc-font, "Scie Sans", sans-serif); font-size: 16px; line-height: 1.65; }
   main { max-width: 920px; margin: 0 auto; padding: 48px 36px 72px; background: #fff; min-height: 100vh; }
   h1, h2, h3, h4, h5, h6 { color: #12251f; line-height: 1.25; margin: 1.6em 0 0.55em; }
   h1 { font-size: 2rem; }
@@ -89,7 +89,7 @@ const documentCss = `
   .directive-tip { border-left-width: 2px; border-left-color: #23834f; font-style: italic; }
   .directive-important { border-top: 2px solid #9b2c6a; border-bottom: 1px solid #ead0df; border-left: 0; padding: 0.48rem 0; color: #7b2357; font-weight: 650; }
   .directive-warning { border-top: 2px solid #bd5a20; border-bottom: 1px solid #efd2bc; border-left: 0; padding: 0.48rem 0; color: #9a4216; }
-  .directive-card header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 0.28rem; font-family: "Scie Sans", sans-serif; }
+  .directive-card header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 0.28rem; font-family: var(--ui-font, "Scie Sans", sans-serif); }
   .directive-card strong { color: #12251f; font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; }
   .directive-card span { color: #66756f; font-size: 0.78rem; }
   .directive-card-body-rendered p { margin: 0.15rem 0; }
@@ -401,7 +401,9 @@ function filterFontFaces(css: string, usedFamilies: Set<string>): string {
   return fontFaces
     .filter((block) => {
       const family = block.match(/font-family\s*:\s*["']?([^;"'}]+)["']?/i)?.[1]?.trim();
-      return family ? usedFamilies.has(family) || Array.from(usedFamilies).some((used) => family.startsWith(used)) : false;
+      return family
+        ? usedFamilies.has(family) || (usedFamilies.has('KaTeX') && family.startsWith('KaTeX'))
+        : false;
     })
     .join('\n');
 }
@@ -410,15 +412,19 @@ function resolveUsedFontFamilies(bodyHtml: string, styleOptions: HtmlDocumentSty
   const families = new Set<string>(['Scie Sans', 'Scie Sans Compact', 'JetBrains Mono']);
   if (/\bkatex\b/i.test(bodyHtml)) families.add('KaTeX');
   switch (styleOptions.visualStyle) {
-    case 'journal-manuscript':
+    case 'cursor':
+      families.add('Google Sans Flex');
+      break;
+    case 'scienfy':
+      families.add('Scie Sans Text');
+      families.add('Scie Sans Text Compact');
+      break;
     case 'nature':
     case 'science':
-    case 'scientific-draft':
       families.add('Source Serif 4');
       break;
     case 'lab-notebook':
     case 'codex':
-    case 'technical-code':
       families.add('IBM Plex Sans');
       break;
     default:

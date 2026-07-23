@@ -18,6 +18,7 @@ const native = vi.hoisted(() => ({ snapshots: [] as Array<Record<string, unknown
 vi.mock('./nativeRecoveryService', () => ({
   writeNativeRecoverySnapshot: vi.fn().mockResolvedValue(true),
   clearNativeRecoverySnapshot: vi.fn().mockResolvedValue(true),
+  maintainNativeRecoverySnapshots: vi.fn().mockResolvedValue(0),
   listNativeRecoverySnapshots: vi.fn(async () => native.snapshots),
 }));
 

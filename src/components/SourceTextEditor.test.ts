@@ -6,11 +6,12 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { highlightingFor, syntaxTree } from '@codemirror/language';
 import { EditorState } from '@codemirror/state';
+import { EditorView } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
 import { formatByteLengthUtf8, sourceEditorCapabilitiesFor, sourceSemanticPresentationMode } from '@sciemd/core';
-import { LONG_LINE_VIEWPORT_CODE_UNITS, SourceTextEditor, createLanguageExtension, formatDiagnosticsForCodeMirror, longLineViewportRanges, remeasureSourceEditorAfterFontsReady, sourceEditorProjection, type SourceTextContextMenuRequest, type SourceTextEditorProps, type SourceTextFind, type SourceTextSelection } from './SourceTextEditor';
+import { LONG_LINE_VIEWPORT_CODE_UNITS, SourceTextEditor, createLanguageExtension, formatDiagnosticsForCodeMirror, longLineViewportRanges, remeasureSourceEditorAfterFontsReady, shouldTypewriterScroll, sourceEditorProjection, type SourceTextContextMenuRequest, type SourceTextEditorProps, type SourceTextFind, type SourceTextSelection } from './SourceTextEditor';
 import { createDocumentId, sourceRevision } from '../app/documentIdentity';
-import { applySourceChangeSet, createRevisionedSourceBuffer } from '../app/source/revisionedSourceBuffer';
+import { applySourceChangeSet, createRevisionedSourceBuffer, materializeCurrentSource } from '../app/source/revisionedSourceBuffer';
 import { documentPerformance } from '../app/performance/documentPerformance';
 import { DocumentKeyedEditorGateway } from '../app/documentEditorGateway';
 import type { EditorAdapter } from './editorAdapter';
@@ -18,6 +19,12 @@ import type { EditorAdapter } from './editorAdapter';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('semantic source presentation contract', () => {
+  it('never typewriter-scrolls ordinary document edits', () => {
+    expect(shouldTypewriterScroll({ selectionSet: true, docChanged: true })).toBe(false);
+    expect(shouldTypewriterScroll({ selectionSet: true, docChanged: false })).toBe(true);
+    expect(shouldTypewriterScroll({ selectionSet: false, docChanged: false })).toBe(false);
+  });
+
   it('remeasures CodeMirror after every required IBM Plex Mono face is ready', async () => {
     const requestMeasure = vi.fn();
     const dom = document.createElement('div');
@@ -30,9 +37,9 @@ describe('semantic source presentation contract', () => {
 
     expect(load).toHaveBeenCalledTimes(3);
     expect(load.mock.calls.map(([descriptor]) => descriptor)).toEqual([
-      '400 14px "IBM Plex Mono"',
-      'italic 400 14px "IBM Plex Mono"',
-      '700 14px "IBM Plex Mono"',
+      '300 14px "IBM Plex Mono"',
+      'italic 300 14px "IBM Plex Mono"',
+      '500 14px "IBM Plex Mono"',
     ]);
     expect(requestMeasure).toHaveBeenCalledTimes(1);
     expect(dom.dataset.sourceFontRemeasured).toBe('loaded');
@@ -56,6 +63,27 @@ describe('semantic source presentation contract', () => {
     }
     expect(source).toContain('**Strong**');
     expect(source).toContain('[@smith2026]');
+  });
+
+  it('colors Markdown syntax delimiters independently from their semantic content', () => {
+    const doc = '# Heading\n*em* **strong** [link](url)\n- item\n> quote\n`code`';
+    const state = EditorState.create({
+      doc,
+      extensions: createLanguageExtension(sourceEditorCapabilitiesFor('markdown'), 'enabled'),
+    });
+    const host = document.createElement('div');
+    const view = new EditorView({ state, parent: host });
+
+    const markerText = [...host.querySelectorAll('.cm-source-syntax-marker')]
+      .map((element) => element.textContent);
+    expect(markerText).toEqual(expect.arrayContaining([
+      '#', '*', '**', '[', ']', '(', ')', '-', '>', '`',
+    ]));
+    expect(markerText).not.toContain('em');
+    expect(markerText).not.toContain('strong');
+    expect(markerText).not.toContain('Heading');
+
+    view.destroy();
   });
 
   it('uses conservative plain fallback for unsupported grammars and over-threshold files', () => {
@@ -164,6 +192,15 @@ describe('SourceTextEditor context menu requests', () => {
     act(() => root.unmount());
     container.remove();
     document.body.innerHTML = '';
+  });
+
+  it('uses CodeMirror selection state as the single visible caret authority', () => {
+    renderSourceTextEditor({ value: 'alpha', language: 'markdown' });
+
+    expect(container.querySelector('.cm-cursorLayer')).not.toBeNull();
+    const sourceStyles = readFileSync(join(process.cwd(), 'src/styles/app.source-editor.css'), 'utf8');
+    expect(sourceStyles).toContain('caret-color: transparent');
+    expect(sourceStyles).toContain('.source-editor .cm-cursor');
   });
 
   it('emits a selected source payload and prevents the native menu only when handled', () => {
@@ -351,6 +388,87 @@ describe('SourceTextEditor context menu requests', () => {
       expect.objectContaining({ name: 'source-change', changeBytes: 1, fullDocumentTransactions: 0, phase: 'codemirror-transaction' }),
     ]));
     expect(report.events.filter((event) => event.name === 'whole-source-materialization')).toEqual([]);
+  });
+
+  it('does not roll the live editor revision backward when a delayed React prop replays', () => {
+    let insertText: ((text: string) => void) | undefined;
+    const documentId = createDocumentId();
+    let buffer = createRevisionedSourceBuffer('alpha');
+    const onChangeSet = vi.fn((changeSet) => {
+      const result = applySourceChangeSet(documentId, buffer, changeSet);
+      if (result.status === 'accepted') buffer = result.buffer;
+      return result;
+    });
+    const renderRevision = (value: string, revision: number) => {
+      renderSourceTextEditor({
+        performanceDocumentId: documentId,
+        value,
+        revision: sourceRevision(revision),
+        language: 'markdown',
+        onChangeSet,
+        reconcileSource: () => ({
+          sourceText: materializeCurrentSource(buffer),
+          revision: buffer.current.revision,
+        }),
+        onInsertReady: (handler) => { insertText = handler; },
+      });
+    };
+
+    renderRevision('alpha', 0);
+    act(() => { insertText?.('x'); });
+    expect(materializeCurrentSource(buffer)).toBe('xalpha');
+
+    renderRevision('alpha', 0);
+    act(() => { insertText?.('y'); });
+
+    expect(onChangeSet.mock.calls.map(([changeSet]) => changeSet.expectedRevision)).toEqual([
+      sourceRevision(0),
+      sourceRevision(1),
+    ]);
+    expect(materializeCurrentSource(buffer)).toBe('xyalpha');
+    expect(container.querySelector('.cm-content')?.textContent).toBe('xyalpha');
+  });
+
+  it('treats a stale compatibility value carrying the accepted revision as an acknowledgement', () => {
+    let insertText: ((text: string) => void) | undefined;
+    const documentId = createDocumentId();
+    let buffer = createRevisionedSourceBuffer('alpha');
+    const onChangeSet = vi.fn((changeSet) => {
+      const result = applySourceChangeSet(documentId, buffer, changeSet);
+      if (result.status === 'accepted') buffer = result.buffer;
+      return result;
+    });
+    const renderRevision = (value: string, revision: number) => {
+      renderSourceTextEditor({
+        performanceDocumentId: documentId,
+        value,
+        revision: sourceRevision(revision),
+        language: 'markdown',
+        onChangeSet,
+        reconcileSource: () => ({
+          sourceText: materializeCurrentSource(buffer),
+          revision: buffer.current.revision,
+        }),
+        onInsertReady: (handler) => { insertText = handler; },
+      });
+    };
+
+    renderRevision('alpha', 0);
+    act(() => { insertText?.('x'); });
+    expect(materializeCurrentSource(buffer)).toBe('xalpha');
+
+    // The workspace store publishes the accepted revision on the next frame,
+    // while the legacy string projection can still contain the previous text.
+    renderRevision('alpha', 1);
+    expect(container.querySelector('.cm-content')?.textContent).toBe('xalpha');
+
+    act(() => { insertText?.('y'); });
+    expect(onChangeSet.mock.calls.map(([changeSet]) => changeSet.expectedRevision)).toEqual([
+      sourceRevision(0),
+      sourceRevision(1),
+    ]);
+    expect(materializeCurrentSource(buffer)).toBe('xyalpha');
+    expect(container.querySelector('.cm-content')?.textContent).toBe('xyalpha');
   });
 
   it('reattaches an exact parked CodeMirror state for A -> B -> A without a content transaction', () => {

@@ -48,6 +48,25 @@ describe('DocumentRuntimeRegistry', () => {
     expect(registry.metrics()).toMatchObject({ refusals: 2, degraded: [documentId] });
   });
 
+  it('evicts inactive cached runtimes before refusing an active source edit', () => {
+    const registry = registryWithBudget();
+    const active = createDocumentId();
+    const inactive = createDocumentId();
+    expect(registry.suspend(entry(inactive, 1, 'plain', {}, 11 * MiB))).toMatchObject({ status: 'admitted' });
+
+    const admission = registry.canGrowActiveSource(active, 10 * MiB);
+
+    expect(admission).toMatchObject({
+      status: 'admitted',
+      evicted: [{ documentId: inactive, surface: 'source', reason: 'memory-pressure' }],
+    });
+    expect(registry.metrics()).toMatchObject({
+      entryCount: 0,
+      refusals: 0,
+      degraded: [],
+    });
+  });
+
   it('never drops source unless every cold-clean release barrier succeeds', async () => {
     const registry = registryWithBudget();
     const documentId = createDocumentId();
@@ -80,6 +99,24 @@ describe('DocumentRuntimeRegistry', () => {
     registry.markDegraded(documentId);
     expect(registry.releaseDocument(documentId)).toHaveLength(2);
     expect(registry.metrics()).toMatchObject({ entryCount: 0, degraded: [] });
+  });
+
+  it('reports exact visual state as warm but never mislabels a bounded rebuild', () => {
+    const registry = registryWithBudget();
+    const exactDocument = createDocumentId();
+    const rebuildDocument = createDocumentId();
+    registry.suspend({
+      ...entry(exactDocument, 1, 'visual-host', {}),
+      key: { ...key(exactDocument, 1, 'visual-host'), surface: 'visual' },
+    });
+    registry.suspend({
+      ...entry(rebuildDocument, 1, 'visual-host', {}),
+      key: { ...key(rebuildDocument, 1, 'visual-host'), surface: 'visual' },
+      kind: 'bounded-rebuild',
+    });
+
+    expect(registry.has(exactDocument, 'visual', sourceRevision(1))).toBe(true);
+    expect(registry.has(rebuildDocument, 'visual', sourceRevision(1))).toBe(false);
   });
 });
 

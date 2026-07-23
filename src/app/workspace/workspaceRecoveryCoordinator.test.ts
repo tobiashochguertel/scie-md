@@ -38,6 +38,9 @@ describe('WorkspaceRecoveryCoordinator', () => {
       expect.objectContaining({ documentId: second.id, format: 'json', sourceText: '{"second":true}' }),
       expect.objectContaining({ documentId: third.id, format: 'plainText', sourceText: '' }),
     ]));
+    for (const checkpoint of backend.checkpoints) {
+      expect(checkpoint.protectedDocumentIds).toEqual(expect.arrayContaining([first.id, second.id, third.id]));
+    }
     for (const documentId of [first.id, second.id, third.id]) {
       expect(store.getState().documentsById[documentId].lifecycle.recovery).toBe('current');
     }

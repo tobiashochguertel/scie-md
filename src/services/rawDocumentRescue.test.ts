@@ -15,6 +15,7 @@ import {
 vi.mock('./nativeRecoveryService', () => ({
   readNativeRecoverySnapshot: vi.fn(async () => null),
   listNativeRecoverySnapshots: vi.fn(async () => []),
+  maintainNativeRecoverySnapshots: vi.fn(async () => 0),
   clearNativeRecoverySnapshot: vi.fn(async () => true),
   writeNativeRecoverySnapshot: vi.fn(async () => true),
 }));

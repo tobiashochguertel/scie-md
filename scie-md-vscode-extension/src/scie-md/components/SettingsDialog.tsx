@@ -1,4 +1,13 @@
-import type { DocumentType, PersistedSettings, ThemeMode } from '../services/settingsService';
+import {
+  FONT_SCALE_DEFAULT,
+  FONT_SCALE_MAX,
+  FONT_SCALE_MIN,
+  FONT_SCALE_STEP,
+  stepFontScale,
+  type DocumentType,
+  type PersistedSettings,
+  type ThemeMode,
+} from '../services/settingsService';
 import { VISUAL_STYLE_OPTIONS } from '../services/visualStyleService';
 import type { VisualStyleId } from '../services/visualStyleService';
 import { ModalShell } from './ModalShell';
@@ -67,10 +76,18 @@ export function SettingsDialog({
           <p className="settings-hint">{selectedStyle.detail}</p>
           <div className="settings-stepper" aria-label="Font size">
             <span>Font size</span>
-            <button type="button" onClick={() => onUpdate({ fontScale: stepFontScale(settings.fontScale, -0.05) })}>-</button>
+            <button
+              type="button"
+              disabled={settings.fontScale <= FONT_SCALE_MIN}
+              onClick={() => onUpdate({ fontScale: stepFontScale(settings.fontScale, -FONT_SCALE_STEP) })}
+            >-</button>
             <output>{Math.round(settings.fontScale * 100)}%</output>
-            <button type="button" onClick={() => onUpdate({ fontScale: stepFontScale(settings.fontScale, 0.05) })}>+</button>
-            <button type="button" onClick={() => onUpdate({ fontScale: 1 })}>Reset</button>
+            <button
+              type="button"
+              disabled={settings.fontScale >= FONT_SCALE_MAX}
+              onClick={() => onUpdate({ fontScale: stepFontScale(settings.fontScale, FONT_SCALE_STEP) })}
+            >+</button>
+            <button type="button" onClick={() => onUpdate({ fontScale: FONT_SCALE_DEFAULT })}>Reset</button>
           </div>
         </section>
 
@@ -118,8 +135,4 @@ export function SettingsDialog({
       </DialogActions>
     </ModalShell>
   );
-}
-
-function stepFontScale(current: number, delta: number): number {
-  return Math.min(1.35, Math.max(0.85, Math.round((current + delta) * 20) / 20));
 }

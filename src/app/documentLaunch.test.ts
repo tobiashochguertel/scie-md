@@ -182,5 +182,13 @@ describe('document launch helpers', () => {
       filePath: 'C:\\Users\\amin_\\paper.md',
       markdown: '# Paper',
     })).toBe(false);
+    expect(shouldCommitWelcomeAfterStartup({
+      onboardingComplete: true,
+      startupDocumentOpenPending: false,
+      startupDocumentOpenFailed: false,
+      filePath: null,
+      markdown: '',
+      alreadyCommitted: true,
+    })).toBe(false);
   });
 });

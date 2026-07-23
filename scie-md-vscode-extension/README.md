@@ -102,10 +102,8 @@ quickly evaluate how the writing feels in different contexts.
 
 Included style modes:
 
-- Scientific Draft
-- Journal Manuscript
+- Cursor
 - Lab Notebook
-- Technical Code
 - Codex
 - Scienfy
 - Science-inspired

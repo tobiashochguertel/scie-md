@@ -26,6 +26,7 @@ export function createWorkspaceManifestCoordinator(
 ): WorkspaceManifestCoordinator {
   let enabled = false;
   let preserved: WorkspaceManifestPayload | null = null;
+  let preservedDocumentIds = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | null = null;
   let pending: Promise<number | null> | null = null;
   let publicationCount = 0;
@@ -53,9 +54,16 @@ export function createWorkspaceManifestCoordinator(
     const operation = (async () => {
       try {
         if (!recoveryAlreadySettled) await recovery.flushAll('destructive-barrier');
-        const recoveryEntries = await loadRecoveryCatalog();
-        const manifest = createWorkspaceManifestPayload(state, recoveryEntries, preserved, now());
+        // Browser persistence is the primary writer. Native snapshots are a
+        // startup fallback and must not make every manifest publication scan
+        // the native recovery directory.
+        const recoveryEntries = await loadRecoveryCatalog({ includeNative: false });
+        const manifest = createWorkspaceManifestPayload(state, recoveryEntries, preserved, now(), preservedDocumentIds);
         const generation = await saveWorkspaceManifest(manifest, { requireDurableStorage });
+        const currentIds = new Set<string>(state.tabOrder);
+        preservedDocumentIds = new Set(manifest.documents
+          .filter((entry) => preservedDocumentIds.has(entry.documentId) && !currentIds.has(entry.documentId))
+          .map((entry) => entry.documentId));
         preserved = manifest;
         publicationCount += 1;
         return generation;
@@ -78,6 +86,10 @@ export function createWorkspaceManifestCoordinator(
   return {
     activate: (manifest = null) => {
       preserved = manifest;
+      const currentIds = new Set<string>(getState().tabOrder);
+      preservedDocumentIds = new Set((manifest?.documents ?? [])
+        .filter((entry) => !currentIds.has(entry.documentId))
+        .map((entry) => entry.documentId));
       enabled = true;
       schedule();
     },

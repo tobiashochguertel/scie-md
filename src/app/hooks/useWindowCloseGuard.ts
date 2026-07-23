@@ -3,6 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isTauriRuntime } from '../runtime';
 import type { WorkspaceCloseAction, WorkspaceCloseDecisionModel, WorkspaceCloseResult, WorkspaceCloseScope } from '../workspace/workspaceCloseCoordinator';
 import type { WorkspaceStore } from '../workspace/workspaceStore';
+import { markCurrentRendererCleanShutdown } from '../../services/nativeRecoveryService';
 
 interface UseWindowCloseGuardOptions {
   workspaceStore: WorkspaceStore;
@@ -19,7 +20,10 @@ export function useWindowCloseGuard({ workspaceStore, onCloseRequested }: UseWin
   const destroyWindow = useCallback(async () => {
     allowCloseRef.current = true;
     try {
-      if (isTauriRuntime()) await getCurrentWindow().close();
+      if (isTauriRuntime()) {
+        await markCurrentRendererCleanShutdown();
+        await getCurrentWindow().close();
+      }
       else window.close();
     } finally {
       window.setTimeout(() => { allowCloseRef.current = false; }, 1000);
