@@ -195,7 +195,7 @@ export function createAppCommands(context: AppCommandContext): CommandItem[] {
     ...(capabilities.canUseVariablesPanel ? [
       { id: 'sidebar-data', label: 'Sidebar: data sources', detail: 'Show linked JSON/CSV variables', run: context.onSidebarData },
     ] : []),
-    { id: 'theme', label: `Theme: ${context.themeMode}`, detail: 'Cycle system/dark/sepia/light', run: context.onCycleTheme },
+    { id: 'theme', label: `Theme: ${context.themeMode}`, detail: 'Cycle system/light/dark/sepia', run: context.onCycleTheme },
     ...(capabilities.canUseVisualMarkdown ? [
       { id: 'visual-style-cycle', label: `Visual style: ${context.currentVisualStyleLabel}`, detail: 'Cycle predefined document styles', run: context.onCycleVisualStyle },
       ...VISUAL_STYLE_OPTIONS.map((style) => ({

@@ -2,15 +2,81 @@ import { describe, expect, it, vi } from 'vitest';
 import { CompletionContext } from '@codemirror/autocomplete';
 import { highlightingFor, syntaxTree } from '@codemirror/language';
 import { EditorState } from '@codemirror/state';
+import { EditorView } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
-import { buildInsertTransaction, createMarkdownPresentationExtension, createScientificCompletionSource, createSourceCitationDecorationRanges, createSourceInsertion, createSourceVariableDecorationRanges, remeasureSourceEditorAfterFontsReady } from './SourceMarkdownEditor';
+import {
+  buildInsertTransaction,
+  createMarkdownPresentationExtension,
+  createScientificCompletionSource,
+  createSourceCitationDecorationRanges,
+  createSourceInsertion,
+  createSourceLineInteractionExtension,
+  createSourceVariableDecorationRanges,
+  minimalSourceSynchronizationChange,
+  remeasureSourceEditorAfterFontsReady,
+} from './SourceMarkdownEditor';
 import { createVariantGroupSnippet } from '@sciemd/core';
 
 function applyChange(doc: string, change: { from: number; to: number; insert: string }): string {
   return `${doc.slice(0, change.from)}${change.insert}${doc.slice(change.to)}`;
 }
 
+describe('authoritative source synchronization', () => {
+  it('uses the smallest replacement span so CodeMirror can map the live cursor', () => {
+    const current = '# Heading\n\nThe original paragraph remains.\n';
+    const incoming = '# Heading\n\nThe revised paragraph remains.\n';
+    const change = minimalSourceSynchronizationChange(current, incoming);
+
+    expect(change).toEqual({
+      from: 15,
+      to: 23,
+      insert: 'revised',
+    });
+    expect(change ? applyChange(current, change) : current).toBe(incoming);
+  });
+
+  it('handles insertions, deletions, and no-op echoes without whole-document replacement', () => {
+    expect(minimalSourceSynchronizationChange('alpha gamma', 'alpha beta gamma')).toEqual({
+      from: 6,
+      to: 6,
+      insert: 'beta ',
+    });
+    expect(minimalSourceSynchronizationChange('alpha beta gamma', 'alpha gamma')).toEqual({
+      from: 6,
+      to: 11,
+      insert: '',
+    });
+    expect(minimalSourceSynchronizationChange('same', 'same')).toBeNull();
+  });
+});
+
 describe('semantic source presentation contract', () => {
+  it('renders line numbers and distinguishes the cursor line from a hovered line', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const view = new EditorView({
+      parent: host,
+      state: EditorState.create({
+        doc: 'first line\nsecond line\n',
+        extensions: [createSourceLineInteractionExtension()],
+      }),
+    });
+
+    try {
+      expect(view.dom.querySelector('.cm-lineNumbers')).not.toBeNull();
+      view.dispatch({ selection: { anchor: 'first line\n'.length } });
+      expect(view.dom.querySelector('.cm-activeLine')?.textContent).toBe('second line');
+
+      const firstLine = view.dom.querySelectorAll<HTMLElement>('.cm-line')[0];
+      firstLine.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      expect(firstLine.classList.contains('cm-hoverLine')).toBe(true);
+      expect(view.dom.querySelector('.cm-activeLine')?.textContent).toBe('second line');
+    } finally {
+      view.destroy();
+      host.remove();
+    }
+  });
+
   it('remeasures the Markdown source editor after its configured font stack is ready', async () => {
     const requestMeasure = vi.fn();
     const dom = document.createElement('div');

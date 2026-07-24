@@ -146,20 +146,20 @@ button:disabled {
   display: flex;
 }
 
-.app-shell.focus-mode .visual-editor .focus-dimmed-block {
+.app-shell.focus-mode .visual-editor .ProseMirror > * {
   opacity: 0.72;
   filter: none;
   transition: opacity 160ms ease;
 }
 
-.app-shell.focus-mode .visual-editor .focus-active-block {
+.app-shell.focus-mode .visual-editor .ProseMirror > .focus-active-block {
   opacity: 1;
   filter: none;
   transition: opacity 160ms ease;
 }
 
-.app-shell.focus-mode .visual-editor .focus-dimmed-block:focus-within,
-.app-shell.focus-mode .visual-editor .focus-dimmed-block:hover {
+.app-shell.focus-mode .visual-editor .ProseMirror > *:focus-within,
+.app-shell.focus-mode .visual-editor .ProseMirror > *:hover {
   opacity: 0.88;
 }
 

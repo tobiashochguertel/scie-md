@@ -1,10 +1,69 @@
 import type { Node as ProseNode } from '@milkdown/prose/model';
 import { parseFrontmatter } from '@sciemd/core';
 
+interface VisualTextblockRange {
+  start: number;
+  end: number;
+  line: number;
+}
+
+interface VisualSourcePositionIndex {
+  lineAt(position: number): number | null;
+}
+
+const sourcePositionIndexCache = new WeakMap<ProseNode, {
+  sourceMarkdown: string;
+  index: VisualSourcePositionIndex;
+}>();
+
 export function visualSourceLineForPosition(doc: ProseNode, position: number, sourceMarkdown: string): number | null {
-  const blockIndex = textblockIndexAtPosition(doc, position);
-  if (blockIndex === null) return null;
-  return markdownTextblockStartLines(sourceMarkdown)[blockIndex] ?? null;
+  const cached = sourcePositionIndexCache.get(doc);
+  if (cached?.sourceMarkdown === sourceMarkdown) return cached.index.lineAt(position);
+  const index = createVisualSourcePositionIndex(doc, sourceMarkdown);
+  sourcePositionIndexCache.set(doc, { sourceMarkdown, index });
+  return index.lineAt(position);
+}
+
+export function createVisualSourcePositionIndex(
+  doc: ProseNode,
+  sourceMarkdown: string,
+): VisualSourcePositionIndex {
+  const startLines = markdownTextblockStartLines(sourceMarkdown);
+  const ranges: VisualTextblockRange[] = [];
+  let blockIndex = 0;
+  doc.descendants((node, nodePosition) => {
+    if (!node.isTextblock) return true;
+    const line = startLines[blockIndex];
+    if (line !== undefined) {
+      ranges.push({
+        start: nodePosition,
+        end: nodePosition + node.nodeSize,
+        line,
+      });
+    }
+    blockIndex += 1;
+    return true;
+  });
+
+  return {
+    lineAt(position: number): number | null {
+      const safePosition = Math.max(0, Math.min(position, doc.content.size));
+      let low = 0;
+      let high = ranges.length - 1;
+      let candidate: VisualTextblockRange | undefined;
+      while (low <= high) {
+        const middle = (low + high) >>> 1;
+        const range = ranges[middle];
+        if (range.start <= safePosition) {
+          candidate = range;
+          low = middle + 1;
+        } else {
+          high = middle - 1;
+        }
+      }
+      return candidate && safePosition <= candidate.end ? candidate.line : null;
+    },
+  };
 }
 
 export function textblockIndexAtPosition(doc: ProseNode, position: number): number | null {

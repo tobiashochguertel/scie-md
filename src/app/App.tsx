@@ -2088,11 +2088,11 @@ export function App() {
 
   const cycleTheme = useCallback(() => {
     const next: ThemeMode = settings.themeMode === 'system'
-      ? 'dark'
-      : settings.themeMode === 'dark'
-        ? 'sepia'
-        : settings.themeMode === 'sepia'
-          ? 'light'
+      ? 'light'
+      : settings.themeMode === 'light'
+        ? 'dark'
+        : settings.themeMode === 'dark'
+          ? 'sepia'
           : 'system';
     updateUserSettings({ themeMode: next });
   }, [settings.themeMode, updateUserSettings]);
@@ -2613,6 +2613,7 @@ export function App() {
         onStructuredSurfaceChange: handleStructuredSurfaceChange,
         onSetVisualStyle: setVisualStyle,
         onSetThemeMode: setThemeMode,
+        onCycleTheme: cycleTheme,
         onIncreaseFont: () => adjustFontScale(0.05),
         onDecreaseFont: () => adjustFontScale(-0.05),
         onResetFont: resetFontScale,
@@ -2711,6 +2712,7 @@ export function App() {
         activeHeadingId,
         activeNavigationLine,
         navigationHeadings,
+        visualWarmRuntimeExpected: documentEditorGateway.hasWarmRuntime(documentId, 'visual'),
         visualEditor,
         layerTwoDocument,
         protectedBlocks,

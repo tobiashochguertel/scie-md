@@ -133,6 +133,20 @@ describe('AppTopbar menu architecture', () => {
     expect(container.querySelector('[aria-label="Toggle navigation sidebar"]')).not.toBeNull();
   });
 
+  it('cycles the theme directly from the topbar without opening a popup menu', () => {
+    const onCycleTheme = vi.fn();
+    renderTopbar(null, [], { onCycleTheme });
+
+    const themeButton = container.querySelector<HTMLButtonElement>('[aria-label="Theme: dark"]');
+    expect(themeButton?.getAttribute('aria-haspopup')).toBeNull();
+    expect(themeButton?.getAttribute('aria-controls')).toBeNull();
+
+    act(() => themeButton?.click());
+
+    expect(onCycleTheme).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[aria-label="Theme options"]')).toBeNull();
+  });
+
   it('exposes aggregate background work in title chrome and the close affordance', () => {
     renderTopbar(null, [], {
       documentChrome: {
@@ -210,21 +224,13 @@ describe('AppTopbar menu architecture', () => {
     expect(quickToolbar?.querySelector('[aria-label="Redo"]')).toBeNull();
   });
 
-  it('opens focused style and theme pickers from the topbar controls', () => {
+  it('opens the focused visual-style picker from the topbar control', () => {
     renderTopbar('visual-style');
     expect(menuText()).toContain('Cursor');
     expect(menuText()).not.toContain('Scientific Draft');
     expect(menuText()).toContain('Nature');
     expect(menuText()).not.toContain('Visual Mode');
     expect(menuText()).not.toContain('Theme');
-    expect(menuText()).not.toContain('Navigation Sidebar');
-
-    renderTopbar('theme');
-    expect(menuText()).toContain('System');
-    expect(menuText()).toContain('Light');
-    expect(menuText()).toContain('Dark');
-    expect(menuText()).toContain('Sepia');
-    expect(menuText()).not.toContain('Visual style');
     expect(menuText()).not.toContain('Navigation Sidebar');
   });
 
@@ -455,6 +461,7 @@ function renderTopbar(
         onStructuredSurfaceChange={overrides.onStructuredSurfaceChange}
         onSetVisualStyle={noop}
         onSetThemeMode={noop}
+        onCycleTheme={overrides.onCycleTheme ?? noop}
         onIncreaseFont={noop}
         onDecreaseFont={noop}
         onResetFont={noop}

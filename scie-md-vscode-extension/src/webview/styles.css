@@ -252,8 +252,8 @@ button[type="submit"]:not(:disabled) {
 }
 
 .vscode-scie-shell {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   min-height: 0;
   background: var(--scie-bg);
@@ -283,6 +283,57 @@ button[type="submit"]:not(:disabled) {
 .vscode-scie-toolbar {
   flex-wrap: wrap;
   background: var(--scie-sidebar);
+}
+
+.vscode-scie-document-statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 auto;
+  min-height: 30px;
+  gap: 12px;
+  border-top: 1px solid var(--scie-border);
+  padding: 3px 8px 3px 12px;
+  background: var(--scie-panel);
+  color: var(--scie-muted);
+  font-size: 12px;
+}
+
+.vscode-scie-document-metrics,
+.vscode-scie-font-size-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vscode-scie-font-size-controls {
+  gap: 4px;
+}
+
+.vscode-scie-font-size-controls button {
+  display: inline-grid;
+  width: 26px;
+  min-width: 26px;
+  height: 24px;
+  min-height: 24px;
+  place-items: center;
+  border-color: transparent;
+  padding: 0;
+  background: transparent;
+  color: var(--scie-control-fg);
+}
+
+.vscode-scie-font-size-controls button:hover:not(:disabled),
+.vscode-scie-font-size-controls button:focus-visible {
+  border-color: var(--scie-control-border);
+  background: var(--scie-control-bg);
+}
+
+.vscode-scie-font-size-controls output {
+  min-width: 42px;
+  color: var(--scie-fg);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .vscode-scie-identity {
@@ -616,15 +667,6 @@ button[type="submit"]:not(:disabled) {
   background: var(--scie-warning-bg);
 }
 
-.vscode-scie-metrics {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-left: auto;
-  color: var(--scie-muted);
-  font-size: 12px;
-}
-
 .startup-panel {
   display: grid;
   gap: 4px;
@@ -644,6 +686,7 @@ button[type="submit"]:not(:disabled) {
 .vscode-scie-content {
   position: relative;
   display: grid;
+  flex: 1 1 auto;
   grid-template-columns: minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
@@ -1715,8 +1758,7 @@ button[type="submit"]:not(:disabled) {
     box-shadow: var(--shadow-soft);
   }
 
-  .vscode-scie-status,
-  .vscode-scie-metrics {
+  .vscode-scie-status {
     margin-left: 0;
   }
 

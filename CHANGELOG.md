@@ -2,6 +2,20 @@
 
 All notable ScieMD release changes are tracked here.
 
+## 1.1.1 - Editor Runtime And VS Code Parity
+
+- Brought the VS Code extension up to date with the current desktop source and
+  visual editing experience, including source line numbers, active/hover line
+  context, visual style refinements, font scaling, document metrics, and theme
+  behavior.
+- Hardened desktop close, recovery, external-change, and editor-runtime
+  authority boundaries so pending edits cannot be lost or applied to the wrong
+  document during asynchronous transitions.
+- Hardened the VS Code custom-editor host against disposed-panel edit replay and
+  removed the local-only edit debounce before host-backed dirty state.
+- Expanded desktop/extension drift guards and release validation coverage for
+  host-adapted source-editor styles and visual token projections.
+
 ## 1.1.0 - Structured Data Visual Editing
 
 - Added structured document support for JSON, JSONL/NDJSON, YAML, TOML, XML,

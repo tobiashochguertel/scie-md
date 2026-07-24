@@ -49,6 +49,8 @@ It supports:
 - Mermaid diagrams.
 - Tables, task lists, code blocks, links, images, blockquotes, and common Markdown
   structures.
+- Rich copy from visual mode, including headings, emphasis, links, bullets, and
+  numbered-list structure when pasting into rich-text applications.
 - Scientific ScieMD blocks such as notes, results, figures, callouts, tips,
   important notes, and warnings when used in ScieMD Markdown.
 - Variable insertion and variable expansion for reusable manuscript values.
@@ -168,7 +170,9 @@ Once the file is open in ScieMD:
 5. Open the Data panel when you want to inspect variables or insert a new variable.
 6. Create text versions when you want to compare alternate titles, abstracts, or
    paragraph revisions.
-7. Save normally with VS Code.
+7. Use the bottom status bar for live word/line counts and document zoom from 30%
+   to 200%.
+8. Save normally with VS Code.
 
 The Markdown file remains the source of truth. Edits made in the ScieMD webview are
 written back to the VS Code text document, so normal save, dirty state, undo/redo,
@@ -184,6 +188,7 @@ Many users should start with the desktop app rather than the extension.
    - Windows: `ScieMD_*_x64-setup.exe`
    - macOS Apple Silicon: `ScieMD_*_aarch64.dmg`
    - macOS Intel or mixed environments: `ScieMD_*_universal.dmg`
+   - Linux: `ScieMD_*_amd64.AppImage` or `ScieMD_*_amd64.deb`
 4. Install and open ScieMD.
 
 The GitHub **Code** button is for source code. Regular users should use release
@@ -204,7 +209,7 @@ If you downloaded a `.vsix` file manually:
 Command-line installation:
 
 ```bash
-code --install-extension sciemd-vscode-1.1.0.vsix --force
+code --install-extension sciemd-vscode-1.1.1.vsix --force
 ```
 
 ## Who This Is For
@@ -230,16 +235,25 @@ Implemented in this VS Code extension:
   without replacing VS Code's default structured-data editors.
 - Real ScieMD visual editor using Milkdown/ProseMirror.
 - Source mode using CodeMirror.
-- Visual style selector.
+- Cursor, Lab Notebook, Codex, Scienfy, Science-inspired, Nature-inspired, and
+  Claude-inspired visual styles.
+- Bundled Google Sans Flex for Cursor, updated Scie Sans/Scie Sans Text families,
+  and a VS Code-host-font source stack with IBM Plex Mono fallback.
 - VS Code-aware light and dark theme handling, with manual theme overrides.
+- Persistent 30%-200% document zoom with live word and line counts.
+- Rich visual-mode clipboard serialization for formatted text and lists.
 - Variable expansion, with variable insertion available from the Data panel.
 - Note insertion for external LLM review.
 - Text version insertion.
 - Save and writeback through VS Code documents.
 - External document change detection with a review path.
+- Retained custom-editor contexts for low-latency returns to open ScieMD tabs.
 
-Desktop-only features, including Tauri-native dialogs and some export flows, belong
-to the ScieMD desktop app.
+Desktop-only features, including Tauri-native dialogs, exports, multi-document
+workspace/recovery ownership, and the native source-preserving YAML/TOML/XML visual
+mutation planners, remain in the ScieMD desktop app. The extension deliberately
+keeps structured previews read-only and leaves freeform structured source editing
+to VS Code, so it never emulates a second native writer.
 
 ## Open Source And License
 
@@ -281,4 +295,4 @@ npm run build
 npm run package
 ```
 
-The package command creates `sciemd-vscode-1.1.0.vsix` in this folder.
+The package command creates `sciemd-vscode-1.1.1.vsix` in this folder.

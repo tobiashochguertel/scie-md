@@ -24,6 +24,7 @@ import type { LucideIcon } from 'lucide-react';
 import type { VariableDefinition, VariableUsage } from '@sciemd/core';
 import { VISUAL_STYLE_OPTIONS } from '../scie-md/services/visualStyleService';
 import type { VisualStyleId } from '../scie-md/services/visualStyleService';
+import { FONT_SCALE_MAX, FONT_SCALE_MIN } from '../scie-md/services/settingsService';
 import type { VscodeThemeMode } from './theme';
 
 export type VscodeEditorMode = 'visual' | 'source';
@@ -57,6 +58,7 @@ interface VscodeWorkbenchShellProps {
   topbar: ReactNode;
   toolbar: ReactNode;
   editorStage: ReactNode;
+  statusbar?: ReactNode;
   dataSidebar?: ReactNode;
   dataSidebarOpen?: boolean;
   dataSidebarWidth?: number;
@@ -72,6 +74,7 @@ export function VscodeWorkbenchShell({
   topbar,
   toolbar,
   editorStage,
+  statusbar,
   dataSidebar,
   dataSidebarOpen = false,
   dataSidebarWidth,
@@ -99,6 +102,7 @@ export function VscodeWorkbenchShell({
           {editorStage}
         </div>
       </div>
+      {statusbar}
       {toast}
       {modal}
     </div>
@@ -519,18 +523,12 @@ const VARIABLE_NAME_PATTERN_FOR_EDITOR = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
 
 interface VscodeMarkdownToolbarProps {
   documentReadOnly: boolean;
-  noteCount: number;
-  variableCount: number;
-  variantCount: number;
   onInsertNote: () => void;
   onInsertVersion: () => void;
 }
 
 export function VscodeMarkdownToolbar({
   documentReadOnly,
-  noteCount,
-  variableCount,
-  variantCount,
   onInsertNote,
   onInsertVersion,
 }: VscodeMarkdownToolbarProps) {
@@ -554,25 +552,65 @@ export function VscodeMarkdownToolbar({
           onClick={onInsertVersion}
         />
       </div>
-      <VscodeStatusStrip noteCount={noteCount} variableCount={variableCount} variantCount={variantCount} />
     </div>
   );
 }
 
-interface VscodeStatusStripProps {
-  noteCount: number;
-  variableCount: number;
-  variantCount: number;
+interface VscodeDocumentStatusBarProps {
+  wordCount?: number;
+  lineCount: number;
+  fontScale: number;
+  onDecreaseFont: () => void;
+  onIncreaseFont: () => void;
 }
 
-export function VscodeStatusStrip({ noteCount, variableCount, variantCount }: VscodeStatusStripProps) {
+export function VscodeDocumentStatusBar({
+  wordCount,
+  lineCount,
+  fontScale,
+  onDecreaseFont,
+  onIncreaseFont,
+}: VscodeDocumentStatusBarProps) {
   return (
-    <div className="vscode-scie-metrics" aria-label="Document summary">
-      <span>{noteCount} notes</span>
-      <span>{variableCount} variables</span>
-      <span>{variantCount} versions</span>
-    </div>
+    <footer className="vscode-scie-document-statusbar">
+      <div
+        className="vscode-scie-document-metrics"
+        aria-label={[
+          wordCount === undefined ? null : formatCount(wordCount, 'word'),
+          formatCount(lineCount, 'line'),
+        ].filter(Boolean).join(', ')}
+      >
+        {wordCount === undefined ? null : <span>{formatCount(wordCount, 'word')}</span>}
+        <span>{formatCount(lineCount, 'line')}</span>
+      </div>
+      <div className="vscode-scie-font-size-controls" role="group" aria-label="Font size">
+        <button
+          type="button"
+          aria-label="Decrease font size"
+          title="Decrease font size"
+          disabled={fontScale <= FONT_SCALE_MIN}
+          onClick={onDecreaseFont}
+        >
+          <Minus size={15} aria-hidden="true" />
+        </button>
+        <output aria-label="Current font size">{Math.round(fontScale * 100)}%</output>
+        <button
+          type="button"
+          aria-label="Increase font size"
+          title="Increase font size"
+          disabled={fontScale >= FONT_SCALE_MAX}
+          onClick={onIncreaseFont}
+        >
+          <Plus size={15} aria-hidden="true" />
+        </button>
+      </div>
+    </footer>
   );
+}
+
+function formatCount(count: number, singular: string): string {
+  const safeCount = Math.max(0, Math.round(count));
+  return `${safeCount.toLocaleString()} ${safeCount === 1 ? singular : `${singular}s`}`;
 }
 
 interface VscodeEditorStageProps {

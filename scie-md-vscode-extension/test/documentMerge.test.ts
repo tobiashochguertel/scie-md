@@ -83,10 +83,35 @@ describe('createDocumentReplacementPlan', () => {
       baseText: 'A\n',
       currentText,
       requestedText: 'A local more\n',
-      lastAppliedWebviewText: currentText,
+      lastAppliedWebview: {
+        text: currentText,
+        panelId: 'panel-a',
+        editChainId: 'chain-a',
+      },
+      requestPanelId: 'panel-a',
+      requestEditChainId: 'chain-a',
     });
 
     expect(plan.mergedStaleBase).toBe(false);
     expect(applyPlan(currentText, plan)).toBe('A local more\n');
+  });
+
+  it('merges a stale edit from a different panel even when current text was last applied by ScieMD', () => {
+    const currentText = 'A panel-a\nB\n';
+    const plan = createDocumentReplacementPlan({
+      baseText: 'A\nB\n',
+      currentText,
+      requestedText: 'A\nB panel-b\n',
+      lastAppliedWebview: {
+        text: currentText,
+        panelId: 'panel-a',
+        editChainId: 'chain-a',
+      },
+      requestPanelId: 'panel-b',
+      requestEditChainId: 'chain-b',
+    });
+
+    expect(plan.mergedStaleBase).toBe(true);
+    expect(applyPlan(currentText, plan)).toBe('A panel-a\nB panel-b\n');
   });
 });

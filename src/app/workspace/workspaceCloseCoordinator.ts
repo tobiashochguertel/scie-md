@@ -87,7 +87,14 @@ interface CloseTransaction {
   unresolved: Set<DocumentId>;
   failed: Set<DocumentId>;
   lastAction: Map<DocumentId, 'save-selected' | 'discard-selected'>;
+  settledAuthorizations: Map<DocumentId, WorkspaceCloseAuthorization>;
   destroyWindow?: () => Promise<void>;
+}
+
+class CloseAuthorizationDriftError extends Error {
+  constructor(readonly documentIds: readonly DocumentId[]) {
+    super('A document changed while close durability was being published.');
+  }
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -152,41 +159,125 @@ export function createWorkspaceCloseCoordinator(
     actions: ACTIONS,
   });
 
-  const publishAndFinalize = async (transaction: CloseTransaction, authorizations: WorkspaceCloseAuthorization[]) => {
+  const publishAndFinalize = async (
+    transaction: CloseTransaction,
+    authorizations: WorkspaceCloseAuthorization[],
+    removeDocuments: boolean,
+  ) => {
     let projected = getState();
-    for (const authorization of authorizations) projected = workspaceReducer(projected, { type: 'finalizeRemoveDocument', authorization });
+    if (removeDocuments) {
+      for (const authorization of authorizations) projected = workspaceReducer(projected, { type: 'finalizeRemoveDocument', authorization });
+    }
     const before = manifest.metrics();
     const generation = await withTimeout(manifest.flushState(projected, true, true), timeoutMs);
     const after = manifest.metrics();
     if (!after.active || generation === null || after.failedPublicationCount > before.failedPublicationCount) {
       throw new Error('Workspace manifest publication did not complete.');
     }
+    const staleDocumentIds = authorizations
+      .filter((authorization) => !closeAuthorizationStillCurrent(getState(), authorization))
+      .map((authorization) => authorization.documentId);
+    if (staleDocumentIds.length > 0) throw new CloseAuthorizationDriftError(staleDocumentIds);
     record(transaction.id, 'manifest-published');
+    if (!removeDocuments) return;
     for (const authorization of authorizations) {
-      dispatch({ type: 'finalizeRemoveDocument', authorization });
+      const next = dispatch({ type: 'finalizeRemoveDocument', authorization });
+      if (next.documentsById[authorization.documentId]) {
+        throw new CloseAuthorizationDriftError([authorization.documentId]);
+      }
       record(transaction.id, 'document-removed', authorization.documentId);
     }
   };
 
   const finish = async (transaction: CloseTransaction, authorizations: WorkspaceCloseAuthorization[]): Promise<WorkspaceCloseResult> => {
+    const publicationAuthorizations = transaction.scope.kind === 'quit'
+      ? [...transaction.settledAuthorizations.values(), ...authorizations]
+      : authorizations;
     try {
-      await publishAndFinalize(transaction, transaction.scope.kind === 'quit' ? [] : authorizations);
-    } catch {
-      for (const authorization of authorizations) {
-        transaction.failed.add(authorization.documentId);
-        transaction.unresolved.add(authorization.documentId);
-        record(transaction.id, 'failed', authorization.documentId);
+      await publishAndFinalize(transaction, publicationAuthorizations, transaction.scope.kind !== 'quit');
+    } catch (error) {
+      const failedIds = error instanceof CloseAuthorizationDriftError
+        ? error.documentIds
+        : authorizations.map((authorization) => authorization.documentId);
+      for (const documentId of failedIds) {
+        editorFlush?.(documentId);
+        const current = getState().documentsById[documentId];
+        if (current) {
+          try {
+            await withTimeout(recovery.flushDocument(documentId, 'destructive-barrier'), timeoutMs);
+          } catch {
+            // The transaction remains blocked and retryable below.
+          }
+          const refreshed = statusFor(getState().documentsById[documentId]);
+          if (refreshed) {
+            const targetIndex = transaction.targets.findIndex((target) => target.documentId === documentId);
+            if (targetIndex >= 0) transaction.targets[targetIndex] = refreshed;
+            dispatch({ type: 'requestClose', documentId, requestId: transaction.id });
+          }
+        }
+        transaction.settledAuthorizations.delete(documentId);
+        transaction.failed.add(documentId);
+        transaction.unresolved.add(documentId);
+        record(transaction.id, 'failed', documentId);
+      }
+      if (error instanceof CloseAuthorizationDriftError) {
+        try {
+          await withTimeout(manifest.flushState(getState(), true, true), timeoutMs);
+        } catch {
+          // A failed refresh leaves the close transaction blocked; recovery was
+          // attempted above and the window/document is deliberately retained.
+        }
       }
       pending = transaction;
       return { status: 'partial-failure', decision: model(transaction) };
+    }
+    for (const authorization of authorizations) {
+      transaction.settledAuthorizations.set(authorization.documentId, authorization);
     }
     if (transaction.unresolved.size > 0) {
       pending = transaction;
       return { status: transaction.failed.size ? 'partial-failure' : 'decision-required', decision: model(transaction) };
     }
+    const finalAuthorizations = transaction.scope.kind === 'quit'
+      ? Array.from(transaction.settledAuthorizations.values())
+      : authorizations;
+    const clearedDiscarded = new Set<DocumentId>();
+    for (const authorization of finalAuthorizations) {
+      if (authorization.outcome === 'clean') continue;
+      try {
+        const cleared = await withTimeout(
+          recovery.clearDocument(authorization.documentId, authorization.sourceRevision),
+          timeoutMs,
+        );
+        if (cleared && authorization.outcome === 'discarded') {
+          clearedDiscarded.add(authorization.documentId);
+        }
+      } catch {
+        // Once the manifest is durable, retaining a stale recovery snapshot is
+        // safer than reopening or rolling back an already-finalized close.
+      }
+    }
     if (transaction.scope.kind === 'quit' && transaction.destroyWindow) {
-      await withTimeout(transaction.destroyWindow(), timeoutMs);
-      record(transaction.id, 'window-destroyed');
+      try {
+        await withTimeout(transaction.destroyWindow(), timeoutMs);
+        record(transaction.id, 'window-destroyed');
+      } catch {
+        for (const documentId of clearedDiscarded) {
+          try {
+            await withTimeout(recovery.restoreDocument(documentId), timeoutMs);
+          } catch {
+            // The close remains unresolved and retryable; recovery restoration
+            // failure is surfaced through the transaction's failed targets.
+          }
+        }
+        for (const authorization of finalAuthorizations) {
+          transaction.failed.add(authorization.documentId);
+          transaction.unresolved.add(authorization.documentId);
+          record(transaction.id, 'failed', authorization.documentId);
+        }
+        pending = transaction;
+        return { status: 'partial-failure', decision: model(transaction) };
+      }
     }
     pending = null;
     return { status: 'closed', decision: null };
@@ -197,6 +288,24 @@ export function createWorkspaceCloseCoordinator(
     for (const documentId of selected) {
       if (!transaction.unresolved.has(documentId)) continue;
       const target = transaction.targets.find((entry) => entry.documentId === documentId);
+      if (target?.saving || saves.queuedFor(documentId) > 0) {
+        saves.cancelAutosave(documentId);
+        try {
+          await withTimeout(saves.awaitIdle(documentId), timeoutMs);
+        } catch {
+          // The target stays unresolved below.
+        }
+        const refreshed = statusFor(getState().documentsById[documentId]);
+        if (refreshed) {
+          const targetIndex = transaction.targets.findIndex((entry) => entry.documentId === documentId);
+          if (targetIndex >= 0) transaction.targets[targetIndex] = refreshed;
+          dispatch({ type: 'requestClose', documentId, requestId: transaction.id });
+        }
+        transaction.failed.add(documentId);
+        transaction.unresolved.add(documentId);
+        record(transaction.id, 'failed', documentId);
+        continue;
+      }
       const current = getState().documentsById[documentId];
       if (!target || !current || current.source.revision !== target.sourceRevision) {
         transaction.failed.add(documentId);
@@ -209,11 +318,9 @@ export function createWorkspaceCloseCoordinator(
           const saved = await withTimeout(saves.saveDocument(documentId), timeoutMs);
           const afterSave = getState().documentsById[documentId];
           if (!saved || !afterSave || afterSave.lifecycle.content !== 'clean') throw new Error('Document save did not settle cleanly.');
-          await withTimeout(recovery.clearDocument(documentId, afterSave.source.revision), timeoutMs);
           authorizations.push(authorizationFor(transaction, target, 'saved'));
           record(transaction.id, 'saved', documentId);
         } else {
-          await withTimeout(recovery.clearDocument(documentId, target.sourceRevision), timeoutMs);
           authorizations.push(authorizationFor(transaction, target, 'discarded'));
           record(transaction.id, 'discarded', documentId);
         }
@@ -244,7 +351,16 @@ export function createWorkspaceCloseCoordinator(
           record(id, 'editor-flushed', documentId);
         }
         const targets = documentIds.map((documentId) => statusFor(getState().documentsById[documentId])).filter((value): value is WorkspaceCloseTarget => Boolean(value));
-        const transaction: CloseTransaction = { id, scope, targets, unresolved: new Set(), failed: new Set(), lastAction: new Map(), destroyWindow };
+        const transaction: CloseTransaction = {
+          id,
+          scope,
+          targets,
+          unresolved: new Set(),
+          failed: new Set(),
+          lastAction: new Map(),
+          settledAuthorizations: new Map(),
+          destroyWindow,
+        };
         const cleanAuthorizations: WorkspaceCloseAuthorization[] = [];
         for (const target of targets) {
           dispatch({ type: 'requestClose', documentId: target.documentId, requestId: id });
@@ -331,6 +447,21 @@ function targetsFor(state: WorkspaceState, scope: WorkspaceCloseScope): Document
 
 function authorizationFor(transaction: CloseTransaction, target: WorkspaceCloseTarget, outcome: WorkspaceCloseAuthorization['outcome']): WorkspaceCloseAuthorization {
   return { requestId: transaction.id, documentId: target.documentId, sourceRevision: target.sourceRevision, outcome };
+}
+
+function closeAuthorizationStillCurrent(state: WorkspaceState, authorization: WorkspaceCloseAuthorization): boolean {
+  const request = state.pendingCloseRequests[authorization.documentId];
+  const document = state.documentsById[authorization.documentId];
+  if (!request || !document) return false;
+  return request.requestId === authorization.requestId
+    && request.sourceRevision === authorization.sourceRevision
+    && document.source.revision === authorization.sourceRevision
+    && (!request.requiresDurabilityDecision
+      || authorization.outcome === 'discarded'
+      || (authorization.outcome === 'saved' && document.lifecycle.content === 'clean'))
+    && (request.requiresDurabilityDecision
+      || authorization.outcome !== 'discarded'
+      || document.lifecycle.content === 'clean');
 }
 
 function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {

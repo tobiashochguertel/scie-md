@@ -4,6 +4,7 @@ import { createHostReadResponse, DEFAULT_METADATA, type FileMetadata, type ReadT
 import { fallbackFileLocator, sourceRevision, type DocumentId } from '../documentIdentity';
 import { DocumentHostError } from '../host/documentHostError';
 import type { DocumentHost } from '../host/documentHost';
+import { documentEditorGateway } from '../documentEditorGateway';
 import { createWorkspaceState } from './workspaceState';
 import { createWorkspaceStore, type WorkspaceStore } from './workspaceStore';
 
@@ -122,6 +123,32 @@ describe('workspace external-change coordinator', () => {
     store.externalChanges.configure(host);
     await store.externalChanges.checkDocument(firstId);
     expect(store.getState().documentsById[firstId].lifecycle).toMatchObject({ external: 'inSync', content: 'clean' });
+  });
+
+  it('does not clear a live editor whose pending source is newer than the workspace buffer', async () => {
+    const clearRuntime = vi.spyOn(documentEditorGateway, 'clearRuntime');
+    vi.mocked(host.file.statFile).mockResolvedValue(metadata({
+      lastKnownMtimeMs: 2000,
+      lastKnownSizeBytes: 4,
+      contentHash: 'disk',
+    }));
+    vi.mocked(host.file.readTextFile).mockResolvedValue(read('one\n', metadata({
+      lastKnownMtimeMs: 2000,
+      lastKnownSizeBytes: 4,
+      contentHash: 'disk',
+    })));
+    store.externalChanges.configure(host, (documentId) => (
+      documentId === firstId ? 'pending visual edit\n' : null
+    ));
+
+    await store.externalChanges.checkDocument(firstId);
+
+    expect(clearRuntime).not.toHaveBeenCalledWith(firstId);
+    expect(store.getState().documentsById[firstId].source.sourceText).toBe('one\n');
+    expect(store.getState().documentsById[firstId].lifecycle).toMatchObject({
+      external: 'inSync',
+      content: 'clean',
+    });
   });
 
   it('centralizes fallback polling and recovers native registration without creating per-document pollers', async () => {

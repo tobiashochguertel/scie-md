@@ -3,9 +3,10 @@ import { autocompletion } from '@codemirror/autocomplete';
 import type { CompletionContext, CompletionResult } from '@codemirror/autocomplete';
 import { defaultKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown as markdownLanguage } from '@codemirror/lang-markdown';
-import { Compartment, EditorState, Transaction } from '@codemirror/state';
+import { Annotation, Compartment, EditorState, StateEffect, StateField, Transaction } from '@codemirror/state';
 import type { Extension } from '@codemirror/state';
-import { Decoration, EditorView, hoverTooltip, keymap } from '@codemirror/view';
+import { Decoration, drawSelection, EditorView, highlightActiveLine, hoverTooltip, keymap, lineNumbers } from '@codemirror/view';
+import type { DecorationSet } from '@codemirror/view';
 import type { AuthorshipMark } from '../markdown/authorship';
 import { fencedCodeRanges, formatByteLengthUtf8, formatDefinitionFor, inlineCodeRanges, isOffsetInsideRanges, mergeRanges, scieMdCommentRanges, sourceSemanticPresentationMode } from '@sciemd/core';
 import type { ValidationIssue } from '../markdown/markdownValidation';
@@ -24,6 +25,89 @@ export type SourceMarkdownInsert = (markdown: string) => void;
 export type SourceMarkdownJump = (line: number) => void;
 export type SourceMarkdownFind = (from: number, to: number) => void;
 export type SourceMarkdownSelection = EditorSelectionGetter;
+
+const authoritativeSourceSynchronization = Annotation.define<boolean>();
+const setHoveredSourceLine = StateEffect.define<number | null>();
+const hoveredSourceLineField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update: (decorations, transaction) => {
+    let next = decorations.map(transaction.changes);
+    for (const effect of transaction.effects) {
+      if (!effect.is(setHoveredSourceLine)) continue;
+      next = effect.value === null
+        ? Decoration.none
+        : Decoration.set([
+            Decoration.line({ class: 'cm-hoverLine' }).range(
+              transaction.state.doc.lineAt(Math.min(effect.value, transaction.state.doc.length)).from,
+            ),
+          ]);
+    }
+    return next;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+const hoveredSourceLineByView = new WeakMap<EditorView, number | null>();
+
+function updateHoveredSourceLine(view: EditorView, from: number | null): void {
+  if (hoveredSourceLineByView.get(view) === from) return;
+  hoveredSourceLineByView.set(view, from);
+  view.dispatch({ effects: setHoveredSourceLine.of(from) });
+}
+
+export function createSourceLineInteractionExtension(): Extension {
+  return [
+    drawSelection(),
+    highlightActiveLine(),
+    hoveredSourceLineField,
+    lineNumbers({
+      domEventHandlers: {
+        mouseover: (view, line) => {
+          updateHoveredSourceLine(view, line.from);
+          return false;
+        },
+        mouseout: (view, _line, event) => {
+          const related = (event as MouseEvent).relatedTarget;
+          const relatedElement = related instanceof Element
+            ? related
+            : related instanceof Node
+              ? related.parentElement
+              : null;
+          if (relatedElement?.closest('.cm-lineNumbers .cm-gutterElement')) return false;
+          updateHoveredSourceLine(view, null);
+          return false;
+        },
+      },
+    }),
+    EditorView.domEventHandlers({
+      mouseover: (event, view) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const lineElement = target?.closest('.cm-line');
+        if (!lineElement || !view.contentDOM.contains(lineElement)) return false;
+        const related = event.relatedTarget instanceof Element
+          ? event.relatedTarget.closest('.cm-line')
+          : null;
+        if (related === lineElement) return false;
+        updateHoveredSourceLine(view, view.posAtDOM(lineElement, 0));
+        return false;
+      },
+      mouseout: (event, view) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const lineElement = target?.closest('.cm-line');
+        if (!lineElement || !view.contentDOM.contains(lineElement)) return false;
+        const related = event.relatedTarget instanceof Element
+          ? event.relatedTarget.closest('.cm-line')
+          : null;
+        if (related === lineElement) return false;
+        if (related && view.contentDOM.contains(related)) {
+          updateHoveredSourceLine(view, view.posAtDOM(related, 0));
+        } else {
+          updateHoveredSourceLine(view, null);
+        }
+        return false;
+      },
+    }),
+  ];
+}
 
 interface SourceMarkdownEditorProps {
   markdown: string;
@@ -200,6 +284,7 @@ export function SourceMarkdownEditor({
           presentationCompartmentRef.current.of(createMarkdownPresentationExtension(semanticPresentationMode)),
           EditorState.tabSize.of(2),
           EditorState.allowMultipleSelections.of(true),
+          createSourceLineInteractionExtension(),
           EditorView.lineWrapping,
           keymap.of([indentWithTab, ...defaultKeymap]),
           editableCompartmentRef.current.of(EditorView.editable.of(!readOnlyRef.current)),
@@ -215,7 +300,10 @@ export function SourceMarkdownEditor({
           citationDecorationCompartmentRef.current.of(createSourceCitationExtension(citationEntries, citationKeys)),
           variableDecorationCompartmentRef.current.of(createSourceVariableExtension(variableDefinitions, highlightedVariableName)),
           EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
+            if (
+              update.docChanged
+              && !update.transactions.some((transaction) => transaction.annotation(authoritativeSourceSynchronization))
+            ) {
               if (readOnlyRef.current) return;
               onChangeRef.current(update.state.doc.toString());
             }
@@ -322,9 +410,14 @@ export function SourceMarkdownEditor({
     if (current === markdown) return;
     protectedEditBypassRef.current = true;
     try {
+      const change = minimalSourceSynchronizationChange(current, markdown);
+      if (!change) return;
       view.dispatch({
-        changes: { from: 0, to: current.length, insert: markdown },
-        annotations: Transaction.addToHistory.of(false),
+        changes: change,
+        annotations: [
+          Transaction.addToHistory.of(false),
+          authoritativeSourceSynchronization.of(true),
+        ],
       });
     } finally {
       protectedEditBypassRef.current = false;
@@ -384,6 +477,45 @@ export function SourceMarkdownEditor({
       />
     </div>
   );
+}
+
+export interface SourceSynchronizationChange {
+  from: number;
+  to: number;
+  insert: string;
+}
+
+export function minimalSourceSynchronizationChange(
+  current: string,
+  incoming: string,
+): SourceSynchronizationChange | null {
+  if (current === incoming) return null;
+
+  let prefixLength = 0;
+  const sharedLimit = Math.min(current.length, incoming.length);
+  while (
+    prefixLength < sharedLimit
+    && current.charCodeAt(prefixLength) === incoming.charCodeAt(prefixLength)
+  ) {
+    prefixLength += 1;
+  }
+
+  let currentSuffix = current.length;
+  let incomingSuffix = incoming.length;
+  while (
+    currentSuffix > prefixLength
+    && incomingSuffix > prefixLength
+    && current.charCodeAt(currentSuffix - 1) === incoming.charCodeAt(incomingSuffix - 1)
+  ) {
+    currentSuffix -= 1;
+    incomingSuffix -= 1;
+  }
+
+  return {
+    from: prefixLength,
+    to: currentSuffix,
+    insert: incoming.slice(prefixLength, incomingSuffix),
+  };
 }
 
 export function createMarkdownPresentationExtension(mode: 'enabled' | 'large-file-fallback' | 'unsupported-plain'): Extension {

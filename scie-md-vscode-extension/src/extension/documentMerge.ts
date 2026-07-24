@@ -13,7 +13,13 @@ export interface DocumentReplacementInput {
   requestedText: string;
   baseText?: string;
   baseVersion?: number;
-  lastAppliedWebviewText?: string;
+  lastAppliedWebview?: {
+    text: string;
+    panelId: string;
+    editChainId: string;
+  };
+  requestPanelId?: string;
+  requestEditChainId?: string;
   rejectedHunkIds?: Set<string>;
 }
 
@@ -35,13 +41,22 @@ function shouldMergeAgainstCurrentDocument({
   requestedText,
   baseText,
   baseVersion,
-  lastAppliedWebviewText,
+  lastAppliedWebview,
+  requestPanelId,
+  requestEditChainId,
 }: DocumentReplacementInput): boolean {
   if (baseText === undefined) return false;
   if (baseVersion !== undefined && currentVersion !== undefined && currentVersion === baseVersion) return false;
   if (currentText === baseText) return false;
   if (currentText === requestedText) return false;
-  if (lastAppliedWebviewText !== undefined && currentText === lastAppliedWebviewText) return false;
+  if (
+    lastAppliedWebview !== undefined
+    && requestPanelId !== undefined
+    && requestEditChainId !== undefined
+    && lastAppliedWebview.panelId === requestPanelId
+    && lastAppliedWebview.editChainId === requestEditChainId
+    && currentText === lastAppliedWebview.text
+  ) return false;
   return true;
 }
 

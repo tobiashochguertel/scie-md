@@ -12,6 +12,17 @@ const writeReport = process.argv.includes('--write-report');
 
 const mirroredGroups = [
   {
+    label: 'visual editor shared behavior',
+    sourceRoot: path.join(repoRoot, 'src', 'components'),
+    copyRoot: path.join(extensionRoot, 'src', 'scie-md', 'components'),
+    files: [
+      'focusModePlugin.test.ts',
+      'focusModePlugin.ts',
+      'visualSourceMapping.test.ts',
+      'visualSourceMapping.ts',
+    ],
+  },
+  {
     label: 'source semantic presentation factory',
     sourceRoot: path.join(repoRoot, 'src', 'components'),
     copyRoot: path.join(extensionRoot, 'src', 'scie-md', 'components'),
@@ -87,6 +98,16 @@ const mirroredGroups = [
       'scieMetadataNodes.ts',
       'scieMetadataRoundtrip.test.ts',
       'scieMetadataRuntime.ts',
+    ],
+  },
+  {
+    label: 'visual editor shared styles',
+    sourceRoot: path.join(repoRoot, 'src', 'styles'),
+    copyRoot: path.join(extensionRoot, 'src', 'scie-md', 'styles'),
+    files: [
+      'app.directive-theme-overrides.css',
+      'app.visual-editor.css',
+      'scientific-document.css',
     ],
   },
 ];
@@ -522,6 +543,46 @@ for (const mapping of mirroredGroups) {
   }
 }
 
+const [desktopTokenStyles, extensionTokenStyles] = await Promise.all([
+  readFile(path.join(repoRoot, 'src', 'styles', 'app.tokens.css'), 'utf8'),
+  readFile(path.join(extensionRoot, 'src', 'scie-md', 'styles', 'app.tokens.css'), 'utf8'),
+]);
+if (!sameText(normalizeFontAssetUrls(desktopTokenStyles), extensionTokenStyles)) {
+  drift.push('styles/app.tokens.css: extension tokens differ beyond the required relative font-asset URL adapter');
+}
+
+const [desktopSourceEditorStyles, extensionSourceEditorStyles, extensionSourceEditor] = await Promise.all([
+  readFile(path.join(repoRoot, 'src', 'styles', 'app.source-editor.css'), 'utf8'),
+  readFile(path.join(extensionRoot, 'src', 'scie-md', 'styles', 'app.source-editor.css'), 'utf8'),
+  readFile(path.join(extensionRoot, 'src', 'scie-md', 'components', 'SourceMarkdownEditor.tsx'), 'utf8'),
+]);
+for (const selector of [
+  '.source-editor .cm-editor',
+  '.source-editor .cm-content',
+  '.source-editor .cm-gutters',
+  '.source-editor .cm-lineNumbers .cm-gutterElement',
+  '.source-editor .cm-lineNumbers .cm-gutterElement:hover',
+  '.source-editor .cm-activeLine,\\n.source-editor .cm-hoverLine',
+  '.source-editor .cm-activeLine',
+  '.source-editor .cm-activeLine::before,\\n.source-editor .cm-hoverLine::after',
+  '.source-editor .cm-activeLine::before',
+  '.source-editor .cm-hoverLine::after',
+  '.source-editor .cm-activeLineGutter',
+  '.source-editor .cm-cursor,\\n.source-editor .cm-dropCursor',
+  '.source-editor .cm-source-syntax-marker',
+]) {
+  const desktopRule = cssRule(desktopSourceEditorStyles, selector);
+  const extensionRule = cssRule(extensionSourceEditorStyles, selector);
+  if (!desktopRule || !extensionRule || !sameText(desktopRule, extensionRule)) {
+    drift.push(`styles/app.source-editor.css: shared source interaction rule drifted for ${selector.replaceAll('\\n', ' ')}`);
+  }
+}
+for (const fragment of ['drawSelection()', 'highlightActiveLine()', 'hoveredSourceLineField', 'lineNumbers({']) {
+  if (!extensionSourceEditor.includes(fragment)) {
+    drift.push(`components/SourceMarkdownEditor.tsx: missing shared source-line interaction ${fragment}`);
+  }
+}
+
 const classification = await classifyMirrorOverlap();
 
 if (writeReport) {
@@ -655,6 +716,18 @@ function sameText(left, right) {
 
 function normalizeNewlines(value) {
   return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+function normalizeFontAssetUrls(css) {
+  return css.replaceAll('url("/fonts/', 'url("./fonts/');
+}
+
+function cssRule(css, escapedSelector) {
+  const selector = escapedSelector.replaceAll('\\n', '\n');
+  const start = css.indexOf(`${selector} {`);
+  if (start < 0) return null;
+  const end = css.indexOf('\n}', start);
+  return end < 0 ? null : css.slice(start, end + 2);
 }
 
 function toPosix(value) {

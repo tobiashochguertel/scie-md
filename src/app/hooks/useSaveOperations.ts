@@ -162,7 +162,8 @@ export function useSaveOperations({
     const workspaceDocument = workspaceStore?.getState().documentsById[effectiveDocumentId] ?? null;
     if (workspaceStore && !workspaceDocument) return false;
     const liveFormat = workspaceDocument?.format ?? formatRef.current;
-    const visualState = liveFormat === 'markdown' && (!workspaceStore || documentEditorGateway.surface(effectiveDocumentId) === 'visual')
+    const visualOriginRevision = workspaceDocument?.source.revision ?? null;
+    let visualState = liveFormat === 'markdown' && (!workspaceStore || documentEditorGateway.surface(effectiveDocumentId) === 'visual')
       ? documentEditorGateway.flush(effectiveDocumentId)
       : null;
     const outputSourceText = visualState?.markdown ?? workspaceDocument?.source.sourceText ?? sourceTextRef.current;
@@ -173,6 +174,21 @@ export function useSaveOperations({
       })
       : true;
     if (visualWriteAllowed === false) return false;
+    if (visualState && workspaceStore) {
+      const currentDocument = workspaceStore.getState().documentsById[effectiveDocumentId];
+      if (
+        !currentDocument
+        || currentDocument.source.revision !== visualOriginRevision
+        || documentEditorGateway.surface(effectiveDocumentId) !== 'visual'
+      ) return false;
+      const currentVisualState = documentEditorGateway.flush(effectiveDocumentId);
+      if (!currentVisualState || currentVisualState.surface !== 'visual' || currentVisualState.markdown !== outputSourceText) {
+        return false;
+      }
+      // The acknowledgement belongs to the editor adapter that is authoritative
+      // after the asynchronous confirmation, never to the pre-await adapter.
+      visualState = currentVisualState;
+    }
     const flushedSourceText = commitVisualEditorReadResult(visualState, (nextSourceText) => {
       if (workspaceStore) {
         workspaceStore.dispatch({ type: 'updateDocument', documentId: effectiveDocumentId, action: { type: 'sourceChanged', sourceText: nextSourceText } });

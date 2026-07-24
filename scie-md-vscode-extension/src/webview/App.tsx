@@ -21,7 +21,6 @@ import {
   extractHeadings,
   insertEditorNote,
   insertStandaloneMarkdownBlockNearSelection,
-  parseEditorComments,
   parseProtectedBlocks,
   parseVariantGroups,
   wrapMarkdownBlockSelection,
@@ -29,6 +28,13 @@ import {
 import type { EditorNoteKind, MarkdownHeading, ReviewPlan, ReviewUnit, VariableUsage } from '@sciemd/core';
 import { isVisualStyleId } from '../scie-md/services/visualStyleService';
 import type { VisualStyleId } from '../scie-md/services/visualStyleService';
+import { countRenderedWords } from '../scie-md/markdown/markdownValidation';
+import {
+  FONT_SCALE_DEFAULT,
+  FONT_SCALE_STEP,
+  normalizeFontScale,
+  stepFontScale,
+} from '../scie-md/services/settingsService';
 import type { ExtensionToWebviewMessage, ScieMDDocumentSnapshot } from '../shared/webviewProtocol';
 import { isStructuredPreviewWebviewFormat, StructuredPreviewWorkbench } from './StructuredPreview';
 import { normalizeThemeMode, useResolvedVscodeTheme } from './theme';
@@ -37,6 +43,7 @@ import {
   VscodeEditorStage,
   VscodeMarkdownToolbar,
   VscodeDataSidebar,
+  VscodeDocumentStatusBar,
   VscodeReadOnlyBanner,
   VscodeStartupPanel,
   VscodeToast,
@@ -69,7 +76,6 @@ interface ToastState {
   tone: 'info' | 'success' | 'warning' | 'error';
 }
 
-const EDIT_DEBOUNCE_MS = 250;
 const WEBVIEW_SETTINGS_KEY = 'scie-md-vscode.webview-settings.v1';
 const DATA_SIDEBAR_DEFAULT_WIDTH = 320;
 const DATA_SIDEBAR_MIN_WIDTH = 260;
@@ -82,6 +88,7 @@ export function App() {
   const [mode, setMode] = useState<EditorMode>(savedState.mode);
   const [themeMode, setThemeMode] = useState<VscodeThemeMode>(savedState.themeMode);
   const [visualStyle, setVisualStyle] = useState<VisualStyleId>(savedState.visualStyle);
+  const [fontScale, setFontScale] = useState(savedState.fontScale);
   const [openChromeMenu, setOpenChromeMenu] = useState<VscodeChromeMenu>(null);
   const [dataSidebarOpen, setDataSidebarOpen] = useState(savedState.dataSidebarOpen);
   const [dataSidebarWidth, setDataSidebarWidth] = useState(savedState.dataSidebarWidth);
@@ -116,13 +123,14 @@ export function App() {
   const protectedBlocks = useMemo(() => parseProtectedBlocks(text), [text]);
   const headings = useMemo(() => extractHeadings(text), [text]);
   const activeHeadingId = useMemo(() => activeHeadingIdForLine(headings, currentLine), [currentLine, headings]);
-  const noteCount = useMemo(() => parseEditorComments(text), [text]);
   const variantCount = useMemo(() => parseVariantGroups(text).length, [text]);
   const nextVariantGroupId = useMemo(() => `revision-${variantCount + 1}`, [variantCount]);
   const nextVariable = useMemo(() => nextVariableName(variableIndex.definitions), [variableIndex.definitions]);
   const activeMode: EditorMode = mode;
   const structuredPreviewMode = activeMode === 'source' ? 'source' : 'tree';
   const resolvedTheme = useResolvedVscodeTheme(themeMode);
+  const wordCount = useMemo(() => countRenderedWords(text), [text]);
+  const lineCount = useMemo(() => countDocumentLines(text), [text]);
 
   useEffect(() => {
     textRef.current = text;
@@ -150,8 +158,8 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.dataset.visualStyle = visualStyle;
-    document.documentElement.style.setProperty('--font-scale', '1');
-  }, [visualStyle]);
+    document.documentElement.style.setProperty('--font-scale', String(fontScale));
+  }, [fontScale, visualStyle]);
 
   useEffect(() => {
     reviewRef.current = review;
@@ -240,10 +248,10 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const state: SavedWebviewState = { mode, themeMode, visualStyle, dataSidebarOpen, dataSidebarWidth };
+    const state: SavedWebviewState = { mode, themeMode, visualStyle, fontScale, dataSidebarOpen, dataSidebarWidth };
     vscodeApi.setState(state);
     writeSavedWebviewState(state);
-  }, [dataSidebarOpen, dataSidebarWidth, mode, themeMode, visualStyle]);
+  }, [dataSidebarOpen, dataSidebarWidth, fontScale, mode, themeMode, visualStyle]);
 
   useEffect(() => {
     const handleUndoRedo = (event: KeyboardEvent) => {
@@ -310,20 +318,6 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!snapshot) return undefined;
-    if (snapshot.isReadonly) return undefined;
-    if (review?.kind === 'external') return undefined;
-    const hasPendingRejectedHunks = pendingRejectedHunkIdsRef.current.length > 0;
-    if (text === lastSyncedDocumentTextRef.current && !hasPendingRejectedHunks) return undefined;
-    if (text === lastSentTextRef.current) return undefined;
-    const handle = window.setTimeout(() => {
-      textRef.current = text;
-      flushPendingDocumentEdit();
-    }, EDIT_DEBOUNCE_MS);
-    return () => window.clearTimeout(handle);
-  }, [flushPendingDocumentEdit, review?.kind, snapshot, text]);
-
-  useEffect(() => {
     const flushWithoutStatus = () => {
       flushPendingDocumentEdit({ updateStatus: false });
     };
@@ -358,7 +352,8 @@ export function App() {
     if (documentReadOnly) return;
     textRef.current = nextText;
     setText(nextText);
-  }, [documentReadOnly]);
+    flushPendingDocumentEdit();
+  }, [documentReadOnly, flushPendingDocumentEdit]);
 
   const getEditorSelectionSnapshot = useCallback((): EditorSelectionSnapshot => {
     const snapshotValue = selectionGetterRef.current?.();
@@ -557,8 +552,11 @@ export function App() {
         snapshot={snapshot}
         status={status}
         mode={structuredPreviewMode}
+        fontScale={fontScale}
         onSelectTree={() => setMode('visual')}
         onSelectSource={() => setMode('source')}
+        onDecreaseFont={() => setFontScale((current) => stepFontScale(current, -FONT_SCALE_STEP))}
+        onIncreaseFont={() => setFontScale((current) => stepFontScale(current, FONT_SCALE_STEP))}
       />
     );
   }
@@ -590,11 +588,17 @@ export function App() {
       toolbar={(
         <VscodeMarkdownToolbar
           documentReadOnly={documentReadOnly}
-          noteCount={noteCount.length}
-          variableCount={variableIndex.definitions.length}
-          variantCount={variantCount}
           onInsertNote={() => setModal({ type: 'note', kind: 'llm', body: 'Revise this text for clarity while preserving the scientific meaning.' })}
           onInsertVersion={() => setModal({ type: 'version', groupId: nextVariantGroupId })}
+        />
+      )}
+      statusbar={(
+        <VscodeDocumentStatusBar
+          wordCount={wordCount}
+          lineCount={lineCount}
+          fontScale={fontScale}
+          onDecreaseFont={() => setFontScale((current) => stepFontScale(current, -FONT_SCALE_STEP))}
+          onIncreaseFont={() => setFontScale((current) => stepFontScale(current, FONT_SCALE_STEP))}
         />
       )}
       dataSidebarOpen={dataSidebarOpen}
@@ -1012,6 +1016,7 @@ interface SavedWebviewState {
   mode: EditorMode;
   themeMode: VscodeThemeMode;
   visualStyle: VisualStyleId;
+  fontScale: number;
   dataSidebarOpen: boolean;
   dataSidebarWidth: number;
 }
@@ -1021,6 +1026,7 @@ function readSavedWebviewState(): SavedWebviewState {
   const mode = normalizeEditorMode(raw?.mode);
   const themeMode = normalizeThemeMode(raw?.themeMode);
   const visualStyle = isVisualStyleId(raw?.visualStyle) ? raw.visualStyle : 'science';
+  const fontScale = normalizeFontScale(raw?.fontScale ?? FONT_SCALE_DEFAULT);
   const legacyState = raw as (Partial<SavedWebviewState> & { outlineSidebarOpen?: unknown; outlineSidebarWidth?: unknown }) | null;
   const dataSidebarOpen = typeof raw?.dataSidebarOpen === 'boolean'
     ? raw.dataSidebarOpen
@@ -1028,7 +1034,7 @@ function readSavedWebviewState(): SavedWebviewState {
       ? legacyState.outlineSidebarOpen
       : false;
   const dataSidebarWidth = normalizeDataSidebarWidth(raw?.dataSidebarWidth ?? legacyState?.outlineSidebarWidth);
-  return { mode, themeMode, visualStyle, dataSidebarOpen, dataSidebarWidth };
+  return { mode, themeMode, visualStyle, fontScale, dataSidebarOpen, dataSidebarWidth };
 }
 
 function mergeSavedWebviewState(...states: Array<unknown>): Partial<SavedWebviewState> | null {
@@ -1068,4 +1074,17 @@ function normalizeDataSidebarWidth(value: unknown): number {
     ? value
     : DATA_SIDEBAR_DEFAULT_WIDTH;
   return Math.max(DATA_SIDEBAR_MIN_WIDTH, Math.min(DATA_SIDEBAR_MAX_WIDTH, Math.round(width)));
+}
+
+function countDocumentLines(value: string): number {
+  if (!value) return 0;
+  let lines = 1;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value.charCodeAt(index) === 10) lines += 1;
+    else if (value.charCodeAt(index) === 13) {
+      lines += 1;
+      if (value.charCodeAt(index + 1) === 10) index += 1;
+    }
+  }
+  return lines;
 }

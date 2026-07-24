@@ -32,7 +32,7 @@ export interface SuspendedEditorRuntime {
   byteWeight: number;
   historyBytes: number;
   suspendedAt: number;
-  kind: 'exact-state' | 'bounded-rebuild';
+  kind: 'exact-state' | 'transferable-state' | 'bounded-rebuild';
 }
 
 export type RuntimeAdmissionResult =
@@ -130,7 +130,7 @@ export class DocumentRuntimeRegistry {
   has(documentId: DocumentId, surface: EditorSurface, sourceRevision?: SourceRevision): boolean {
     return [...this.entries.values()].some((entry) => entry.key.documentId === documentId
       && entry.key.surface === surface
-      && entry.kind === 'exact-state'
+      && entry.kind !== 'bounded-rebuild'
       && (sourceRevision === undefined || entry.key.sourceRevision === sourceRevision));
   }
 

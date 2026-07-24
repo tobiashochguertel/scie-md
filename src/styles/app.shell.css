@@ -297,20 +297,20 @@ button:disabled {
   display: flex;
 }
 
-.app-shell.focus-mode .visual-editor .focus-dimmed-block {
+.app-shell.focus-mode .visual-editor .ProseMirror > * {
   opacity: 0.72;
   filter: none;
   transition: opacity 160ms ease;
 }
 
-.app-shell.focus-mode .visual-editor .focus-active-block {
+.app-shell.focus-mode .visual-editor .ProseMirror > .focus-active-block {
   opacity: 1;
   filter: none;
   transition: opacity 160ms ease;
 }
 
-.app-shell.focus-mode .visual-editor .focus-dimmed-block:focus-within,
-.app-shell.focus-mode .visual-editor .focus-dimmed-block:hover {
+.app-shell.focus-mode .visual-editor .ProseMirror > *:focus-within,
+.app-shell.focus-mode .visual-editor .ProseMirror > *:hover {
   opacity: 0.88;
 }
 
@@ -533,10 +533,6 @@ button:disabled {
 
 .topbar-style-menu {
   width: min(360px, calc(100vw - 32px));
-}
-
-.topbar-theme-menu {
-  min-width: 190px;
 }
 
 .topbar-style-menu .app-menu-item {

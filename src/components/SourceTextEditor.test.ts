@@ -9,7 +9,7 @@ import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
 import { formatByteLengthUtf8, sourceEditorCapabilitiesFor, sourceSemanticPresentationMode } from '@sciemd/core';
-import { LONG_LINE_VIEWPORT_CODE_UNITS, SourceTextEditor, createLanguageExtension, formatDiagnosticsForCodeMirror, longLineViewportRanges, remeasureSourceEditorAfterFontsReady, shouldTypewriterScroll, sourceEditorProjection, type SourceTextContextMenuRequest, type SourceTextEditorProps, type SourceTextFind, type SourceTextSelection } from './SourceTextEditor';
+import { LONG_LINE_VIEWPORT_CODE_UNITS, SourceTextEditor, createLanguageExtension, formatDiagnosticsForCodeMirror, longLineViewportRanges, projectedSourceLineNumber, remeasureSourceEditorAfterFontsReady, shouldTypewriterScroll, sourceEditorProjection, type SourceTextContextMenuRequest, type SourceTextEditorProps, type SourceTextFind, type SourceTextSelection } from './SourceTextEditor';
 import { createDocumentId, sourceRevision } from '../app/documentIdentity';
 import { applySourceChangeSet, createRevisionedSourceBuffer, materializeCurrentSource } from '../app/source/revisionedSourceBuffer';
 import { documentPerformance } from '../app/performance/documentPerformance';
@@ -133,6 +133,14 @@ describe('semantic source presentation contract', () => {
     });
     expect(projected.text).toHaveLength(128 * 1024);
   });
+
+  it('keeps projected gutter numbers anchored to the authoritative document', () => {
+    const source = 'alpha\nbeta\ngamma\n';
+
+    expect(projectedSourceLineNumber(source, 0, 1)).toBe(1);
+    expect(projectedSourceLineNumber(source, source.indexOf('gamma'), 1)).toBe(3);
+    expect(projectedSourceLineNumber(source, source.indexOf('gamma'), 2)).toBe(4);
+  });
 });
 
 describe('SourceTextEditor diagnostics', () => {
@@ -201,6 +209,44 @@ describe('SourceTextEditor context menu requests', () => {
     const sourceStyles = readFileSync(join(process.cwd(), 'src/styles/app.source-editor.css'), 'utf8');
     expect(sourceStyles).toContain('caret-color: transparent');
     expect(sourceStyles).toContain('.source-editor .cm-cursor');
+    expect(sourceStyles).toContain('.source-editor .cm-activeLine::before');
+    expect(sourceStyles).toContain('.source-editor .cm-hoverLine::after');
+    expect(sourceStyles).toContain('right: -0.75rem');
+    expect(sourceStyles).toContain('left: -0.75rem');
+  });
+
+  it('renders a left-side line-number gutter for source documents', () => {
+    renderSourceTextEditor({ value: 'alpha\nbeta\ngamma', language: 'markdown' });
+
+    const gutter = container.querySelector('.cm-lineNumbers');
+    expect(gutter).not.toBeNull();
+    const lineNumbers = [...gutter!.querySelectorAll<HTMLElement>('.cm-gutterElement')].slice(-3);
+    expect(lineNumbers.map((element) => element.textContent)).toEqual([
+      '1',
+      '2',
+      '3',
+    ]);
+
+    lineNumbers[1].dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    expect(container.querySelector('.cm-hoverLine')).not.toBeNull();
+
+    lineNumbers[1].dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: container }));
+    expect(container.querySelector('.cm-hoverLine')).toBeNull();
+  });
+
+  it('highlights a source row when its text is hovered', () => {
+    renderSourceTextEditor({ value: 'alpha\nbeta\ngamma', language: 'markdown' });
+
+    const lines = [...container.querySelectorAll<HTMLElement>('.cm-line')];
+    expect(lines[0].classList.contains('cm-activeLine')).toBe(true);
+
+    lines[1].dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    expect(lines[1].classList.contains('cm-hoverLine')).toBe(true);
+    expect(lines[0].classList.contains('cm-activeLine')).toBe(true);
+
+    lines[1].dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: container }));
+    expect(container.querySelector('.cm-hoverLine')).toBeNull();
+    expect(lines[0].classList.contains('cm-activeLine')).toBe(true);
   });
 
   it('emits a selected source payload and prevents the native menu only when handled', () => {
@@ -317,6 +363,34 @@ describe('SourceTextEditor context menu requests', () => {
       text: 'beta',
       line: 2,
       endLine: 2,
+      surface: 'source',
+    });
+  });
+
+  it('reports global selection lines beyond the large-source projection boundary', () => {
+    const value = 'row\n'.repeat(200_000);
+    const targetLine = 150_001;
+    const from = (targetLine - 1) * 4;
+    let findSelection: SourceTextFind | undefined;
+    let getSelection: SourceTextSelection | undefined;
+
+    renderSourceTextEditor({
+      value,
+      language: 'markdown',
+      onFindReady: (handler) => { findSelection = handler; },
+      onSelectionTextReady: (handler) => { getSelection = handler; },
+    });
+
+    act(() => {
+      findSelection?.(from, from + 3);
+    });
+
+    expect(getSelection?.()).toMatchObject({
+      text: 'row',
+      line: targetLine,
+      endLine: targetLine,
+      from,
+      to: from + 3,
       surface: 'source',
     });
   });
@@ -513,6 +587,9 @@ describe('SourceTextEditor context menu requests', () => {
     gateway.deactivate(first, vi.fn());
     renderDocument(second, largeSourceOnlyMarkdown, 0);
     expect(container.querySelector('.source-editor')?.getAttribute('data-source-semantic-highlighting')).toBe('large-file-fallback');
+    expect(container.querySelector('.cm-content')?.textContent?.startsWith('# row')).toBe(true);
+    act(() => { insertText?.('B'); });
+    expect(materializeCurrentSource(secondBuffer).startsWith('B# row')).toBe(true);
     gateway.deactivate(second, vi.fn());
 
     documentPerformance.clear();
@@ -522,6 +599,22 @@ describe('SourceTextEditor context menu requests', () => {
     const events = documentPerformance.report().events;
     expect(events.filter((event) => event.name === 'source-change' && event.fullDocumentTransactions)).toEqual([]);
     expect(events.filter((event) => event.name === 'whole-source-materialization')).toEqual([]);
+  });
+
+  it('keeps supplementary Unicode and CRLF pairs whole at projected window boundaries', () => {
+    const surrogateBoundary = `${'a'.repeat(31)}😀tail`;
+    const surrogateProjection = sourceEditorProjection(surrogateBoundary, 'large-file-fallback', 0, 32);
+    expect(surrogateProjection.text).toContain('😀');
+    const finalCodeUnit = surrogateProjection.text.charCodeAt(surrogateProjection.text.length - 1);
+    expect(finalCodeUnit < 0xd800 || finalCodeUnit > 0xdbff).toBe(true);
+
+    const centered = sourceEditorProjection(`head😀${'b'.repeat(40)}`, 'large-file-fallback', 5, 8);
+    expect(centered.from).toBe(4);
+    expect(centered.text.startsWith('😀')).toBe(true);
+
+    const crlfBoundary = `${'c'.repeat(31)}\r\ntail`;
+    const crlfProjection = sourceEditorProjection(crlfBoundary, 'large-file-fallback', 0, 32);
+    expect(crlfProjection.text.endsWith('\r\n')).toBe(true);
   });
 
   it('uses adapter source metadata for language and status presentation', () => {

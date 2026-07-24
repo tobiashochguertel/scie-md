@@ -121,6 +121,9 @@ describe('ScieMDCustomEditorProvider', () => {
         postMessage: vi.fn(),
       },
     };
+    await (provider as unknown as {
+      trackPanel: (documentKey: string, panel: typeof panel) => string;
+    }).trackPanel(document.uri.toString(), panel);
 
     await (provider as unknown as {
       handleMessage: (
@@ -236,12 +239,110 @@ describe('ScieMDCustomEditorProvider', () => {
     expect(vscodeMock.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('merged webview edits'));
   });
 
+  it('serializes mutations per document and merges a queued edit from another panel', async () => {
+    vscodeMock.fsStat.mockResolvedValue({});
+    const provider = createProvider();
+    const document = createMutableDocument('A\nB\n', 1);
+    const firstPanel = createPanel();
+    const secondPanel = createPanel();
+    await provider.resolveCustomTextEditor(document as never, firstPanel as never, { isCancellationRequested: false } as never);
+    await provider.resolveCustomTextEditor(document as never, secondPanel as never, { isCancellationRequested: false } as never);
+    const firstPanelId = firstPanel.webview.postMessage.mock.calls.find((call) => call[0]?.type === 'documentUpdate')?.[0].panelId;
+    const secondPanelId = secondPanel.webview.postMessage.mock.calls.find((call) => call[0]?.type === 'documentUpdate')?.[0].panelId;
+    let releaseFirstApply: (() => void) | undefined;
+    const firstApplyGate = new Promise<void>((resolve) => { releaseFirstApply = resolve; });
+    let applyCount = 0;
+    vscodeMock.applyEdit.mockImplementation(async () => {
+      applyCount += 1;
+      if (applyCount === 1) await firstApplyGate;
+      const replacement = vscodeMock.workspaceEdits.at(-1)?.replacements.at(-1);
+      if (!replacement) return false;
+      const currentText = document.getText();
+      document.setText(`${currentText.slice(0, replacement.range.start)}${replacement.text}${currentText.slice(replacement.range.end)}`);
+      document.version += 1;
+      return true;
+    });
+
+    const first = handleHostMessage(provider, document, firstPanel, {
+      type: 'replaceDocument',
+      panelId: firstPanelId,
+      editId: 'edit-first',
+      editChainId: 'chain-first',
+      baseText: 'A\nB\n',
+      baseVersion: 1,
+      text: 'A first\nB\n',
+    });
+    const second = handleHostMessage(provider, document, secondPanel, {
+      type: 'replaceDocument',
+      panelId: secondPanelId,
+      editId: 'edit-second',
+      editChainId: 'chain-second',
+      baseText: 'A\nB\n',
+      baseVersion: 1,
+      text: 'A\nB second\n',
+    });
+
+    await vi.waitFor(() => expect(vscodeMock.applyEdit).toHaveBeenCalledTimes(1));
+    expect(vscodeMock.workspaceEdits).toHaveLength(1);
+    releaseFirstApply?.();
+    await Promise.all([first, second]);
+
+    expect(vscodeMock.applyEdit).toHaveBeenCalledTimes(2);
+    expect(document.getText()).toBe('A first\nB second\n');
+  });
+
+  it('rejects queued mutations after their originating panel is disposed', async () => {
+    vscodeMock.fsStat.mockResolvedValue({});
+    const provider = createProvider();
+    const document = createMutableDocument('Original\n', 1);
+    const panel = createPanel();
+    await provider.resolveCustomTextEditor(document as never, panel as never, { isCancellationRequested: false } as never);
+    const panelId = panel.webview.postMessage.mock.calls.find((call) => call[0]?.type === 'documentUpdate')?.[0].panelId;
+    let releaseFirstApply: (() => void) | undefined;
+    const firstApplyGate = new Promise<void>((resolve) => { releaseFirstApply = resolve; });
+    vscodeMock.applyEdit.mockImplementationOnce(async () => {
+      await firstApplyGate;
+      return true;
+    });
+
+    const first = handleHostMessage(provider, document, panel, {
+      type: 'replaceDocument',
+      panelId,
+      editId: 'edit-before-dispose',
+      editChainId: 'chain-disposed',
+      baseText: 'Original\n',
+      baseVersion: 1,
+      text: 'First edit\n',
+    });
+    const queued = handleHostMessage(provider, document, panel, {
+      type: 'replaceDocument',
+      panelId,
+      editId: 'edit-queued-after-dispose',
+      editChainId: 'chain-disposed',
+      baseText: 'Original\n',
+      baseVersion: 1,
+      text: 'Queued edit\n',
+    });
+
+    await vi.waitFor(() => expect(vscodeMock.applyEdit).toHaveBeenCalledTimes(1));
+    panel.dispose();
+    document.setText('Original\n');
+    releaseFirstApply?.();
+    await Promise.all([first, queued]);
+
+    expect(vscodeMock.applyEdit).toHaveBeenCalledTimes(1);
+    expect(document.getText()).toBe('Original\n');
+  });
+
   it('does not run VS Code undo when pending webview flush fails', async () => {
     vscodeMock.applyEdit.mockResolvedValueOnce(false);
     vscodeMock.fsStat.mockResolvedValueOnce({});
     const provider = createProvider();
     const document = createMutableDocument('old\n', 1);
     const panel = createPanel();
+    const panelId = (provider as unknown as {
+      trackPanel: (documentKey: string, panel: typeof panel) => string;
+    }).trackPanel(document.uri.toString(), panel);
 
     await (provider as unknown as {
       handleMessage: (
@@ -251,6 +352,7 @@ describe('ScieMDCustomEditorProvider', () => {
       ) => Promise<void>;
     }).handleMessage(document, panel, {
       type: 'undo',
+      panelId,
       pendingText: 'new\n',
       editId: 'edit-before-undo',
       baseText: 'old\n',
@@ -267,11 +369,80 @@ describe('ScieMDCustomEditorProvider', () => {
     }));
   });
 
+  it('does not route queued undo to another document after the originating panel becomes inactive', async () => {
+    vscodeMock.fsStat.mockResolvedValue({});
+    const provider = createProvider();
+    const document = createMutableDocument('old\n', 1);
+    const panel = createPanel();
+    await provider.resolveCustomTextEditor(document as never, panel as never, { isCancellationRequested: false } as never);
+    const panelId = panel.webview.postMessage.mock.calls.find((call) => call[0]?.type === 'documentUpdate')?.[0].panelId;
+    let releaseApply: (() => void) | undefined;
+    const applyGate = new Promise<void>((resolve) => { releaseApply = resolve; });
+    vscodeMock.applyEdit.mockImplementationOnce(async () => {
+      await applyGate;
+      document.setText('new\n');
+      document.version += 1;
+      return true;
+    });
+
+    const pending = handleHostMessage(provider, document, panel, {
+      type: 'undo',
+      panelId,
+      pendingText: 'new\n',
+      editId: 'edit-before-inactive-undo',
+      editChainId: 'chain-inactive',
+      baseText: 'old\n',
+      baseVersion: 1,
+    });
+    await vi.waitFor(() => expect(vscodeMock.applyEdit).toHaveBeenCalledTimes(1));
+    panel.active = false;
+    releaseApply?.();
+    await pending;
+
+    expect(vscodeMock.executeCommand).not.toHaveBeenCalled();
+    expect(panel.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'operationResult',
+      id: 'edit-before-inactive-undo',
+      ok: false,
+      result: 'skipped',
+    }));
+  });
+
+  it('runs queued undo exactly once while its originating panel remains active', async () => {
+    vscodeMock.fsStat.mockResolvedValue({});
+    const provider = createProvider();
+    const document = createMutableDocument('old\n', 1);
+    const panel = createPanel();
+    await provider.resolveCustomTextEditor(document as never, panel as never, { isCancellationRequested: false } as never);
+    const panelId = panel.webview.postMessage.mock.calls.find((call) => call[0]?.type === 'documentUpdate')?.[0].panelId;
+    vscodeMock.applyEdit.mockImplementationOnce(async () => {
+      document.setText('new\n');
+      document.version += 1;
+      return true;
+    });
+
+    await handleHostMessage(provider, document, panel, {
+      type: 'undo',
+      panelId,
+      pendingText: 'new\n',
+      editId: 'edit-before-active-undo',
+      editChainId: 'chain-active',
+      baseText: 'old\n',
+      baseVersion: 1,
+    });
+
+    expect(vscodeMock.executeCommand).toHaveBeenCalledTimes(1);
+    expect(vscodeMock.executeCommand).toHaveBeenCalledWith('undo');
+  });
+
   it('acknowledges read-only pending edits and does not run VS Code commands', async () => {
     vscodeMock.fsStat.mockRejectedValueOnce(new Error('missing'));
     const provider = createProvider();
     const document = createMutableDocument('old\n', 1);
     const panel = createPanel();
+    const panelId = (provider as unknown as {
+      trackPanel: (documentKey: string, panel: typeof panel) => string;
+    }).trackPanel(document.uri.toString(), panel);
 
     await (provider as unknown as {
       handleMessage: (
@@ -281,6 +452,7 @@ describe('ScieMDCustomEditorProvider', () => {
       ) => Promise<void>;
     }).handleMessage(document, panel, {
       type: 'redo',
+      panelId,
       pendingText: 'new\n',
       editId: 'edit-readonly',
       baseText: 'old\n',
@@ -424,7 +596,9 @@ function createMutableDocument(initialText: string, version: number, onSetText?:
 }
 
 function createPanel() {
+  const disposeListeners: Array<() => void> = [];
   return {
+    active: true,
     webview: {
       cspSource: 'vscode-resource:',
       options: {},
@@ -433,7 +607,13 @@ function createPanel() {
       postMessage: vi.fn(async () => true),
       onDidReceiveMessage: vi.fn(() => ({ dispose: vi.fn() })),
     },
-    onDidDispose: vi.fn(),
+    onDidDispose: vi.fn((listener: () => void) => {
+      disposeListeners.push(listener);
+      return { dispose: vi.fn() };
+    }),
+    dispose: () => {
+      for (const listener of disposeListeners.splice(0)) listener();
+    },
   };
 }
 

@@ -29,6 +29,63 @@
   line-height: var(--editor-line-height);
 }
 
+.source-editor .cm-gutters {
+  left: max(0px, calc((100% - var(--content-width)) / 2 + var(--source-pad-x) - 2.5rem));
+  border-right: 1px solid var(--border-subtle);
+  background: var(--editor-bg);
+  color: var(--text-muted);
+  font-family: var(--source-editor-font);
+  font-size: calc(12px * var(--font-scale));
+  font-weight: 300;
+}
+
+.source-editor .cm-lineNumbers .cm-gutterElement {
+  min-width: 3ch;
+  padding: 0 0.75rem 0 0.5rem;
+  text-align: right;
+  cursor: default;
+}
+
+.source-editor .cm-lineNumbers .cm-gutterElement:hover {
+  background: color-mix(in srgb, var(--source-syntax-link), transparent 92%);
+  color: var(--text-secondary);
+}
+
+.source-editor .cm-activeLine,
+.source-editor .cm-hoverLine {
+  position: relative;
+  isolation: isolate;
+}
+
+.source-editor .cm-activeLine {
+  background: transparent;
+}
+
+.source-editor .cm-activeLine::before,
+.source-editor .cm-hoverLine::after {
+  position: absolute;
+  inset-block: 0;
+  right: -0.75rem;
+  left: -0.75rem;
+  border-radius: 3px;
+  content: '';
+  pointer-events: none;
+  z-index: -1;
+}
+
+.source-editor .cm-activeLine::before {
+  background: color-mix(in srgb, var(--accent), transparent 86%);
+}
+
+.source-editor .cm-hoverLine::after {
+  background: color-mix(in srgb, var(--source-syntax-link), transparent 92%);
+}
+
+.source-editor .cm-activeLineGutter {
+  background: color-mix(in srgb, var(--accent), transparent 86%);
+  color: var(--text-secondary);
+}
+
 .source-editor .cm-cursor,
 .source-editor .cm-dropCursor {
   border-left-color: var(--focus-ring);

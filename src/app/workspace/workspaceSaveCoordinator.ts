@@ -32,6 +32,7 @@ export interface WorkspaceSaveCoordinator {
   enqueue<T>(token: SaveOperationToken, task: () => Promise<T>): Promise<T>;
   scheduleNativeWrite<T>(token: SaveOperationToken, task: () => Promise<T>): Promise<T>;
   queuedFor(documentId: DocumentId): number;
+  awaitIdle(documentId: DocumentId): Promise<void>;
   totalQueued(): number;
   subscribe(listener: () => void): () => void;
   scheduleAutosave(input: WorkspaceAutosaveCandidate): void;
@@ -219,6 +220,13 @@ export function createWorkspaceSaveCoordinator(
       });
     },
     queuedFor: (documentId) => queueDepth.get(documentId) ?? 0,
+    async awaitIdle(documentId) {
+      for (;;) {
+        const lane = lanes.get(documentId);
+        if (!lane) return;
+        await lane.catch(() => undefined);
+      }
+    },
     totalQueued: () => Array.from(queueDepth.values()).reduce((total, count) => total + count, 0),
     subscribe(listener) {
       listeners.add(listener);

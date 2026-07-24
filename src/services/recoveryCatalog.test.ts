@@ -9,16 +9,21 @@ import {
   RECOVERY_CATALOG_SOFT_QUOTA_BYTES,
   recoveryQuotaState,
   resetRecoveryCatalogForTests,
+  restoreRecoveryCatalogEntry,
 } from './recoveryCatalog';
 import { createPersistenceEnvelope, encodePersistenceEnvelope, PERSISTENCE_QUARANTINE_PREFIX } from './persistence/persistenceRegistry';
 import recoveryFixture from './persistence/fixtures/recoveryPersistence.v1.json';
 
-const native = vi.hoisted(() => ({ snapshots: [] as Array<Record<string, unknown>> }));
+const native = vi.hoisted(() => ({
+  snapshots: [] as Array<Record<string, unknown>>,
+  write: vi.fn().mockResolvedValue(true),
+  maintain: vi.fn().mockResolvedValue(0),
+}));
 
 vi.mock('./nativeRecoveryService', () => ({
-  writeNativeRecoverySnapshot: vi.fn().mockResolvedValue(true),
+  writeNativeRecoverySnapshot: native.write,
   clearNativeRecoverySnapshot: vi.fn().mockResolvedValue(true),
-  maintainNativeRecoverySnapshots: vi.fn().mockResolvedValue(0),
+  maintainNativeRecoverySnapshots: native.maintain,
   listNativeRecoverySnapshots: vi.fn(async () => native.snapshots),
 }));
 
@@ -26,6 +31,10 @@ describe('recoveryCatalog', () => {
   beforeEach(() => {
     localStorage.clear();
     native.snapshots = [];
+    native.write.mockReset();
+    native.write.mockResolvedValue(true);
+    native.maintain.mockReset();
+    native.maintain.mockResolvedValue(0);
     resetRecoveryCatalogForTests();
   });
 
@@ -124,6 +133,34 @@ describe('recoveryCatalog', () => {
     expect(entries.find((entry) => entry.documentId === second)?.sourceText).toBe('second');
   });
 
+  it('restores the exact cleared generation so a durable manifest reference remains valid', async () => {
+    const documentId = createDocumentId();
+    const input = {
+      documentId,
+      sourceRevision: sourceRevision(3),
+      locator: createUntitledLocator(),
+      sourceText: 'failure-atomic draft',
+      format: 'plainText' as const,
+      savedAt: 2500,
+    };
+    checkpointRecoveryEntrySync(input);
+    const durable = checkpointRecoveryEntrySync(input);
+    expect(durable.generation).toBe(2);
+
+    expect(await clearRecoveryCatalogEntry(documentId, sourceRevision(3))).toBe(true);
+    const restored = await restoreRecoveryCatalogEntry(input);
+
+    expect(restored.generation).toBe(durable.generation);
+    expect(await loadRecoveryCatalog()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        documentId,
+        sourceRevision: sourceRevision(3),
+        generation: durable.generation,
+        sourceText: 'failure-atomic draft',
+      }),
+    ]));
+  });
+
   it('quarantines corrupt and interrupted catalog publications without losing the last committed generation', async () => {
     const documentId = createDocumentId();
     checkpointRecoveryEntrySync({
@@ -180,6 +217,27 @@ describe('recoveryCatalog', () => {
     expect(await loadRecoveryCatalog()).toEqual([
       expect.objectContaining({ documentId, sourceRevision: 9, generation: 7, sourceText: '{"native":true}', format: 'json', mediaType: 'application/json' }),
     ]);
+    expect(native.maintain).toHaveBeenCalledWith([documentId]);
+  });
+
+  it('rejects an async checkpoint when no durable browser or native backend commits', async () => {
+    native.write.mockResolvedValue(false);
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    });
+    const originalIndexedDb = globalThis.indexedDB;
+    Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: undefined });
+
+    await expect(checkpointRecoveryEntry({
+      documentId: createDocumentId(),
+      sourceRevision: sourceRevision(1),
+      locator: createUntitledLocator(),
+      sourceText: 'dirty but memory-only',
+      format: 'plainText',
+    })).rejects.toThrow('did not reach a durable');
+
+    setItem.mockRestore();
+    Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: originalIndexedDb });
   });
 
   it('reports quota pressure without selecting a dirty entry for pruning', () => {

@@ -118,6 +118,18 @@ describe('DocumentRuntimeRegistry', () => {
     expect(registry.has(exactDocument, 'visual', sourceRevision(1))).toBe(true);
     expect(registry.has(rebuildDocument, 'visual', sourceRevision(1))).toBe(false);
   });
+
+  it('treats a transferable visual state as warm across editor-host remounts', () => {
+    const registry = registryWithBudget();
+    const documentId = createDocumentId();
+    registry.suspend({
+      ...entry(documentId, 2, 'milkdown-visual-runtime-v2', {}),
+      key: { ...key(documentId, 2, 'milkdown-visual-runtime-v2'), surface: 'visual' },
+      kind: 'transferable-state',
+    });
+
+    expect(registry.has(documentId, 'visual', sourceRevision(2))).toBe(true);
+  });
 });
 
 function registryWithBudget() {

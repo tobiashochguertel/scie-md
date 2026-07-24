@@ -509,6 +509,80 @@ describe('useSaveOperations', () => {
     expect(workspaceStore.getState().documentsById[other.id].source.sourceText).toBe('# Other\n');
   });
 
+  it('does not acknowledge a stale visual adapter after confirmation switches to another document', async () => {
+    const origin = createDocumentRecord({
+      locator: fallbackFileLocator('C:\\docs\\origin-visual.md'),
+      sourceText: '# Origin source\n',
+      savedSourceText: '# Old origin\n',
+    });
+    const other = createDocumentRecord({
+      locator: fallbackFileLocator('C:\\docs\\other-visual.md'),
+      sourceText: '# Other source\n',
+      savedSourceText: '# Old other\n',
+    });
+    const workspaceStore = createHiddenWorkspaceHarness(origin);
+    workspaceStore.dispatch({ type: 'openDocument', document: other });
+    workspaceStore.dispatch({ type: 'activateDocument', documentId: origin.id });
+    const confirmation = deferred<boolean>();
+    const confirmVisual = vi.fn(() => confirmation.promise);
+    const staleMarkCommitted = vi.fn();
+    let originBound = true;
+    const surface = vi.spyOn(documentEditorGateway, 'surface').mockImplementation((documentId) => (
+      (documentId === origin.id && originBound) || documentId === other.id ? 'visual' : null
+    ));
+    mockedReadVisualEditorState.mockImplementation((documentId) => {
+      if (documentId === origin.id && originBound) {
+        return {
+          surface: 'visual',
+          markdown: '# Origin visual\n',
+          changed: true,
+          markCommitted: staleMarkCommitted,
+        };
+      }
+      if (documentId === other.id) {
+        return {
+          surface: 'visual',
+          markdown: '# Other visual\n',
+          changed: true,
+          markCommitted: vi.fn(),
+        };
+      }
+      return null;
+    });
+    act(() => {
+      root.render(createElement(WorkspaceSaveHarness, {
+        workspaceStore,
+        host,
+        confirmText,
+        confirmVisualRoundTripWrite: confirmVisual,
+        pushToast,
+        onOperations: (operations: SaveOperations) => { latestOperations = operations; },
+      }));
+    });
+
+    let saveResult!: Promise<string | false>;
+    await act(async () => {
+      saveResult = latestOperations!.saveCurrent();
+      await Promise.resolve();
+    });
+    expect(confirmVisual).toHaveBeenCalledTimes(1);
+
+    originBound = false;
+    act(() => { workspaceStore.dispatch({ type: 'activateDocument', documentId: other.id }); });
+    confirmation.resolve(true);
+    let result: string | false | undefined;
+    await act(async () => {
+      result = await saveResult;
+    });
+
+    expect(result).toBe(false);
+    expect(staleMarkCommitted).not.toHaveBeenCalled();
+    expect(host.file.writeTextFileAtomic).not.toHaveBeenCalled();
+    expect(workspaceStore.getState().documentsById[origin.id].source.sourceText).toBe('# Origin source\n');
+    expect(workspaceStore.getState().documentsById[other.id].source.sourceText).toBe('# Other source\n');
+    surface.mockRestore();
+  });
+
   it('writes the revisioned buffer snapshot after an incremental source edit and advances the saved checkpoint only after success', async () => {
     const path = 'C:\\docs\\incremental.txt';
     const sourceMetadata = metadata({ lastKnownMtimeMs: 1000, lastKnownSizeBytes: 5, contentHash: 'old' });
@@ -1045,12 +1119,14 @@ function WorkspaceSaveHarness({
   workspaceStore,
   host,
   confirmText,
+  confirmVisualRoundTripWrite,
   pushToast,
   onOperations,
 }: {
   workspaceStore: WorkspaceStore;
   host: DocumentHost;
   confirmText: (state: ConfirmState) => Promise<boolean>;
+  confirmVisualRoundTripWrite?: (markdown: string, context: VisualRoundTripWriteContext) => Promise<boolean>;
   pushToast: (text: string, tone?: 'info' | 'success' | 'warning' | 'error') => void;
   onOperations: (operations: SaveOperations) => void;
 }) {
@@ -1075,6 +1151,7 @@ function WorkspaceSaveHarness({
     setExternalConflict: () => undefined,
     setSettings,
     commitSourceTextEdit: () => undefined,
+    confirmVisualRoundTripWrite,
     confirmText,
     pushToast,
     host,

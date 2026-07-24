@@ -20,6 +20,9 @@ export function activate(context: vscode.ExtensionContext): void {
     provider,
     {
       supportsMultipleEditorsPerDocument: true,
+      webviewOptions: {
+        retainContextWhenHidden: true,
+      },
     },
   ));
 

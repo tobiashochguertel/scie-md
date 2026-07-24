@@ -16,8 +16,8 @@ export function commitVisualEditorReadResult(
 ): string | null {
   if (!result) return null;
   if (result.changed) {
-    result.markCommitted?.();
     onCommit(result.markdown);
+    result.markCommitted?.();
   }
   return result.markdown;
 }

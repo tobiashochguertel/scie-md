@@ -48,7 +48,12 @@ describe('extension activation contract', () => {
     expect(vscodeMock.registerCustomEditorProvider).toHaveBeenCalledWith(
       customEditor?.viewType,
       expect.any(Object),
-      { supportsMultipleEditorsPerDocument: true },
+      {
+        supportsMultipleEditorsPerDocument: true,
+        webviewOptions: {
+          retainContextWhenHidden: true,
+        },
+      },
     );
     expect(vscodeMock.registerCommand.mock.calls.map((call) => call[0])).toEqual(expectedCommands);
     expect(context.subscriptions).toHaveLength(2 + expectedCommands.length);

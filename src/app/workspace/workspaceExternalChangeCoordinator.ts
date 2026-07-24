@@ -267,9 +267,9 @@ export function createWorkspaceExternalChangeCoordinator(
       const currentLease = sourceSnapshotService.lease(latest.id, latest.source.buffer.current, 'external-conflict-base');
       const savedLease = sourceSnapshotService.lease(latest.id, latest.source.buffer.saved, 'external-conflict-base', 'saved');
       try {
-        const currentSource = currentLease.sourceText;
+        const currentSource = readCurrentSource?.(documentId) ?? currentLease.sourceText;
         if (diskSource === currentSource) {
-          documentEditorGateway.clearRuntime(documentId);
+          documentEditorGateway.invalidateCachedRuntime(documentId);
           dispatch({ type: 'updateDocument', documentId, action: { type: 'externalDiskAdopted', sourceText: diskSource, fileBaseline: disk.metadata } });
           sourceSnapshotService.evictSaved(documentId, getState().documentsById[documentId]?.source.savedRevision);
           clearNotification(documentId);
@@ -354,8 +354,9 @@ export function createWorkspaceExternalChangeCoordinator(
         return false;
       }
       if (!disk) return false;
-      documentEditorGateway.clearRuntime(documentId);
-      dispatch({ type: 'updateDocument', documentId, action: { type: 'externalDiskAdopted', sourceText: readSourceEnvelope(disk).sourceText, fileBaseline: disk.metadata } });
+      const diskSource = readSourceEnvelope(disk).sourceText;
+      documentEditorGateway.replace(documentId, diskSource);
+      dispatch({ type: 'updateDocument', documentId, action: { type: 'externalDiskAdopted', sourceText: diskSource, fileBaseline: disk.metadata } });
       sourceSnapshotService.evictSaved(documentId, getState().documentsById[documentId]?.source.savedRevision);
       await recovery.clearDocument(documentId, getState().documentsById[documentId]?.source.revision ?? record.source.revision);
       clearNotification(documentId);

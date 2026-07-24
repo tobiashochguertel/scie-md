@@ -16,7 +16,12 @@ export class ScieMDCustomEditorProvider implements vscode.CustomTextEditorProvid
   private readonly panelsByDocument = new Map<string, Set<vscode.WebviewPanel>>();
   private readonly panelIdByPanel = new WeakMap<vscode.WebviewPanel, string>();
   private readonly pendingEditEchoByDocument = new Map<string, Array<{ id: string; text: string }>>();
-  private readonly lastAppliedWebviewTextByDocument = new Map<string, string>();
+  private readonly lastAppliedWebviewByDocument = new Map<string, {
+    text: string;
+    panelId: string;
+    editChainId: string;
+  }>();
+  private readonly messageQueueByDocument = new Map<string, Promise<void>>();
   private readonly readonlyReasonByDocument = new Map<string, string>();
   private readonly lastWarningAtByDocument = new Map<string, number>();
 
@@ -45,7 +50,7 @@ export class ScieMDCustomEditorProvider implements vscode.CustomTextEditorProvid
     subscriptions.push(vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.document.uri.toString() !== documentKey) return;
       const sourceEditId = this.consumePendingEditId(documentKey, event.document.getText());
-      if (!sourceEditId) this.lastAppliedWebviewTextByDocument.delete(documentKey);
+      if (!sourceEditId) this.lastAppliedWebviewByDocument.delete(documentKey);
       this.postDocumentUpdate(event.document, 'changed', sourceEditId);
     }));
 
@@ -89,6 +94,33 @@ export class ScieMDCustomEditorProvider implements vscode.CustomTextEditorProvid
     webviewPanel: vscode.WebviewPanel,
     rawMessage: unknown,
   ): Promise<void> {
+    const documentKey = document.uri.toString();
+    const previous = this.messageQueueByDocument.get(documentKey) ?? Promise.resolve();
+    const operation = previous
+      .catch(() => undefined)
+      .then(() => this.handleMessageNow(document, webviewPanel, rawMessage));
+    const settled = operation.then(
+      () => undefined,
+      (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.log(`webview message failed for ${documentKey}: ${message}`);
+      },
+    );
+    this.messageQueueByDocument.set(documentKey, settled);
+    try {
+      await operation;
+    } finally {
+      if (this.messageQueueByDocument.get(documentKey) === settled) {
+        this.messageQueueByDocument.delete(documentKey);
+      }
+    }
+  }
+
+  private async handleMessageNow(
+    document: vscode.TextDocument,
+    webviewPanel: vscode.WebviewPanel,
+    rawMessage: unknown,
+  ): Promise<void> {
     const validation = validateWebviewToExtensionMessage(rawMessage);
     if (!validation.ok) {
       this.log(`invalid webview message from ${document.uri.toString()}: ${validation.invalid.reason}`);
@@ -107,7 +139,16 @@ export class ScieMDCustomEditorProvider implements vscode.CustomTextEditorProvid
         this.postEditOperationResult(
           webviewPanel,
           message.editId,
-          await this.replaceDocumentText(document, message.text, message.editId, message.baseText, message.baseVersion, message.rejectedHunkIds),
+          await this.replaceDocumentText(
+            document,
+            webviewPanel,
+            message.text,
+            message.editId,
+            message.editChainId,
+            message.baseText,
+            message.baseVersion,
+            message.rejectedHunkIds,
+          ),
           message.editChainId,
         );
         return;
@@ -118,7 +159,7 @@ export class ScieMDCustomEditorProvider implements vscode.CustomTextEditorProvid
           return;
         }
         if (message.pendingText !== undefined && message.editId) {
-          const result = await this.replaceDocumentText(document, message.pendingText, message.editId, message.baseText, message.baseVersion, message.rejectedHunkIds);
+          const result = await this.replaceDocumentText(document, webviewPanel, message.pendingText, message.editId, message.editChainId, message.baseText, message.baseVersion, message.rejectedHunkIds);
           this.postEditOperationResult(webviewPanel, message.editId, result, message.editChainId);
           if (!canSaveAfterPendingEdit(result)) return;
         }
@@ -131,9 +172,14 @@ export class ScieMDCustomEditorProvider implements vscode.CustomTextEditorProvid
           return;
         }
         if (message.pendingText !== undefined && message.editId) {
-          const result = await this.replaceDocumentText(document, message.pendingText, message.editId, message.baseText, message.baseVersion, message.rejectedHunkIds);
+          const result = await this.replaceDocumentText(document, webviewPanel, message.pendingText, message.editId, message.editChainId, message.baseText, message.baseVersion, message.rejectedHunkIds);
           this.postEditOperationResult(webviewPanel, message.editId, result, message.editChainId);
           if (!canSaveAfterPendingEdit(result)) return;
+        }
+        if (!this.canExecuteHistoryForPanel(document.uri.toString(), webviewPanel)) {
+          this.postDocumentUpdate(document, 'changed');
+          if (message.editId) this.postEditOperationResult(webviewPanel, message.editId, 'skipped', message.editChainId);
+          return;
         }
         await vscode.commands.executeCommand('undo');
         return;
@@ -144,9 +190,14 @@ export class ScieMDCustomEditorProvider implements vscode.CustomTextEditorProvid
           return;
         }
         if (message.pendingText !== undefined && message.editId) {
-          const result = await this.replaceDocumentText(document, message.pendingText, message.editId, message.baseText, message.baseVersion, message.rejectedHunkIds);
+          const result = await this.replaceDocumentText(document, webviewPanel, message.pendingText, message.editId, message.editChainId, message.baseText, message.baseVersion, message.rejectedHunkIds);
           this.postEditOperationResult(webviewPanel, message.editId, result, message.editChainId);
           if (!canSaveAfterPendingEdit(result)) return;
+        }
+        if (!this.canExecuteHistoryForPanel(document.uri.toString(), webviewPanel)) {
+          this.postDocumentUpdate(document, 'changed');
+          if (message.editId) this.postEditOperationResult(webviewPanel, message.editId, 'skipped', message.editChainId);
+          return;
         }
         await vscode.commands.executeCommand('redo');
         return;
@@ -169,14 +220,19 @@ export class ScieMDCustomEditorProvider implements vscode.CustomTextEditorProvid
 
   private async replaceDocumentText(
     document: vscode.TextDocument,
+    webviewPanel: vscode.WebviewPanel,
     nextText: string,
     editId: string,
+    editChainId?: string,
     baseText?: string,
     baseVersion?: number,
     rejectedHunkIds: string[] = [],
   ): Promise<ReplaceDocumentTextResult> {
+    if (!this.isTrackedPanel(document.uri.toString(), webviewPanel)) return 'skipped';
     if (!(await this.ensureDocumentWritable(document))) return 'readonly';
+    if (!this.isTrackedPanel(document.uri.toString(), webviewPanel)) return 'skipped';
     const documentKey = document.uri.toString();
+    const panelId = this.panelIdByPanel.get(webviewPanel);
     const planCurrentVersion = document.version;
     const currentText = document.getText();
     if (baseVersion !== undefined && baseVersion !== document.version && baseText === undefined) {
@@ -190,7 +246,9 @@ export class ScieMDCustomEditorProvider implements vscode.CustomTextEditorProvid
       requestedText: nextText,
       baseText,
       baseVersion,
-      lastAppliedWebviewText: this.lastAppliedWebviewTextByDocument.get(documentKey),
+      lastAppliedWebview: this.lastAppliedWebviewByDocument.get(documentKey),
+      requestPanelId: panelId,
+      requestEditChainId: editChainId,
       rejectedHunkIds: new Set(rejectedHunkIds),
     });
     const { replacement } = plan;
@@ -222,7 +280,15 @@ export class ScieMDCustomEditorProvider implements vscode.CustomTextEditorProvid
       return 'failed';
     }
 
-    this.lastAppliedWebviewTextByDocument.set(documentKey, plan.text);
+    if (panelId && editChainId) {
+      this.lastAppliedWebviewByDocument.set(documentKey, {
+        text: plan.text,
+        panelId,
+        editChainId,
+      });
+    } else {
+      this.lastAppliedWebviewByDocument.delete(documentKey);
+    }
     if (plan.mergedStaleBase) {
       this.showCoalescedWarning(documentKey, 'stale-merge', 'ScieMD merged webview edits with newer Markdown already present in VS Code.');
     }
@@ -303,7 +369,7 @@ export class ScieMDCustomEditorProvider implements vscode.CustomTextEditorProvid
     if (panels.size === 0) {
       this.panelsByDocument.delete(documentKey);
       this.pendingEditEchoByDocument.delete(documentKey);
-      this.lastAppliedWebviewTextByDocument.delete(documentKey);
+      this.lastAppliedWebviewByDocument.delete(documentKey);
       this.readonlyReasonByDocument.delete(documentKey);
       this.clearWarningTimestamps(documentKey);
     }
@@ -359,7 +425,7 @@ export class ScieMDCustomEditorProvider implements vscode.CustomTextEditorProvid
 
   private acceptsPanelMessage(webviewPanel: vscode.WebviewPanel, message: { panelId?: string; editId?: string; editChainId?: string }): boolean {
     const expectedPanelId = this.panelIdByPanel.get(webviewPanel);
-    if (!expectedPanelId || message.panelId === undefined || message.panelId === expectedPanelId) return true;
+    if (expectedPanelId && (message.panelId === undefined || message.panelId === expectedPanelId)) return true;
     this.postOperationResult(webviewPanel, {
       id: message.editId,
       editChainId: message.editChainId,
@@ -368,6 +434,14 @@ export class ScieMDCustomEditorProvider implements vscode.CustomTextEditorProvid
       message: 'ScieMD ignored a stale edit from another webview panel.',
     });
     return false;
+  }
+
+  private isTrackedPanel(documentKey: string, panel: vscode.WebviewPanel): boolean {
+    return this.panelIdByPanel.has(panel) && this.panelsByDocument.get(documentKey)?.has(panel) === true;
+  }
+
+  private canExecuteHistoryForPanel(documentKey: string, panel: vscode.WebviewPanel): boolean {
+    return this.panelsByDocument.get(documentKey)?.has(panel) === true && panel.active;
   }
 
   private postEditOperationResult(

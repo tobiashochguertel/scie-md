@@ -41,6 +41,17 @@ describe('VS Code webview CSS token bridge', () => {
     );
     expect(webviewStyles).toContain('--source-syntax-heading: var(--vscode-symbolIcon-classForeground');
   });
+
+  it('carries the latest shared source-line and Scienfy palette behavior into the VSIX', () => {
+    expect(extensionSourceStyles).toContain('.source-editor .cm-lineNumbers .cm-gutterElement');
+    expect(extensionSourceStyles).toContain('.source-editor .cm-activeLine::before');
+    expect(extensionSourceStyles).toContain('.source-editor .cm-hoverLine::after');
+    expect(extensionSourceStyles).toContain('.source-editor .cm-cursor,');
+    expect(extensionTokenStyles).not.toContain('--scienfy-reading-frame-color');
+    expect(extensionTokenStyles).toMatch(
+      /:root\[data-theme="dark"\]\[data-visual-style="scienfy"\]\s*{[\s\S]*--bg:\s*#0d1117;[\s\S]*--text-strong:\s*#e6edf3;/,
+    );
+  });
   it('documents the host-owned bridge and maps VS Code mode into desktop ScieMD tokens', () => {
     expect(webviewStyles).toContain('VS Code-to-ScieMD token bridge');
     expect(webviewStyles).toMatch(/:root\[data-theme-mode="vscode"\]\s*{[\s\S]*--surface:\s*var\(--scie-widget\);/);

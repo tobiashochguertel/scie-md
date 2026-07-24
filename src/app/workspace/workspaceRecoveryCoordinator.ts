@@ -3,8 +3,10 @@ import type { DocumentRecord } from '../documentRecord';
 import {
   checkpointRecoveryEntry,
   checkpointRecoveryEntrySync,
+  recoveryEntryIsDurable,
   clearRecoveryCatalogEntry,
   createRecoveryCenterModel,
+  restoreRecoveryCatalogEntry,
   RECOVERY_CHECKPOINT_LAG_MS,
   RECOVERY_CHECKPOINT_MAX_LAG_MS,
   type RecoveryCatalogEntry,
@@ -21,6 +23,8 @@ export type RecoveryLifecycleReason = 'timer' | 'deactivation' | 'visibility-hid
 export interface WorkspaceRecoveryBackend {
   checkpoint(input: RecoveryCheckpointInput): Promise<RecoveryCatalogEntry>;
   checkpointSync(input: RecoveryCheckpointInput): RecoveryCatalogEntry;
+  isDurable?(entry: RecoveryCatalogEntry): boolean;
+  restore?(input: RecoveryCheckpointInput): Promise<RecoveryCatalogEntry>;
   clear(documentId: DocumentId, upToSourceRevision: SourceRevision): Promise<boolean>;
   recoveryCenter(): Promise<RecoveryCenterModel>;
 }
@@ -40,6 +44,7 @@ export interface WorkspaceRecoveryCoordinator {
   checkpointSync(documentId: DocumentId, reason?: RecoveryLifecycleReason): RecoveryCatalogEntry | null;
   flushDocument(documentId: DocumentId, reason?: RecoveryLifecycleReason): Promise<RecoveryCatalogEntry | null>;
   flushAll(reason?: RecoveryLifecycleReason): Promise<void>;
+  restoreDocument(documentId: DocumentId): Promise<RecoveryCatalogEntry | null>;
   clearDocument(documentId: DocumentId, upToSourceRevision: SourceRevision): Promise<boolean>;
   recoveryCenter(): Promise<RecoveryCenterModel>;
   metrics(): WorkspaceRecoveryMetrics;
@@ -54,6 +59,8 @@ const defaultBackend: WorkspaceRecoveryBackend = {
     return entry;
   },
   checkpointSync: checkpointRecoveryEntrySync,
+  isDurable: recoveryEntryIsDurable,
+  restore: restoreRecoveryCatalogEntry,
   clear: clearRecoveryCatalogEntry,
   recoveryCenter: createRecoveryCenterModel,
 };
@@ -138,7 +145,7 @@ export function createWorkspaceRecoveryCoordinator(
     } finally {
       leased.release();
     }
-    markCurrentIfUnchanged(documentId, entry.sourceRevision);
+    if (backend.isDurable?.(entry) !== false) markCurrentIfUnchanged(documentId, entry.sourceRevision);
     recordCheckpoint(documentId);
     return entry;
   };
@@ -196,6 +203,24 @@ export function createWorkspaceRecoveryCoordinator(
   const flushAll = async (reason: RecoveryLifecycleReason = 'destructive-barrier') => {
     const documentIds = getState().tabOrder.slice();
     await Promise.all(documentIds.map((documentId) => flushDocument(documentId, reason)));
+  };
+
+  const restoreDocument = async (documentId: DocumentId): Promise<RecoveryCatalogEntry | null> => {
+    cancelTimer(documentId);
+    flushEditor?.(documentId);
+    const record = getState().documentsById[documentId];
+    if (!record || record.lifecycle.content !== 'dirty') return null;
+    const started = monotonicNow();
+    const leased = leasedInputForRecord(record, now(), recoverableDocumentIds());
+    try {
+      const entry = await (backend.restore?.(leased.input) ?? backend.checkpoint(leased.input));
+      recordRecoverySnapshot(documentId, leased.input.sourceText, monotonicNow() - started, 'recovery-rollback');
+      markCurrentIfUnchanged(documentId, entry.sourceRevision);
+      recordCheckpoint(documentId);
+      return entry;
+    } finally {
+      leased.release();
+    }
   };
 
   const clearDocument = async (documentId: DocumentId, upToSourceRevision: SourceRevision) => {
@@ -261,6 +286,7 @@ export function createWorkspaceRecoveryCoordinator(
     checkpointSync,
     flushDocument,
     flushAll,
+    restoreDocument,
     clearDocument,
     recoveryCenter: backend.recoveryCenter,
     metrics: () => ({

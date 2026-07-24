@@ -104,6 +104,66 @@ describe('VisualMarkdownEditor warm tab activation', () => {
       && event.phase === 'milkdown-external-replace'
     ))).toEqual([]);
   });
+
+  it('reactivates through a fresh Milkdown host after a source/visual surface remount', async () => {
+    const registry = new DocumentRuntimeRegistry({
+      lowWatermarkBytes: 16 * 1024 * 1024,
+      highWatermarkBytes: 32 * 1024 * 1024,
+      hardCeilingBytes: 64 * 1024 * 1024,
+      reservedActiveHeadroomBytes: 8 * 1024 * 1024,
+      minimumResidencyMs: 0,
+    });
+    const gateway = new DocumentKeyedEditorGateway(registry);
+    const documentId = createDocumentId();
+    const markdown = '# Remounted\n\nReturn from source mode without reparsing Markdown.\n';
+    let activeAdapter: EditorAdapter | undefined;
+    let activeEditor: Editor | undefined;
+    const onAdapterReady = (adapter: EditorAdapter | undefined, retiringAdapter?: EditorAdapter) => {
+      if (retiringAdapter) gateway.unregisterAdapter(documentId, 'visual', retiringAdapter);
+      else {
+        activeAdapter = adapter;
+        gateway.registerAdapter(documentId, 'visual', adapter);
+      }
+    };
+    const renderVisual = async (warmRuntimeExpected: boolean) => {
+      await act(async () => {
+        root.render(createElement(VisualMarkdownEditor, {
+          performanceDocumentId: documentId,
+          revision: sourceRevision(0),
+          warmRuntimeExpected,
+          markdown,
+          filePath: null,
+          onChange: vi.fn(),
+          onEditorReady: (editor) => { activeEditor = editor; },
+          onAdapterReady,
+        } satisfies VisualMarkdownEditorProps));
+      });
+      await waitForCondition(() => Boolean(activeAdapter && activeEditor));
+    };
+
+    await renderVisual(false);
+    gateway.deactivate(documentId, vi.fn());
+    activeAdapter = undefined;
+    await act(async () => {
+      root.render(createElement('div', { 'data-testid': 'source-surface' }));
+    });
+
+    documentPerformance.clear();
+    await renderVisual(true);
+
+    expect(activeEditor?.action(getMarkdown())).toContain('Remounted');
+    expect(registry.metrics()).toMatchObject({ hits: 1 });
+    expect(documentPerformance.report().events).toContainEqual(expect.objectContaining({
+      name: 'runtime-attach',
+      surface: 'visual',
+      cache: 'hit',
+      phase: 'transferable-state',
+    }));
+    expect(documentPerformance.report().events.filter((event) => (
+      event.surface === 'visual'
+      && event.phase === 'milkdown-external-replace'
+    ))).toEqual([]);
+  });
 });
 
 async function waitForCondition(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
@@ -131,6 +191,7 @@ describe('visual editor warm runtime', () => {
       .create();
     const runtime = captureVisualEditorRuntimeState({
       editor,
+      hostInstanceId: 'visual-host-a',
       sourceMarkdown: source,
       frontmatterPrefix: '',
       visualMarkdown: source,
@@ -148,6 +209,46 @@ describe('visual editor warm runtime', () => {
 
     await editor.destroy();
     root.remove();
+  });
+
+  it('transfers a parked document into a newly mounted Milkdown host without retaining stale plugin closures', async () => {
+    const firstRoot = document.createElement('div');
+    const secondRoot = document.createElement('div');
+    document.body.append(firstRoot, secondRoot);
+    const source = '# Transferable\n\nVisual state survives a surface remount.\n';
+    const firstEditor = await Editor.make()
+      .config((ctx) => {
+        ctx.set(rootCtx, firstRoot);
+        ctx.set(defaultValueCtx, source);
+      })
+      .use(commonmark)
+      .use(gfm)
+      .create();
+    const runtime = captureVisualEditorRuntimeState({
+      editor: firstEditor,
+      hostInstanceId: 'visual-host-a',
+      sourceMarkdown: source,
+      frontmatterPrefix: '',
+      visualMarkdown: source,
+      displayToOriginal: new Map(),
+    });
+    const secondEditor = await Editor.make()
+      .config((ctx) => {
+        ctx.set(rootCtx, secondRoot);
+        ctx.set(defaultValueCtx, '');
+      })
+      .use(commonmark)
+      .use(gfm)
+      .create();
+
+    expect(attachVisualEditorRuntimeState(secondEditor, runtime!, 'visual-host-b')).toBe(true);
+    expect(secondEditor.ctx.get(editorViewCtx).state).not.toBe(runtime?.editorState);
+    expect(secondEditor.action(getMarkdown())).toContain('Transferable');
+
+    await firstEditor.destroy();
+    await secondEditor.destroy();
+    firstRoot.remove();
+    secondRoot.remove();
   });
 
   it('accounts conservatively for source, document tree, and bounded history', () => {
@@ -302,6 +403,7 @@ describe('readVisualEditorStateSnapshot', () => {
 
   it('does not mark committed when the serialized editor remains equivalent', () => {
     const markCommitted = vi.fn();
+    const markSynchronized = vi.fn();
     const result = readVisualEditorStateSnapshot({
       visualContentMutated: false,
       sourceMarkdown: '# Source\n',
@@ -309,6 +411,7 @@ describe('readVisualEditorStateSnapshot', () => {
       flushPendingMetadataEdits: vi.fn(() => true),
       readFullMarkdown: vi.fn(() => '# Source  \n'),
       markCommitted,
+      markSynchronized,
     });
 
     expect(result).toMatchObject({
@@ -317,5 +420,25 @@ describe('readVisualEditorStateSnapshot', () => {
       changed: false,
     });
     expect(result?.markCommitted).toBeUndefined();
+    expect(markSynchronized).toHaveBeenCalledWith('# Source  \n');
+  });
+
+  it('clears the mutation marker when a changed snapshot is committed so cleanup does not serialize again', () => {
+    const markCommitted = vi.fn();
+    const markSynchronized = vi.fn();
+    const result = readVisualEditorStateSnapshot({
+      visualContentMutated: true,
+      sourceMarkdown: '# Before\n',
+      lastEmittedMarkdown: '# Before\n',
+      flushPendingMetadataEdits: vi.fn(() => false),
+      readFullMarkdown: vi.fn(() => '# After\n'),
+      markCommitted,
+      markSynchronized,
+    });
+
+    expect(markSynchronized).not.toHaveBeenCalled();
+    result?.markCommitted?.();
+    expect(markCommitted).toHaveBeenCalledWith('# After\n');
+    expect(markSynchronized).toHaveBeenCalledWith('# After\n');
   });
 });

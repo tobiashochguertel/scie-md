@@ -147,11 +147,33 @@ describe('workspace restart restoration', () => {
       .toEqual(['duplicate', 'bad-shape']);
   });
 
-  it('restores orphan untitled recovery but leaves orphan saved-file recovery for the recovery center', async () => {
+  it('restores both untitled and file-backed orphan recovery when the manifest is unavailable', async () => {
     const untitled: RecoveryCatalogEntry = { ...recovery('untitled', 'C:\\unused.md', 'draft', ''), locator: { kind: 'untitled', untitledId: 'untitled:one' as never } };
     const savedOrphan = recovery('saved-orphan', 'C:\\saved.md', 'draft', 'disk');
     const result = await restoreWorkspace({ manifest: null, recoveryEntries: [savedOrphan, untitled], capability: enabled, readFile: reader({}) });
     expect(result.winner).toEqual({ kind: 'orphan-untitled-recovery', documentId: 'untitled' });
-    expect(result.records.map((entry) => entry.id)).toEqual(['untitled']);
+    expect(result.records.map((entry) => entry.id)).toEqual(['untitled', 'saved-orphan']);
+    expect(result.records.find((entry) => entry.id === 'saved-orphan')?.source.sourceText).toBe('draft');
+  });
+
+  it('keeps a missing referenced recovery action-required even when disk is readable', async () => {
+    const stored = manifest([
+      document('dirty-missing', 'C:\\paper.md', { id: 'dirty-missing', generation: 7, sourceRevision: 4 }),
+    ]);
+    const result = await restoreWorkspace({
+      manifest: stored,
+      recoveryEntries: [],
+      capability: enabled,
+      readFile: reader({ 'C:\\paper.md': 'disk baseline' }),
+    });
+
+    expect(result.outcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        documentId: 'dirty-missing',
+        status: 'action-required',
+        issues: ['missing-recovery'],
+      }),
+    ]));
+    expect(result.records[0]?.lifecycle.recovery).toBe('failed');
   });
 });

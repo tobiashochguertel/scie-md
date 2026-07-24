@@ -55,7 +55,7 @@ describe('DocumentKeyedEditorGateway', () => {
     recordDocumentEdit(gateway.historyFor(second), '# Second previous');
 
     expect(gateway.deactivate(first, (markdown) => events.push(`commit:${markdown}`))).toBe('# Dirty');
-    expect(events).toEqual(['flush', 'markCommitted', 'commit:# Dirty', 'snapshot']);
+    expect(events).toEqual(['flush', 'commit:# Dirty', 'markCommitted', 'snapshot']);
     expect(gateway.read(first)).toBeNull();
     expect(gateway.getRuntime(first, 'visualInsert')).toBeUndefined();
     expect(gateway.getViewSnapshot(first, 'visual')).toMatchObject({ scrollTop: 42, selection: { from: 2, to: 5 } });

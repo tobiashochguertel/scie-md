@@ -2,8 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { MouseEvent } from 'react';
 import { Editor, defaultValueCtx, editorViewCtx, rootCtx } from '@milkdown/kit/core';
 import type { Editor as MilkdownEditor } from '@milkdown/kit/core';
-import { Plugin, TextSelection } from '@milkdown/prose/state';
-import type { EditorState as ProseMirrorEditorState } from '@milkdown/prose/state';
+import { EditorState as ProseMirrorEditorState, Plugin, Selection, TextSelection } from '@milkdown/prose/state';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { clipboard } from '@milkdown/kit/plugin/clipboard';
@@ -93,6 +92,7 @@ export async function copyVisualEditorSelection(
 export interface VisualMarkdownEditorProps {
   performanceDocumentId?: DocumentId;
   revision?: SourceRevision;
+  warmRuntimeExpected?: boolean;
   markdown: string;
   filePath: string | null;
   onChange: (markdown: string) => void;
@@ -118,7 +118,9 @@ export interface VisualMarkdownEditorProps {
   onEditVariable?: (name: string) => void;
 }
 
-function MilkdownSurface({ performanceDocumentId, revision, markdown, filePath, onChange, onEditorReady, onInsertReady, onJumpReady, onFindReady, onHistoryReady, onSelectionTextReady, onAdapterReady, onCursorLineChange, onViewportLineChange, outlineHeadings = [], onLockViolation, onToast, confirmText, citationKeys = [], citationEntries = [], variableDefinitions = [], highlightedVariableName = null, onEditCitation, onEditVariable }: VisualMarkdownEditorProps) {
+const VISUAL_EDITOR_CONFIGURATION_FINGERPRINT = 'milkdown-visual-runtime-v2';
+
+function MilkdownSurface({ performanceDocumentId, revision, warmRuntimeExpected = false, markdown, filePath, onChange, onEditorReady, onInsertReady, onJumpReady, onFindReady, onHistoryReady, onSelectionTextReady, onAdapterReady, onCursorLineChange, onViewportLineChange, outlineHeadings = [], onLockViolation, onToast, confirmText, citationKeys = [], citationEntries = [], variableDefinitions = [], highlightedVariableName = null, onEditCitation, onEditVariable }: VisualMarkdownEditorProps) {
   const initialSplit = useRef(splitVisualMarkdown(markdown));
   const citationKeysRef = useRef(citationKeys);
   const citationEntriesRef = useRef(citationEntries);
@@ -127,11 +129,16 @@ function MilkdownSurface({ performanceDocumentId, revision, markdown, filePath, 
   const highlightedVariableNameRef = useRef(highlightedVariableName);
   const onEditVariableRef = useRef(onEditVariable);
   const visualPaths = useRef(toVisualImagePaths(initialSplit.current.visualMarkdown, filePath));
-  const initialMarkdown = useRef(visualPaths.current.markdown);
+  const initialMarkdown = useRef(warmRuntimeExpected ? '' : visualPaths.current.markdown);
   const onChangeRef = useRef(onChange);
   const performanceDocumentIdRef = useRef(performanceDocumentId);
   const revisionRef = useRef(revision);
   const runtimeInstanceIdRef = useRef(`visual-editor-${Math.random().toString(36).slice(2)}`);
+  const runtimeOwnerRef = useRef<{ documentId: DocumentId; revision: SourceRevision } | null>(
+    !warmRuntimeExpected && performanceDocumentId && revision !== undefined
+      ? { documentId: performanceDocumentId, revision }
+      : null,
+  );
   const onCursorLineChangeRef = useRef(onCursorLineChange);
   const onViewportLineChangeRef = useRef(onViewportLineChange);
   const outlineHeadingsRef = useRef(outlineHeadings);
@@ -287,6 +294,7 @@ function MilkdownSurface({ performanceDocumentId, revision, markdown, filePath, 
               pendingLocalEmissionsRef.current,
               fullMarkdown,
             );
+            visualContentMutated.current = false;
             const tracedDocumentId = performanceDocumentIdRef.current;
             if (tracedDocumentId) {
               documentPerformance.trace({ name: 'input-accepted', documentId: tracedDocumentId, surface: 'visual' });
@@ -417,10 +425,10 @@ function MilkdownSurface({ performanceDocumentId, revision, markdown, filePath, 
       editor.action((ctx) => {
         const view = ctx.get(editorViewCtx);
         const emitCursorLocation = () => {
-          const textBefore = view.state.doc.textBetween(0, view.state.selection.from, '\n', '\n');
-          const lines = textBefore.split('\n');
-          const line = visualLineForPosition(view, view.state.selection.from, frontmatterPrefixRef.current);
-          const column = (lines.at(-1) ?? '').length + 1;
+          const position = view.state.selection.from;
+          const line = visualSourceLineForPosition(view.state.doc, position, sourceMarkdownRef.current)
+            ?? visualLineForPosition(view, position, frontmatterPrefixRef.current);
+          const column = view.state.doc.resolve(position).parentOffset + 1;
           onCursorLineChangeRef.current?.(line, column);
         };
         view.dom.addEventListener('keyup', emitCursorLocation);
@@ -441,18 +449,27 @@ function MilkdownSurface({ performanceDocumentId, revision, markdown, filePath, 
         const scrollTarget = scroller instanceof Window ? window : scroller;
         let animationFrame: number | null = null;
         let lastViewportLine = 0;
+        let interactionReadyReported = false;
         const emitViewportLocation = () => {
           animationFrame = null;
           const line = visualViewportTopLine(
             view,
             outlineHeadingsRef.current,
             scroller,
-            sourceMarkdownRef.current,
-            frontmatterPrefixRef.current,
           );
-          if (line === null || line === lastViewportLine) return;
-          lastViewportLine = line;
-          onViewportLineChangeRef.current?.(line);
+          if (line !== null && line !== lastViewportLine) {
+            lastViewportLine = line;
+            onViewportLineChangeRef.current?.(line);
+          }
+          if (!interactionReadyReported) {
+            interactionReadyReported = true;
+            const documentId = performanceDocumentIdRef.current;
+            if (documentId) documentPerformance.trace({
+              name: 'visual-interaction-ready',
+              documentId,
+              surface: 'visual',
+            });
+          }
         };
         const scheduleViewportLocation = () => {
           if (animationFrame !== null) return;
@@ -539,6 +556,9 @@ function MilkdownSurface({ performanceDocumentId, revision, markdown, filePath, 
             markdownValue,
           );
         },
+        markSynchronized: () => {
+          visualContentMutated.current = false;
+        },
       });
     };
     const replaceEditorState = (nextMarkdown: string): boolean => {
@@ -614,7 +634,12 @@ function MilkdownSurface({ performanceDocumentId, revision, markdown, filePath, 
         const documentId = performanceDocumentIdRef.current;
         const sourceRevision = revisionRef.current;
         if (!documentId || sourceRevision === undefined) return null;
-        return { documentId, sourceRevision, surface: 'visual', configurationFingerprint: runtimeInstanceIdRef.current };
+        return {
+          documentId,
+          sourceRevision,
+          surface: 'visual',
+          configurationFingerprint: VISUAL_EDITOR_CONFIGURATION_FINGERPRINT,
+        };
       },
       suspendRuntime: () => {
         const key = adapter.runtimeKey?.();
@@ -623,6 +648,7 @@ function MilkdownSurface({ performanceDocumentId, revision, markdown, filePath, 
         const snapshot = adapter.captureView?.();
         const state = captureVisualEditorRuntimeState({
           editor: currentEditor,
+          hostInstanceId: runtimeInstanceIdRef.current,
           sourceMarkdown: sourceMarkdownRef.current,
           frontmatterPrefix: frontmatterPrefixRef.current,
           visualMarkdown: visualPaths.current.markdown,
@@ -637,16 +663,16 @@ function MilkdownSurface({ performanceDocumentId, revision, markdown, filePath, 
           focused: false,
           byteWeight: byteWeight.totalBytes,
           historyBytes: byteWeight.historyBytes,
-          kind: 'exact-state',
+          kind: 'transferable-state',
         };
       },
       attachRuntime: (runtime) => {
         const key = adapter.runtimeKey?.();
         const currentEditor = editorRef.current;
-        if (!key || !currentEditor || runtime.kind !== 'exact-state') return false;
+        if (!key || !currentEditor || runtime.kind === 'bounded-rebuild') return false;
         const runtimeState = visualEditorRuntimeState(runtime.state);
         if (!runtimeState || runtimeState.sourceMarkdown !== incomingMarkdownRef.current) return false;
-        if (!attachVisualEditorRuntimeState(currentEditor, runtimeState)) return false;
+        if (!attachVisualEditorRuntimeState(currentEditor, runtimeState, runtimeInstanceIdRef.current)) return false;
         sourceMarkdownRef.current = runtimeState.sourceMarkdown;
         frontmatterPrefixRef.current = runtimeState.frontmatterPrefix;
         visualPaths.current = {
@@ -659,9 +685,21 @@ function MilkdownSurface({ performanceDocumentId, revision, markdown, filePath, 
         initialEmissionHandled.current = true;
         visualContentMutated.current = false;
         warmAttachmentRef.current = { documentId: key.documentId, revision: key.sourceRevision };
+        runtimeOwnerRef.current = { documentId: key.documentId, revision: key.sourceRevision };
         return true;
       },
       rebuildRuntime: () => {
+        const key = adapter.runtimeKey?.();
+        if (
+          key
+          && runtimeOwnerRef.current?.documentId === key.documentId
+          && runtimeOwnerRef.current.revision === key.sourceRevision
+        ) {
+          warmAttachmentRef.current = null;
+          return true;
+        }
+        if (!replaceEditorState(incomingMarkdownRef.current)) return false;
+        if (key) runtimeOwnerRef.current = { documentId: key.documentId, revision: key.sourceRevision };
         warmAttachmentRef.current = null;
         return true;
       },
@@ -683,6 +721,7 @@ function MilkdownSurface({ performanceDocumentId, revision, markdown, filePath, 
           pendingLocalEmissionsRef.current,
           fullMarkdown,
         );
+        visualContentMutated.current = false;
         onChangeRef.current(fullMarkdown);
       } catch (error) {
         console.warn('Could not validate visual editor state synchronization.', error);
@@ -814,6 +853,7 @@ function MilkdownSurface({ performanceDocumentId, revision, markdown, filePath, 
 
 export interface VisualEditorRuntimeState {
   kind: 'visual-editor-state-v1';
+  hostInstanceId: string;
   editorState: ProseMirrorEditorState;
   sourceMarkdown: string;
   frontmatterPrefix: string;
@@ -823,12 +863,14 @@ export interface VisualEditorRuntimeState {
 
 export function captureVisualEditorRuntimeState({
   editor,
+  hostInstanceId,
   sourceMarkdown,
   frontmatterPrefix,
   visualMarkdown,
   displayToOriginal,
 }: {
   editor: MilkdownEditor;
+  hostInstanceId: string;
   sourceMarkdown: string;
   frontmatterPrefix: string;
   visualMarkdown: string;
@@ -841,6 +883,7 @@ export function captureVisualEditorRuntimeState({
   if (!editorState) return null;
   return {
     kind: 'visual-editor-state-v1',
+    hostInstanceId,
     editorState,
     sourceMarkdown,
     frontmatterPrefix,
@@ -852,10 +895,35 @@ export function captureVisualEditorRuntimeState({
 export function attachVisualEditorRuntimeState(
   editor: MilkdownEditor,
   runtime: VisualEditorRuntimeState,
+  hostInstanceId = runtime.hostInstanceId,
 ): boolean {
   let attached = false;
   editor.action((ctx) => {
-    ctx.get(editorViewCtx).updateState(runtime.editorState);
+    const view = ctx.get(editorViewCtx);
+    if (runtime.hostInstanceId === hostInstanceId) {
+      view.updateState(runtime.editorState);
+      attached = true;
+      return;
+    }
+    try {
+      const currentState = view.state;
+      const doc = currentState.schema.nodeFromJSON(runtime.editorState.doc.toJSON());
+      let selection: Selection;
+      try {
+        selection = Selection.fromJSON(doc, runtime.editorState.selection.toJSON());
+      } catch {
+        selection = TextSelection.near(doc.resolve(Math.min(runtime.editorState.selection.from, doc.content.size)));
+      }
+      const transferableState = ProseMirrorEditorState.create({
+        schema: currentState.schema,
+        doc,
+        selection,
+        plugins: currentState.plugins,
+      });
+      view.updateState(transferableState);
+    } catch {
+      return;
+    }
     attached = true;
   });
   return attached;
@@ -878,6 +946,7 @@ function visualEditorRuntimeState(value: unknown): VisualEditorRuntimeState | nu
   const candidate = value as Partial<VisualEditorRuntimeState>;
   if (
     candidate.kind !== 'visual-editor-state-v1'
+    || typeof candidate.hostInstanceId !== 'string'
     || !candidate.editorState
     || typeof candidate.sourceMarkdown !== 'string'
     || typeof candidate.frontmatterPrefix !== 'string'
@@ -1059,6 +1128,7 @@ export function readVisualEditorStateSnapshot({
   flushPendingMetadataEdits,
   readFullMarkdown,
   markCommitted,
+  markSynchronized,
 }: {
   visualContentMutated: boolean;
   sourceMarkdown: string;
@@ -1066,6 +1136,7 @@ export function readVisualEditorStateSnapshot({
   flushPendingMetadataEdits: () => boolean;
   readFullMarkdown: () => string | null;
   markCommitted: (markdown: string) => void;
+  markSynchronized?: (markdown: string) => void;
 }): EditorReadResult | null {
   const pendingMetadataChanged = flushPendingMetadataEdits();
   if (!visualContentMutated && !pendingMetadataChanged) {
@@ -1079,12 +1150,16 @@ export function readVisualEditorStateSnapshot({
   const fullMarkdown = readFullMarkdown();
   if (fullMarkdown === null) return null;
   const changed = !equivalentVisualMarkdown(fullMarkdown, lastEmittedMarkdown);
+  if (!changed) markSynchronized?.(fullMarkdown);
   return {
     surface: 'visual',
     markdown: fullMarkdown,
     changed,
     markCommitted: changed
-      ? () => markCommitted(fullMarkdown)
+      ? () => {
+          markCommitted(fullMarkdown);
+          markSynchronized?.(fullMarkdown);
+        }
       : undefined,
   };
 }
@@ -1234,15 +1309,13 @@ function visualViewportTopLine(
   view: EditorView,
   headings: MarkdownHeading[],
   scroller: HTMLElement | Window,
-  sourceMarkdown: string,
-  frontmatterPrefix: string,
 ): number | null {
   if (headings.length === 0) return 1;
   const headingElements = Array.from(view.dom.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'))
     .filter((element) => !element.closest('.scie-md-visual-atom'));
   if (headingElements.length === 0) return headings[0]?.line ?? 1;
 
-  const lineByElement = mapVisualHeadingElementsToLines(view, headingElements, headings, sourceMarkdown, frontmatterPrefix);
+  const lineByElement = mapVisualHeadingElementsToLinesByText(headingElements, headings);
   const viewportTop = scroller instanceof Window ? 0 : scroller.getBoundingClientRect().top;
   const activationY = viewportTop + 96;
   let activeLine: number | null = null;
@@ -1261,44 +1334,6 @@ function visualViewportTopLine(
   }
 
   return activeLine ?? nextLine ?? headings[0]?.line ?? 1;
-}
-
-function mapVisualHeadingElementsToLines(
-  view: EditorView,
-  elements: HTMLElement[],
-  headings: MarkdownHeading[],
-  sourceMarkdown: string,
-  frontmatterPrefix: string,
-): Map<HTMLElement, number> {
-  const fallback = mapVisualHeadingElementsToLinesByText(elements, headings);
-  const headingLines = new Set(headings.map((heading) => `${heading.level}:${heading.line}`));
-  const lineByElement = new Map<HTMLElement, number>();
-  for (const element of elements) {
-    const level = Number(element.tagName.slice(1));
-    const line = sourceLineForHeadingElement(view, element, sourceMarkdown, frontmatterPrefix);
-    if (line !== null && headingLines.has(`${level}:${line}`)) {
-      lineByElement.set(element, line);
-      continue;
-    }
-    const fallbackLine = fallback.get(element);
-    if (fallbackLine) lineByElement.set(element, fallbackLine);
-  }
-  return lineByElement;
-}
-
-function sourceLineForHeadingElement(
-  view: EditorView,
-  element: HTMLElement,
-  sourceMarkdown: string,
-  frontmatterPrefix: string,
-): number | null {
-  try {
-    const position = Math.min(view.posAtDOM(element, 0) + 1, view.state.doc.content.size);
-    return visualSourceLineForPosition(view.state.doc, position, sourceMarkdown)
-      ?? visualLineForPosition(view, position, frontmatterPrefix);
-  } catch {
-    return null;
-  }
 }
 
 function mapVisualHeadingElementsToLinesByText(elements: HTMLElement[], headings: MarkdownHeading[]): Map<HTMLElement, number> {

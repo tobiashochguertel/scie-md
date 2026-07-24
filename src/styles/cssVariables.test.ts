@@ -57,6 +57,11 @@ describe('style CSS variables', () => {
     expect(appCss).toMatch(/\.editor-mode-toggle button\.selected:hover:not\(:disabled\),\s*\.editor-mode-toggle button\.selected:active:not\(:disabled\)\s*{[\s\S]*background:\s*transparent;[\s\S]*color:\s*var\(--surface\);[\s\S]*transform:\s*none;/);
   });
 
+  it('keeps visual caret and hover block highlights faint and independent', () => {
+    expect(appCss).toMatch(/\.visual-editor \.ProseMirror \.visual-active-block::after\s*{[\s\S]*background:\s*color-mix\(in srgb,\s*var\(--accent\),\s*transparent 93%\);/);
+    expect(appCss).toMatch(/\.visual-editor \.ProseMirror :is\(p, h1, h2, h3, h4, h5, h6, pre\):hover::after\s*{[\s\S]*background:\s*color-mix\(in srgb,\s*var\(--source-syntax-link\),\s*transparent 96%\);/);
+  });
+
   it('keeps structured surface tabs visibly selected without the moving mode pill', () => {
     expect(appCss).toMatch(/\.structured-surface-toggle button\.selected\s*{[\s\S]*border-color:\s*color-mix\(in srgb,\s*var\(--accent\),\s*var\(--border\)\s*22%\);[\s\S]*background:\s*color-mix\(in srgb,\s*var\(--accent\),\s*transparent\s*88%\);[\s\S]*color:\s*var\(--accent\);[\s\S]*font-weight:\s*750;/);
     expect(appCss).toMatch(/\.structured-surface-toggle button\.selected:hover:not\(:disabled\),\s*\.structured-surface-toggle button\.selected:active:not\(:disabled\)\s*{[\s\S]*border-color:\s*var\(--accent\);[\s\S]*background:\s*color-mix\(in srgb,\s*var\(--accent\),\s*transparent\s*84%\);[\s\S]*color:\s*var\(--accent\);[\s\S]*transform:\s*none;/);
@@ -74,11 +79,36 @@ describe('style CSS variables', () => {
   });
 
   it('keeps the Scienfy dotted reading surface subtle, scoped, and motion-safe', () => {
-    expect(scientificDocumentCss).toContain(':root[data-visual-style="scienfy"] .visual-editor .milkdown');
+    expect(scientificDocumentCss).toContain(':root[data-visual-style="scienfy"] .visual-editor [data-milkdown-root]');
     expect(scientificDocumentCss).toContain('radial-gradient(circle at 1px 1px, var(--scienfy-reading-page-dot');
+    expect(scientificDocumentCss).toMatch(/:root\[data-visual-style="scienfy"\]\s+\.visual-editor \.milkdown\s*{[\s\S]*background:\s*transparent;[\s\S]*box-shadow:\s*none;/);
+    expect(scientificDocumentCss).not.toContain('--scienfy-reading-frame-color');
     expect(appCss).toMatch(/:root\[data-visual-style="scienfy"\]\s+\.editor-stage:hover,[\s\S]*--scienfy-reading-page-dot:\s*var\(--scienfy-reading-dot-focus-color\);/);
     expect(combinedCss).toMatch(/@media print[\s\S]*\.editor-stage::before\s*{[\s\S]*display:\s*none !important;/);
     expect(combinedCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*transition:\s*none(?:\s*!important)?;/);
+  });
+
+  it('scopes the sampled layered dark UI palette to Scienfy', () => {
+    expect(appCss).toMatch(/:root\[data-theme="dark"\]\[data-visual-style="scienfy"\]\s*{[\s\S]*--bg:\s*#0d1117;[\s\S]*--editor-bg:\s*#0d1117;[\s\S]*--surface:\s*#1c2125;[\s\S]*--surface-soft:\s*#21252b;[\s\S]*--surface-subtle:\s*#101419;[\s\S]*--surface-muted:\s*#171a20;[\s\S]*--border:\s*#292d32;[\s\S]*--border-strong:\s*#373c40;[\s\S]*--button-bg:\s*#171a20;[\s\S]*--button-hover:\s*#21252b;[\s\S]*--text:\s*#c8d0d9;[\s\S]*--text-strong:\s*#e6edf3;[\s\S]*--text-muted:\s*#83898f;[\s\S]*--text-secondary:\s*#a2a7ad;[\s\S]*--focus-ring:\s*#a2a7ad;/);
+    expect(appCss).toMatch(/:root\[data-theme="dark"\]:is\(\[data-visual-style="scie-sans"\], \[data-visual-style="scie-sans-compact"\], \[data-visual-style="scienfy"\]\)\s*{[^}]*--bg:\s*#16191a;/);
+  });
+
+  it('keeps Scienfy semantic blocks color-led, unfilled, and regular-weight', () => {
+    expect(appCss).toMatch(/:root\[data-visual-style="scienfy"\]\s+\.directive-card\.is-rendered:not\(\.directive-figure\),[\s\S]*--directive-pad-x:\s*1\.1em;[\s\S]*--directive-text:\s*var\(--directive-tint\);[\s\S]*--directive-label:\s*var\(--directive-tint\);[\s\S]*--directive-bg:\s*transparent;[\s\S]*--directive-label-weight:\s*700;[\s\S]*--directive-separator-color:\s*var\(--directive-text\);[\s\S]*--directive-separator-strong-width:\s*7rem;[\s\S]*border:\s*0;[\s\S]*background:\s*transparent;/);
+    expect(appCss).toMatch(/:root\[data-visual-style="scienfy"\]\s+\.directive-card\.is-rendered:not\(\.directive-figure\) \.directive-render-body::before\s*{[\s\S]*margin-bottom:\s*0\.38em;[\s\S]*border:\s*0;[\s\S]*padding-bottom:\s*0\.3em;[\s\S]*var\(--directive-separator-strong-width\) 3px no-repeat,[\s\S]*100% 1px no-repeat;/);
+    expect(appCss).toMatch(/:root\[data-visual-style="scienfy"\]\s+\.scie-md-visual-atom-content > \.directive-card\.is-rendered:not\(\.directive-figure\) header\s*{[\s\S]*margin-bottom:\s*0\.38em;[\s\S]*border:\s*0;[\s\S]*padding-bottom:\s*0\.3em;[\s\S]*var\(--directive-separator-strong-width\) 3px no-repeat,[\s\S]*100% 1px no-repeat;/);
+    expect(appCss).toMatch(/:root\[data-visual-style="scienfy"\]\s+\.directive-card\.is-rendered:not\(\.directive-figure\) \.directive-render-body,[\s\S]*\.directive-card-body-rendered\s*{[\s\S]*font-weight:\s*400;/);
+    expect(appCss).toMatch(/:root\[data-theme="dark"\]\[data-visual-style="scienfy"\][\s\S]*--directive-text:\s*var\(--directive-tint\);[\s\S]*--directive-bg:\s*transparent;[\s\S]*border:\s*0;[\s\S]*background:\s*transparent;/);
+    expect(appCss).toMatch(/:root\[data-theme="dark"\]\[data-visual-style="scienfy"\]\s+\.directive-card\.is-rendered\.directive-tip,[\s\S]*--directive-tint:\s*#67c99a;/);
+    expect(appCss).toMatch(/:root\[data-theme="dark"\]\[data-visual-style="scienfy"\]\s+\.directive-card\.is-rendered\.directive-callout,[\s\S]*--directive-tint:\s*#72afe8;/);
+    expect(appCss).toMatch(/:root\[data-visual-style="scienfy"\]\s+\.directive-card\.is-rendered\.directive-result,[\s\S]*--directive-tint:\s*#c44a00;/);
+    expect(appCss).toMatch(/:root\[data-visual-style="scienfy"\]\s+\.directive-card\.is-rendered\.directive-warning,[\s\S]*--directive-tint:\s*#c44a00;/);
+    expect(appCss).toMatch(/:root\[data-visual-style="scienfy"\]\s+\.directive-card\.is-rendered\.directive-important,[\s\S]*--directive-tint:\s*#b82024;/);
+    expect(appCss).toMatch(/:root\[data-theme="dark"\]\[data-visual-style="scienfy"\]\s+\.directive-card\.is-rendered\.directive-result,[\s\S]*--directive-tint:\s*#f1b467;/);
+    expect(appCss).toMatch(/:root\[data-theme="dark"\]\[data-visual-style="scienfy"\]\s+\.directive-card\.is-rendered\.directive-warning,[\s\S]*--directive-tint:\s*#f1b467;/);
+    expect(appCss).toMatch(/:root\[data-theme="dark"\]\[data-visual-style="scienfy"\]\s+\.directive-card\.is-rendered\.directive-important,[\s\S]*--directive-tint:\s*#e05256;/);
+    expect(appCss).toMatch(/:root\[data-visual-style="scienfy"\]\s+\.visual-editor \.ProseMirror > \.scie-md-directive-atom\s*{[\s\S]*margin-top:[\s\S]*1\.08\);[\s\S]*margin-bottom:[\s\S]*0\.72\);/);
+    expect(appCss).toMatch(/:root\[data-visual-style="scienfy"\]\s+\.visual-editor \.ProseMirror > \.scie-md-directive-atom \.directive-card\.is-rendered:not\(\.directive-figure\)\s*{[\s\S]*padding-top:\s*0\.62em;[\s\S]*padding-bottom:\s*0\.26em;/);
   });
 
   it('keeps Scienfy document headings in a clear manuscript hierarchy', () => {
@@ -88,6 +118,17 @@ describe('style CSS variables', () => {
     expect(scientificDocumentCss).toMatch(/:root\[data-visual-style="scienfy"\]\s+\.visual-editor \.ProseMirror h2\s*{[\s\S]*font-weight:\s*720;[\s\S]*line-height:\s*1\.14;/);
     expect(scientificDocumentCss).toMatch(/:root\[data-visual-style="scienfy"\]\s+\.visual-editor \.ProseMirror h3\s*{[\s\S]*font-weight:\s*660;[\s\S]*line-height:\s*1\.18;/);
     expect(scientificDocumentCss).toMatch(/:root\[data-visual-style="scienfy"\]\s+\.visual-editor \.ProseMirror h4,[\s\S]*font-weight:\s*640;/);
+  });
+
+  it('keeps Cursor semantic blocks faint, borderless, and high-contrast', () => {
+    expect(appCss).toMatch(/:root\[data-visual-style="cursor"\]\s+\.directive-card\.is-rendered:not\(\.directive-figure\)\s*{[\s\S]*--directive-rail-width:\s*0;[\s\S]*--directive-bg:\s*color-mix\(in srgb,\s*var\(--directive-accent\),\s*transparent 95%\);[\s\S]*--directive-label:\s*var\(--directive-accent\);[\s\S]*--directive-text:\s*color-mix\(in srgb,\s*var\(--directive-accent\) 42%,\s*var\(--text-strong\)\);[\s\S]*--directive-body-size:\s*0\.91em;[\s\S]*border:\s*0;[\s\S]*background:\s*var\(--directive-bg\);/);
+    expect(appCss).toMatch(/:root\[data-visual-style="cursor"\]\s+\.directive-card\.is-rendered:not\(\.directive-figure\) \.directive-render-body\s*{[\s\S]*font-weight:\s*400;/);
+    expect(appCss).toMatch(/:root\[data-visual-style="cursor"\]\s+\.scie-md-visual-atom-content\s*>\s*\.directive-card\.is-rendered:not\(\.directive-figure\)\s*{[\s\S]*--directive-rail-width:\s*0;[\s\S]*--directive-bg:\s*color-mix\(in srgb,\s*var\(--directive-accent\),\s*transparent 95%\);[\s\S]*--directive-text:\s*color-mix\(in srgb,\s*var\(--directive-accent\) 42%,\s*var\(--text-strong\)\);[\s\S]*--directive-body-size:\s*0\.91em;[\s\S]*border:\s*0;[\s\S]*background:\s*var\(--directive-bg\);/);
+    expect(appCss).toMatch(/:root\[data-visual-style="cursor"\]\s+\.scie-md-visual-atom-content\s*>\s*\.directive-card\.is-rendered:not\(\.directive-figure\) \.directive-card-body-rendered\s*{[\s\S]*font-weight:\s*400;/);
+    expect(scientificDocumentCss).toMatch(/:root\[data-visual-style="cursor"\]\s+\.visual-editor \.ProseMirror h1:not\(:first-child\)\s*{[\s\S]*margin-top:[\s\S]*1\.18\);/);
+    expect(scientificDocumentCss).toMatch(/:root\[data-visual-style="cursor"\]\s+\.visual-editor \.ProseMirror h2\s*{[\s\S]*margin-top:[\s\S]*1\.18\);/);
+    expect(scientificDocumentCss).toMatch(/:root\[data-visual-style="cursor"\]\s+\.visual-editor \.ProseMirror h3\s*{[\s\S]*margin-top:[\s\S]*1\.2\);/);
+    expect(scientificDocumentCss).toMatch(/:root\[data-visual-style="cursor"\]\s+\.visual-editor \.ProseMirror h4,[\s\S]*margin:[\s\S]*1\.04\)/);
   });
 
   it('keeps muted text colors at WCAG AA contrast against their theme backgrounds', () => {
@@ -124,8 +165,8 @@ describe('style CSS variables', () => {
       ['#f4efe5', '#342515'],
       ['#f0f6fc', '#0d1117'],
       ['#ffffff', '#21262d'],
-      ['#ecf0f1', '#1a1d1e'],
-      ['#ffffff', '#2a2d31'],
+      ['#c8d0d9', '#0d1117'],
+      ['#e6edf3', '#21252b'],
       ['#f2f2f2', '#151515'],
       ['#ffffff', '#252525'],
       ['#f1f1f1', '#151515'],

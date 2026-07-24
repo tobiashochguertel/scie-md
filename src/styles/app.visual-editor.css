@@ -20,6 +20,32 @@
   padding-top: var(--editor-floating-top-safe);
 }
 
+.visual-editor .ProseMirror .visual-active-block,
+.visual-editor .ProseMirror :is(p, h1, h2, h3, h4, h5, h6, pre):hover {
+  position: relative;
+  isolation: isolate;
+}
+
+.visual-editor .ProseMirror .visual-active-block::after,
+.visual-editor .ProseMirror :is(p, h1, h2, h3, h4, h5, h6, pre):hover::after {
+  position: absolute;
+  inset-block: -0.08em;
+  right: -0.55rem;
+  left: -0.55rem;
+  border-radius: 4px;
+  content: '';
+  pointer-events: none;
+  z-index: -1;
+}
+
+.visual-editor .ProseMirror .visual-active-block::after {
+  background: color-mix(in srgb, var(--accent), transparent 93%);
+}
+
+.visual-editor .ProseMirror :is(p, h1, h2, h3, h4, h5, h6, pre):hover::after {
+  background: color-mix(in srgb, var(--source-syntax-link), transparent 96%);
+}
+
 .block-handle {
   position: absolute;
   left: 12px;

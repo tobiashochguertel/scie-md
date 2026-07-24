@@ -80,10 +80,10 @@ page after registration so this approval can be done without searching through
 Settings.
 
 Structured visual mode is capability-aware. JSON supports reviewed visual edits,
-JSONL records and CSV/TSV tables support guarded source-preserving edits, and
-YAML/TOML/XML are read-only visual previews until source-preserving write planners
-can preserve comments, ordering, and other format-specific source details. Source
-mode remains available for direct text editing.
+JSONL records and CSV/TSV tables support guarded source-preserving edits. The
+desktop app also exposes only the fixture-proven, source-preserving YAML, TOML, and
+XML visual operations; unsupported constructs remain source-only. Source mode
+remains available for direct text editing.
 
 ## VS Code Extension
 
@@ -101,14 +101,18 @@ To install it:
 Command-line installation also works:
 
 ```bash
-code --install-extension sciemd-vscode-1.1.0.vsix
+code --install-extension sciemd-vscode-1.1.1.vsix
 ```
 
 In VS Code, ScieMD registers Markdown as the default custom editor. Structured
 JSON, JSONL, YAML, TOML, and XML files are not hijacked as custom editors; use the
 **ScieMD: Open Structured Preview** command or context menu item for a read-only
 preview. The JSON/JSONL clipboard replacement command is off by default and must be
-explicitly enabled with `scieMd.structured.enableJsonActions`.
+explicitly enabled with `scieMd.structured.enableJsonActions`. The Markdown custom
+editor includes visual and source editing, rich formatted copy, retained fast tab
+returns, live word/line counts, 30%-200% zoom, the current visual-style catalog, and
+the bundled ScieMD font families. Native YAML/TOML/XML mutation planners remain
+desktop-owned rather than being emulated by the extension.
 
 ## Public Preview Status
 

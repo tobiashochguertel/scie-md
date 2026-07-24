@@ -25,6 +25,8 @@ export interface DocumentEditorGateway {
   surface(documentId: DocumentId): EditorSurface | null;
   read(documentId: DocumentId): EditorReadResult | null;
   flush(documentId: DocumentId): EditorReadResult | null;
+  replace(documentId: DocumentId, sourceText: string): boolean;
+  invalidateCachedRuntime(documentId: DocumentId): void;
   commit(documentId: DocumentId, onCommit: (sourceText: string) => void): string | null;
   focus(documentId: DocumentId): boolean;
   hasWarmRuntime(documentId: DocumentId, surface: EditorSurface): boolean;
@@ -75,7 +77,7 @@ export class DocumentKeyedEditorGateway implements DocumentEditorGateway {
       if (!attached) adapter.rebuildRuntime?.();
       documentPerformance.trace({
         name: 'runtime-attach', documentId, surface,
-        cache: attached && suspended?.kind === 'exact-state' ? 'hit' : 'miss',
+        cache: attached && suspended?.kind !== 'bounded-rebuild' ? 'hit' : 'miss',
         byteCount: suspended?.byteWeight ?? 0,
         phase: attached ? suspended?.kind : candidateWasWarm ? 'attach-rejected' : 'cache-miss',
       });
@@ -119,6 +121,15 @@ export class DocumentKeyedEditorGateway implements DocumentEditorGateway {
       phase: 'editor-gateway-flush',
     });
     return result;
+  }
+
+  replace(documentId: DocumentId, sourceText: string): boolean {
+    this.registry.invalidate(documentId);
+    return this.activeAdapter(documentId)?.replace(sourceText) ?? false;
+  }
+
+  invalidateCachedRuntime(documentId: DocumentId): void {
+    this.registry.invalidate(documentId);
   }
 
   commit(documentId: DocumentId, onCommit: (sourceText: string) => void): string | null {

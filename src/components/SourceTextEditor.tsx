@@ -7,9 +7,9 @@ import { xml as xmlLanguage } from '@codemirror/lang-xml';
 import { yaml as yamlLanguage } from '@codemirror/lang-yaml';
 import { lintGutter, linter } from '@codemirror/lint';
 import type { Diagnostic as CodeMirrorDiagnostic } from '@codemirror/lint';
-import { Annotation, Compartment, EditorState, Transaction } from '@codemirror/state';
+import { Annotation, Compartment, EditorState, StateEffect, StateField, Transaction } from '@codemirror/state';
 import type { Extension, TransactionSpec } from '@codemirror/state';
-import { Decoration, EditorView, drawSelection, keymap, ViewPlugin, WidgetType } from '@codemirror/view';
+import { Decoration, EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers, ViewPlugin, WidgetType } from '@codemirror/view';
 import type { DecorationSet, ViewUpdate } from '@codemirror/view';
 import type { DocumentFormat, FormatDiagnostic, SourceEditorCapabilities, SourceSemanticPresentationMode } from '@sciemd/core';
 import { formatByteLengthUtf8, formatBytes, formatDefinitionFor, quoteAnchorPrefix, quoteAnchorSuffix, sourceEditorCapabilitiesFor, sourceSemanticPresentationMode } from '@sciemd/core';
@@ -30,6 +30,33 @@ export type SourceTextFind = (from: number, to: number) => void;
 export type SourceTextSelection = EditorSelectionGetter;
 export type SourceTextContextMenuRequestHandler = (request: SourceTextContextMenuRequest) => boolean | void;
 const authoritativeSourceReconciliation = Annotation.define<boolean>();
+const setHoveredSourceLine = StateEffect.define<number | null>();
+const hoveredSourceLineField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update: (decorations, transaction) => {
+    let next = decorations.map(transaction.changes);
+    for (const effect of transaction.effects) {
+      if (!effect.is(setHoveredSourceLine)) continue;
+      next = effect.value === null
+        ? Decoration.none
+        : Decoration.set([
+            Decoration.line({ class: 'cm-hoverLine' }).range(
+              transaction.state.doc.lineAt(Math.min(effect.value, transaction.state.doc.length)).from,
+            ),
+          ]);
+    }
+    return next;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+const hoveredSourceLineByView = new WeakMap<EditorView, number | null>();
+
+function updateHoveredSourceLine(view: EditorView, from: number | null): void {
+  if (hoveredSourceLineByView.get(view) === from) return;
+  hoveredSourceLineByView.set(view, from);
+  view.dispatch({ effects: setHoveredSourceLine.of(from) });
+}
+
 const SOURCE_EDITOR_PROJECTION_CODE_UNITS = 128 * 1024;
 const SOURCE_EDITOR_PROJECTION_THRESHOLD_CODE_UNITS = 512 * 1024;
 
@@ -55,9 +82,28 @@ export function sourceEditorProjection(
     return { active: false, from: 0, to: sourceLength, sourceLength, text: sourceText };
   }
   const safeViewport = Math.max(1, Math.floor(viewportCodeUnits));
-  const from = Math.max(0, Math.min(Math.floor(requestedFrom), sourceLength - safeViewport));
-  const to = Math.min(sourceLength, from + safeViewport);
+  const requestedStart = Math.max(0, Math.min(Math.floor(requestedFrom), sourceLength - safeViewport));
+  const from = alignProjectionStart(sourceText, requestedStart);
+  const to = alignProjectionEnd(sourceText, Math.min(sourceLength, requestedStart + safeViewport));
   return { active: true, from, to, sourceLength, text: sourceText.slice(from, to) };
+}
+
+function alignProjectionStart(sourceText: string, offset: number): number {
+  if (offset <= 0 || offset >= sourceText.length) return offset;
+  const current = sourceText.charCodeAt(offset);
+  const previous = sourceText.charCodeAt(offset - 1);
+  if ((current >= 0xdc00 && current <= 0xdfff) && (previous >= 0xd800 && previous <= 0xdbff)) return offset - 1;
+  if (current === 10 && previous === 13) return offset - 1;
+  return offset;
+}
+
+function alignProjectionEnd(sourceText: string, offset: number): number {
+  if (offset <= 0 || offset >= sourceText.length) return offset;
+  const current = sourceText.charCodeAt(offset);
+  const previous = sourceText.charCodeAt(offset - 1);
+  if ((current >= 0xdc00 && current <= 0xdfff) && (previous >= 0xd800 && previous <= 0xdbff)) return offset + 1;
+  if (current === 10 && previous === 13) return offset + 1;
+  return offset;
 }
 
 export interface SourceTextMarker {
@@ -157,6 +203,7 @@ export function SourceTextEditor({
     [projectionFrom, semanticPresentationMode, value],
   );
   const projectionRef = useRef(projection);
+  const projectionLineOffsetRef = useRef(sourceLineOffset(value, projection.from));
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const adapterRef = useRef<EditorAdapter | null>(null);
@@ -191,6 +238,16 @@ export function SourceTextEditor({
   const longLineViewportCompartmentRef = useRef(new Compartment());
   const diagnosticsCompartmentRef = useRef(new Compartment());
   const extraExtensionsCompartmentRef = useRef(new Compartment());
+  const previousDocumentId = performanceDocumentIdRef.current;
+  if (previousDocumentId !== performanceDocumentId) {
+    performanceDocumentIdRef.current = performanceDocumentId;
+    valueRef.current = value;
+    revisionRef.current = revision;
+    projectionRef.current = projection;
+    projectionLineOffsetRef.current = sourceLineOffset(value, projection.from);
+    runtimeOwnerRef.current = null;
+    warmAttachmentRef.current = null;
+  }
   languageRef.current = language;
   sourceEditorProfileRef.current = sourceEditorProfile;
   diagnosticsRef.current = diagnostics;
@@ -279,7 +336,7 @@ export function SourceTextEditor({
       viewportAnimationFrame = null;
       const currentView = viewRef.current;
       if (!currentView) return;
-      const line = viewportTopLine(currentView) + sourceLineOffset(valueRef.current, projectionRef.current.from);
+      const line = viewportTopLine(currentView) + projectionLineOffsetRef.current;
       if (line === lastViewportLine) return;
       lastViewportLine = line;
       onViewportLineChangeRef.current?.(line);
@@ -297,6 +354,28 @@ export function SourceTextEditor({
           EditorState.tabSize.of(2),
           EditorState.allowMultipleSelections.of(true),
           drawSelection(),
+          highlightActiveLine(),
+          hoveredSourceLineField,
+          lineNumbers({
+            formatNumber: (lineNumber) => String(lineNumber + projectionLineOffsetRef.current),
+            domEventHandlers: {
+              mouseover: (view, line) => {
+                updateHoveredSourceLine(view, line.from);
+                return false;
+              },
+              mouseout: (view, _line, event) => {
+                const related = (event as MouseEvent).relatedTarget;
+                const relatedElement = related instanceof Element
+                  ? related
+                  : related instanceof Node
+                    ? related.parentElement
+                    : null;
+                if (relatedElement?.closest('.cm-lineNumbers .cm-gutterElement')) return false;
+                updateHoveredSourceLine(view, null);
+                return false;
+              },
+            },
+          }),
           lineWrappingCompartmentRef.current.of(createLineWrappingExtension(semanticPresentationModeRef.current)),
           longLineViewportCompartmentRef.current.of(createLongLineViewportExtension(semanticPresentationModeRef.current)),
           keymap.of([indentWithTab, ...defaultKeymap]),
@@ -327,6 +406,32 @@ export function SourceTextEditor({
             return [];
           }),
           EditorView.domEventHandlers({
+            mouseover: (event, view) => {
+              const target = event.target instanceof Element ? event.target : null;
+              const lineElement = target?.closest('.cm-line');
+              if (!lineElement || !view.contentDOM.contains(lineElement)) return false;
+              const related = event.relatedTarget instanceof Element
+                ? event.relatedTarget.closest('.cm-line')
+                : null;
+              if (related === lineElement) return false;
+              updateHoveredSourceLine(view, view.posAtDOM(lineElement, 0));
+              return false;
+            },
+            mouseout: (event, view) => {
+              const target = event.target instanceof Element ? event.target : null;
+              const lineElement = target?.closest('.cm-line');
+              if (!lineElement || !view.contentDOM.contains(lineElement)) return false;
+              const related = event.relatedTarget instanceof Element
+                ? event.relatedTarget.closest('.cm-line')
+                : null;
+              if (related === lineElement) return false;
+              if (related && view.contentDOM.contains(related)) {
+                updateHoveredSourceLine(view, view.posAtDOM(related, 0));
+              } else {
+                updateHoveredSourceLine(view, null);
+              }
+              return false;
+            },
             contextmenu: (event, view) => {
               const request = createSourceContextMenuRequest(
                 view,
@@ -337,7 +442,7 @@ export function SourceTextEditor({
               );
               if (!request) return false;
               const projectionOffset = projectionRef.current.from;
-              const lineOffset = sourceLineOffset(valueRef.current, projectionOffset);
+              const lineOffset = projectionLineOffsetRef.current;
               const handled = onContextMenuRequestRef.current?.({
                 ...request,
                 line: request.line + lineOffset,
@@ -414,6 +519,7 @@ export function SourceTextEditor({
                       projectionRef.current.from,
                     );
                     projectionRef.current = projected;
+                    projectionLineOffsetRef.current = sourceLineOffset(authoritative.sourceText, projected.from);
                     update.view.dispatch({
                       changes: { from: 0, to: update.view.state.doc.length, insert: projected.text },
                       annotations: [Transaction.addToHistory.of(false), authoritativeSourceReconciliation.of(true)],
@@ -484,6 +590,7 @@ export function SourceTextEditor({
       );
       if (projected.from !== projectionRef.current.from) {
         projectionRef.current = projected;
+        projectionLineOffsetRef.current = sourceLineOffset(valueRef.current, projected.from);
         setProjectionFrom(projected.from);
         currentView.setState(createEditorState(valueRef.current));
       }
@@ -504,6 +611,7 @@ export function SourceTextEditor({
       );
       if (projected.from !== projectionRef.current.from) {
         projectionRef.current = projected;
+        projectionLineOffsetRef.current = sourceLineOffset(valueRef.current, projected.from);
         setProjectionFrom(projected.from);
         currentView.setState(createEditorState(valueRef.current));
       }
@@ -532,8 +640,8 @@ export function SourceTextEditor({
         .join('\n\n');
       return {
         text,
-        line: docLine.number,
-        endLine: docEndLine.number,
+        line: docLine.number + projectionLineOffsetRef.current,
+        endLine: docEndLine.number + projectionLineOffsetRef.current,
         from: projectionOffset + firstRange.from,
         to: projectionOffset + lastRange.to,
         prefix: quoteAnchorPrefix(valueRef.current.slice(0, projectionOffset + firstRange.from)),
@@ -571,6 +679,7 @@ export function SourceTextEditor({
         if (!currentView) return false;
         const projected = sourceEditorProjection(nextText, semanticPresentationModeRef.current, projectionRef.current.from);
         projectionRef.current = projected;
+        projectionLineOffsetRef.current = sourceLineOffset(nextText, projected.from);
         currentView.dispatch({
           changes: { from: 0, to: currentView.state.doc.length, insert: projected.text },
         });
@@ -771,6 +880,7 @@ export function SourceTextEditor({
       phase: 'external-value-compare',
     });
     projectionRef.current = projected;
+    projectionLineOffsetRef.current = sourceLineOffset(value, projected.from);
     valueRef.current = value;
     if (revision !== undefined) revisionRef.current = revision;
     if (performanceDocumentId && revision !== undefined) {
@@ -1269,6 +1379,14 @@ function sourceLineOffset(sourceText: string, offset: number): number {
     if (sourceText.charCodeAt(index) === 10) lines += 1;
   }
   return lines;
+}
+
+export function projectedSourceLineNumber(
+  sourceText: string,
+  projectionFrom: number,
+  localLineNumber: number,
+): number {
+  return localLineNumber + sourceLineOffset(sourceText, projectionFrom);
 }
 
 function sourceOffsetForLine(sourceText: string, requestedLine: number): number {

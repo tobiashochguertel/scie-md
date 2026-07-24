@@ -189,6 +189,21 @@ describe('VS Code webview App protocol', () => {
     expect(typeof replaceMessage.editId).toBe('string');
   });
 
+  it('publishes each editor mutation to host-backed state without a local-only debounce window', () => {
+    renderWebview();
+    sendDocumentUpdate('# Original\n');
+
+    clickButton('visual edit');
+
+    expect(lastPosted('replaceDocument')).toMatchObject({
+      type: 'replaceDocument',
+      panelId: 'panel-1',
+      text: '# Visual draft\n',
+      baseText: '# Original\n',
+      baseVersion: 1,
+    });
+  });
+
   it('keeps read-only keyboard undo/redo commands free of pending edit payloads', () => {
     renderWebview();
     sendDocumentUpdate('# Locked\n', {
@@ -278,6 +293,34 @@ describe('VS Code webview App protocol', () => {
     clickMenuItem('Theme options', 'Sepia');
     expect(menuByLabel('Theme options')).toBeNull();
     expect(latestSavedState()).toMatchObject({ themeMode: 'sepia' });
+  });
+
+  it('shows document metrics and persists the full 30-200 percent font range', () => {
+    webviewMocks.vscodeApi.getState.mockReturnValue({
+      mode: 'visual',
+      themeMode: 'dark',
+      visualStyle: 'science',
+      fontScale: 0.35,
+    });
+
+    renderWebview();
+    sendDocumentUpdate('# Heading\n\nThree rendered words.\n');
+
+    expect(container.querySelector('.vscode-scie-document-metrics')?.textContent).toContain('4 words');
+    expect(container.querySelector('.vscode-scie-document-metrics')?.textContent).toContain('4 lines');
+    expect(container.querySelector('.vscode-scie-font-size-controls output')?.textContent).toBe('35%');
+    expect(document.documentElement.style.getPropertyValue('--font-scale')).toBe('0.35');
+
+    clickButtonByAriaLabel('Decrease font size');
+    expect(latestSavedState()).toMatchObject({ fontScale: 0.3 });
+    expect(buttonByAriaLabel('Decrease font size').disabled).toBe(true);
+
+    for (let index = 0; index < 34; index += 1) {
+      clickButtonByAriaLabel('Increase font size');
+    }
+    expect(latestSavedState()).toMatchObject({ fontScale: 2 });
+    expect(document.documentElement.style.getPropertyValue('--font-scale')).toBe('2');
+    expect(buttonByAriaLabel('Increase font size').disabled).toBe(true);
   });
 
   it('closes custom popovers with Escape and outside pointer down', () => {

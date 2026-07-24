@@ -126,6 +126,7 @@ try {
   }
   const coldCoverageReport = await report(page);
   assertColdCoverage(coldCoverageReport, 1 + interactiveCold.length);
+  console.log('[desktop-ui-performance] Measuring native cancellation.');
   const nativeCancellationSamples = await probeNativeCancellation(page, fixtures.cold.at(-1).path, 5);
   const nativeCancellationDistribution = distribution(nativeCancellationSamples.map((sample) => sample.stopMs));
   if (nativeCancellationSamples.length !== 5 || nativeCancellationSamples.some((sample) => !sample.accepted || !sample.stopped)) {
@@ -140,6 +141,7 @@ try {
   const secondName = basename(fixtures.cold[5].path);
   const firstVisualName = basename(fixtures.visualWarm[0].path);
   const secondVisualName = basename(fixtures.visualWarm[1].path);
+  console.log('[desktop-ui-performance] Measuring source input latency.');
   await activateTab(page, inputName);
   await selectSourceMode(page);
   const beforeInput = await report(page);
@@ -158,6 +160,7 @@ try {
   }
   await waitForActiveBackgroundReady(page, inputThreshold, Math.max(options.timeoutMs, 180_000));
 
+  console.log('[desktop-ui-performance] Measuring source warm reactivation.');
   const warmCandidatePreparationStart = lastSequence(await report(page));
   await activateTab(page, firstName);
   await waitFor(page, `window.__SCIEMD_DOCUMENT_PERFORMANCE__?.report().events.some((event) => event.name === 'editor-attach' && event.sequence > ${warmCandidatePreparationStart})`, options.timeoutMs);
@@ -177,26 +180,35 @@ try {
   await waitFor(page, `window.__SCIEMD_DOCUMENT_PERFORMANCE__?.report().events.some((event) => event.name === 'next-frame' && event.sequence > ${warmAcquisitionStart})`, 10_000);
   await waitForBackgroundReadyAfterAttach(page, warmAcquisitionStart, options.timeoutMs);
 
+  console.log('[desktop-ui-performance] Opening rich visual reactivation fixtures.');
   const visualFixtureOpenStart = lastSequence(await report(page));
+  console.log(`[desktop-ui-performance] Enqueueing ${firstVisualName}.`);
   await openPerformanceDocument(page, fixtures.visualWarm[0].path);
+  console.log(`[desktop-ui-performance] Enqueued ${firstVisualName}; awaiting editor attach.`);
   await waitFor(page, `Array.from(document.querySelectorAll('[role="tab"]')).some((tab) => (tab.getAttribute('aria-label') ?? tab.textContent ?? '').includes(${JSON.stringify(firstVisualName)}))`, options.timeoutMs);
   await waitFor(page, `window.__SCIEMD_DOCUMENT_PERFORMANCE__?.report().events.some((event) => event.name === 'editor-attach' && event.sequence > ${visualFixtureOpenStart})`, options.timeoutMs);
   await waitForBackgroundReadyAfterAttach(page, visualFixtureOpenStart, options.timeoutMs);
+  console.log(`[desktop-ui-performance] Opened ${firstVisualName}.`);
   const secondVisualFixtureOpenStart = lastSequence(await report(page));
+  console.log(`[desktop-ui-performance] Enqueueing ${secondVisualName}.`);
   await openPerformanceDocument(page, fixtures.visualWarm[1].path);
+  console.log(`[desktop-ui-performance] Enqueued ${secondVisualName}; awaiting editor attach.`);
   await waitFor(page, `Array.from(document.querySelectorAll('[role="tab"]')).some((tab) => (tab.getAttribute('aria-label') ?? tab.textContent ?? '').includes(${JSON.stringify(secondVisualName)}))`, options.timeoutMs);
   await waitFor(page, `window.__SCIEMD_DOCUMENT_PERFORMANCE__?.report().events.some((event) => event.name === 'editor-attach' && event.sequence > ${secondVisualFixtureOpenStart})`, options.timeoutMs);
   await waitForBackgroundReadyAfterAttach(page, secondVisualFixtureOpenStart, options.timeoutMs);
-  await activateTab(page, firstVisualName);
-  await selectVisualMode(page);
-  await activateTab(page, secondVisualName);
-  await selectVisualMode(page);
+  console.log(`[desktop-ui-performance] Opened ${secondVisualName}.`);
   await activateVisualTab(page, firstVisualName);
+  await activateVisualTab(page, secondVisualName);
+  await activateVisualTab(page, firstVisualName);
+  console.log('[desktop-ui-performance] Measuring rich visual warm reactivation.');
   const visualWarmSamples = [];
+  const visualWarmNextFrameSamples = [];
   const visualWarmAcquisitionStart = lastSequence(await report(page));
   for (let index = 0; index < 5; index += 1) {
     await activateVisualTab(page, secondVisualName);
-    visualWarmSamples.push(await activateVisualAndMeasure(page, firstVisualName));
+    const sample = await activateVisualAndMeasure(page, firstVisualName);
+    visualWarmSamples.push(sample.interactionReadyMs);
+    visualWarmNextFrameSamples.push(sample.nextFrameMs);
   }
   const visualWarmReport = await report(page);
   const visualWarmEvents = visualWarmReport.events.filter((event) => event.sequence > visualWarmAcquisitionStart);
@@ -204,14 +216,14 @@ try {
     event.name === 'runtime-attach'
     && event.surface === 'visual'
     && event.cache === 'hit'
-    && event.phase === 'exact-state'
+    && event.phase === 'transferable-state'
   ));
   if (visualWarmRuntimeHits.length < 10) {
     const runtimeEvidence = visualWarmEvents.filter((event) => (
       event.surface === 'visual'
       && ['runtime-suspend', 'runtime-attach', 'runtime-admission-refused', 'runtime-eviction'].includes(event.name)
     ));
-    throw new Error(`Visual warm A-B-A reached only ${visualWarmRuntimeHits.length} exact runtime hit(s); expected at least 10. Runtime evidence: ${JSON.stringify(runtimeEvidence)}.`);
+    throw new Error(`Visual warm A-B-A reached only ${visualWarmRuntimeHits.length} transferable runtime hit(s); expected at least 10. Runtime evidence: ${JSON.stringify(runtimeEvidence)}.`);
   }
   const visualWarmReplacements = visualWarmEvents.filter((event) => (
     event.surface === 'visual'
@@ -269,7 +281,8 @@ try {
     },
     distributions: {
       warm_reactivation_editor_attach_ms: distribution(warmSamples),
-      visual_warm_reactivation_next_frame_ms: distribution(visualWarmSamples),
+      visual_warm_reactivation_next_frame_ms: distribution(visualWarmNextFrameSamples),
+      visual_warm_reactivation_interaction_ready_ms: distribution(visualWarmSamples),
       cold_open_first_editable_ms: distribution([...coldProbes.flatMap((probe) => probe.outcome === 'editable' ? [probe.elapsedMs] : []), ...coldOpenDurations(coldCoverageReport)]),
       accepted_to_visibly_echoed_input_ms: distribution(inputLatencies),
       native_cancel_stop_ms: nativeCancellationDistribution,
@@ -290,6 +303,9 @@ try {
       acceptedInputReached: Boolean(inputAccepted),
       visiblyEchoedInputReached: Boolean(inputEchoed),
       warmActivationMainDocumentByteAcquisitions: postWarmAcquisitions.length,
+      visualWarmTransferableRuntimeHits: visualWarmRuntimeHits.length,
+      visualWarmFullDocumentReplacements: visualWarmReplacements.length,
+      visualWarmInteractionReadySamples: visualWarmSamples.length,
       contentFreeTrace: true,
       nativeRendererClockSubtraction: false,
       cumulativeWorkspaceTabsReached: workspacePressure,
@@ -360,8 +376,8 @@ async function createFixtures(directory) {
     structured.push({ id: `structured-${extension}`, path, bytes: Buffer.byteLength(source), state: 'clean' });
   }
   const visualWarm = [
-    await writeSized(directory, 'vw-a-512k', 512 * 1024, 'clean'),
-    await writeSized(directory, 'vw-b-768k', 768 * 1024, 'clean'),
+    await writeRichVisualSized(directory, 'vw-a-512k', 512 * 1024, 'clean'),
+    await writeRichVisualSized(directory, 'vw-b-768k', 768 * 1024, 'clean'),
   ];
   return { cold, workspace, structured, visualWarm };
 }
@@ -497,6 +513,51 @@ async function writeSized(directory, id, bytes, state, longLine = false) {
   return { id, path, bytes, state };
 }
 
+async function writeRichVisualSized(directory, id, bytes, state) {
+  const path = join(directory, `${id}.md`);
+  const prefix = '# ScieMD rich visual performance fixture\n\n';
+  const sectionCount = Math.max(96, Math.round(bytes / (4 * 1024)));
+  const sections = Array.from({ length: sectionCount }, (_, offset) => {
+    const index = offset + 1;
+    return [
+      `## Section ${index}`,
+      '',
+      `Paragraph ${index} contains **bold text**, *emphasis*, a [link](https://example.com/${index}), and a citation [@fixture${index}].`,
+      `__SCIEMD_FIXTURE_FILLER_${index}__`,
+      '',
+      `- Bullet ${index}.1`,
+      `- Bullet ${index}.2 with {{ variable_${index} }}`,
+      '',
+      `1. Ordered ${index}.1`,
+      `2. Ordered ${index}.2`,
+      '',
+      '| Sample | Value |',
+      '| --- | ---: |',
+      `| ${index} | ${index * 2} |`,
+      '',
+    ].join('\n');
+  });
+  const structuralSource = prefix + sections.join('');
+  const markerBytes = sections.reduce(
+    (total, _section, offset) => total + Buffer.byteLength(`__SCIEMD_FIXTURE_FILLER_${offset + 1}__`, 'utf8'),
+    0,
+  );
+  const remaining = bytes - Buffer.byteLength(structuralSource, 'utf8') + markerBytes;
+  if (remaining < 0) throw new Error(`Rich visual fixture structure exceeds its ${bytes}-byte target.`);
+  const fillerUnit = 'Scientific evidence remains readable and structurally representative. ';
+  let remainder = remaining;
+  const source = prefix + sections.map((section, offset) => {
+    const sectionsLeft = sectionCount - offset;
+    const fillerBytes = Math.floor(remainder / sectionsLeft);
+    remainder -= fillerBytes;
+    const filler = fillerUnit.repeat(Math.ceil(fillerBytes / fillerUnit.length)).slice(0, fillerBytes);
+    return section.replace(`__SCIEMD_FIXTURE_FILLER_${offset + 1}__`, filler);
+  }).join('');
+  if (Buffer.byteLength(source, 'utf8') !== bytes) throw new Error(`Rich visual fixture ${id} did not reach its exact byte target.`);
+  await writeFile(path, source, 'utf8');
+  return { id, path, bytes, state };
+}
+
 async function connectToFirstPage(port, timeoutMs, errorOutput) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -570,14 +631,26 @@ async function waitFor(page, expression, timeoutMs) {
 }
 
 async function selectSourceMode(page) {
-  const clicked = await evaluate(page, `(() => { const button = Array.from(document.querySelectorAll('[aria-label="Editor mode"] button')).find((item) => item.textContent?.includes('Source')); button?.click(); return Boolean(button); })()`);
-  if (!clicked) throw new Error('Could not reach the packaged Source mode control.');
+  const reached = await evaluate(page, `(() => {
+    const button = Array.from(document.querySelectorAll('[aria-label="Editor mode"] button')).find((item) => item.textContent?.includes('Source'));
+    if (!button) return false;
+    if (button.getAttribute('aria-pressed') !== 'true') button.click();
+    return true;
+  })()`);
+  if (!reached) throw new Error('Could not reach the packaged Source mode control.');
+  await waitFor(page, `Array.from(document.querySelectorAll('[aria-label="Editor mode"] button')).some((item) => item.textContent?.includes('Source') && item.getAttribute('aria-pressed') === 'true')`, 30_000);
   await waitFor(page, `Boolean(document.querySelector('.cm-content'))`, 30_000);
 }
 
 async function selectVisualMode(page) {
-  const clicked = await evaluate(page, `(() => { const button = Array.from(document.querySelectorAll('[aria-label="Editor mode"] button')).find((item) => item.textContent?.includes('Visual')); button?.click(); return Boolean(button); })()`);
-  if (!clicked) throw new Error('Could not reach the packaged Visual mode control.');
+  const reached = await evaluate(page, `(() => {
+    const button = Array.from(document.querySelectorAll('[aria-label="Editor mode"] button')).find((item) => item.textContent?.includes('Visual'));
+    if (!button) return false;
+    if (button.getAttribute('aria-pressed') !== 'true') button.click();
+    return true;
+  })()`);
+  if (!reached) throw new Error('Could not reach the packaged Visual mode control.');
+  await waitFor(page, `Array.from(document.querySelectorAll('[aria-label="Editor mode"] button')).some((item) => item.textContent?.includes('Visual') && item.getAttribute('aria-pressed') === 'true')`, 60_000);
   await waitFor(page, `Boolean(document.querySelector('.visual-editor .ProseMirror'))`, 60_000);
 }
 
@@ -587,10 +660,15 @@ async function clickTab(page, name) {
 }
 
 async function activateTab(page, name) {
+  const afterSequence = lastSequence(await report(page));
   await clickTab(page, name);
   await waitFor(page, `Array.from(document.querySelectorAll('[role="tab"]')).some((tab) => tab.getAttribute('aria-selected') === 'true' && (tab.getAttribute('aria-label') ?? tab.textContent ?? '').includes(${JSON.stringify(name)}))`, 60_000);
-  if (!await evaluate(page, `Boolean(document.querySelector('.cm-content'))`)) await selectSourceMode(page);
-  await waitFor(page, `Boolean(document.querySelector('.cm-content'))`, 30_000);
+  await waitFor(page, `(() => {
+    const tab = Array.from(document.querySelectorAll('[role="tab"]')).find((item) => item.getAttribute('aria-selected') === 'true' && (item.getAttribute('aria-label') ?? item.textContent ?? '').includes(${JSON.stringify(name)}));
+    const documentId = tab?.id?.startsWith('workspace-tab-') ? decodeURIComponent(tab.id.slice('workspace-tab-'.length)) : null;
+    return Boolean(documentId && window.__SCIEMD_DOCUMENT_PERFORMANCE__?.report().events.some((event) => event.name === 'editor-attach' && event.documentId === documentId && event.sequence > ${afterSequence}));
+  })()`, 60_000);
+  await selectSourceMode(page);
 }
 
 async function activateAndMeasure(page, name) {
@@ -606,21 +684,31 @@ async function activateAndMeasure(page, name) {
 }
 
 async function activateVisualTab(page, name) {
+  const afterSequence = lastSequence(await report(page));
   await clickTab(page, name);
   await waitFor(page, `Array.from(document.querySelectorAll('[role="tab"]')).some((tab) => tab.getAttribute('aria-selected') === 'true' && (tab.getAttribute('aria-label') ?? tab.textContent ?? '').includes(${JSON.stringify(name)}))`, 60_000);
-  await waitFor(page, `Boolean(document.querySelector('.visual-editor .ProseMirror'))`, 60_000);
+  await waitFor(page, `(() => {
+    const tab = Array.from(document.querySelectorAll('[role="tab"]')).find((item) => item.getAttribute('aria-selected') === 'true' && (item.getAttribute('aria-label') ?? item.textContent ?? '').includes(${JSON.stringify(name)}));
+    const documentId = tab?.id?.startsWith('workspace-tab-') ? decodeURIComponent(tab.id.slice('workspace-tab-'.length)) : null;
+    return Boolean(documentId && window.__SCIEMD_DOCUMENT_PERFORMANCE__?.report().events.some((event) => event.name === 'editor-attach' && event.documentId === documentId && event.surface === 'visual' && event.sequence > ${afterSequence}));
+  })()`, 60_000);
+  await selectVisualMode(page);
 }
 
 async function activateVisualAndMeasure(page, name) {
   const before = await report(page);
   const afterSequence = lastSequence(before);
   await activateVisualTab(page, name);
-  await waitFor(page, `window.__SCIEMD_DOCUMENT_PERFORMANCE__?.report().events.some((event) => event.name === 'next-frame' && event.surface === 'visual' && event.sequence > ${afterSequence})`, 10_000);
+  await waitFor(page, `window.__SCIEMD_DOCUMENT_PERFORMANCE__?.report().events.some((event) => event.name === 'visual-interaction-ready' && event.surface === 'visual' && event.sequence > ${afterSequence})`, 10_000);
   const after = await report(page);
   const start = after.events.find((event) => event.name === 'activation-start' && event.surface === 'visual' && event.sequence > afterSequence);
   const nextFrame = after.events.find((event) => event.name === 'next-frame' && event.surface === 'visual' && event.sequence > (start?.sequence ?? afterSequence));
-  if (!start || !nextFrame) throw new Error(`Visual activation trace for ${name} did not reach the next painted frame.`);
-  return Math.max(0, nextFrame.monotonicMs - start.monotonicMs);
+  const interactionReady = after.events.find((event) => event.name === 'visual-interaction-ready' && event.surface === 'visual' && event.sequence > (start?.sequence ?? afterSequence));
+  if (!start || !nextFrame || !interactionReady) throw new Error(`Visual activation trace for ${name} did not reach a painted, interaction-ready frame.`);
+  return {
+    nextFrameMs: Math.max(0, nextFrame.monotonicMs - start.monotonicMs),
+    interactionReadyMs: Math.max(0, interactionReady.monotonicMs - start.monotonicMs),
+  };
 }
 
 async function report(page) {
@@ -875,7 +963,7 @@ function assertRoundFiveBudgets({ warmSamples, visualWarmSamples, inputLatencies
   const workingSetLimit = performanceBudgets.process_working_set_mib * 1024 * 1024;
   const failures = [];
   if (warmP95 > performanceBudgets.warm_reactivation_editor_attach_p95_ms) failures.push(`warm reactivation p95 ${warmP95} ms exceeds ${performanceBudgets.warm_reactivation_editor_attach_p95_ms} ms`);
-  if (visualWarmP95 > performanceBudgets.visual_warm_reactivation_next_frame_p95_ms) failures.push(`visual warm reactivation p95 ${visualWarmP95} ms exceeds ${performanceBudgets.visual_warm_reactivation_next_frame_p95_ms} ms`);
+  if (visualWarmP95 > performanceBudgets.visual_warm_reactivation_interaction_ready_p95_ms) failures.push(`visual warm interaction-ready p95 ${visualWarmP95} ms exceeds ${performanceBudgets.visual_warm_reactivation_interaction_ready_p95_ms} ms`);
   if (inputP95 > performanceBudgets.visibly_echoed_input_p95_ms) failures.push(`accepted-to-visible input p95 ${inputP95} ms exceeds ${performanceBudgets.visibly_echoed_input_p95_ms} ms`);
   if (heapBytes === null || heapBytes > heapLimit) failures.push(`pre-pressure WebView heap ${heapBytes ?? 'unavailable'} bytes exceeds ${heapLimit} bytes`);
   if (pressureProbe.webviewHeapBytes === null || pressureProbe.webviewHeapBytes > heapLimit) failures.push(`pressure WebView heap ${pressureProbe.webviewHeapBytes ?? 'unavailable'} bytes exceeds ${heapLimit} bytes (renderedSourceCodeUnits=${pressureProbe.renderedSourceCodeUnits ?? 'unavailable'}, coldTransitions=${JSON.stringify(pressureProbe.coldTransitions)}, analysis=${JSON.stringify(pressureProbe.analysisRuntime)})`);

@@ -13,6 +13,7 @@ export type WorkspaceStartupWinner =
   | { kind: 'recovery'; documentId: string }
   | { kind: 'manifest'; documentId: string }
   | { kind: 'orphan-untitled-recovery'; documentId: string }
+  | { kind: 'orphan-recovery'; documentId: string }
   | { kind: 'welcome' };
 
 export type WorkspaceRestoreIssue =
@@ -73,9 +74,11 @@ export function selectWorkspaceStartupWinner({
   const orphanUntitled = recoveryEntries.find((entry) => (
     entry.locator.kind === 'untitled' && !manifest?.documents.some((document) => document.documentId === entry.documentId)
   ));
-  return orphanUntitled
-    ? { kind: 'orphan-untitled-recovery', documentId: orphanUntitled.documentId }
-    : { kind: 'welcome' };
+  if (orphanUntitled) return { kind: 'orphan-untitled-recovery', documentId: orphanUntitled.documentId };
+  const orphanFile = recoveryEntries.find((entry) => (
+    entry.locator.kind === 'file' && !manifest?.documents.some((document) => document.documentId === entry.documentId)
+  ));
+  return orphanFile ? { kind: 'orphan-recovery', documentId: orphanFile.documentId } : { kind: 'welcome' };
 }
 
 export async function restoreWorkspace(options: RestoreWorkspaceOptions): Promise<WorkspaceRestoreResult> {
@@ -86,7 +89,7 @@ export async function restoreWorkspace(options: RestoreWorkspaceOptions): Promis
   const manifestDocuments = options.manifest?.documents ?? [];
   const manifestIds = new Set(manifestDocuments.map((entry) => entry.documentId));
   const orphanDocuments = options.recoveryEntries
-    .filter((entry) => entry.locator.kind === 'untitled' && !manifestIds.has(entry.documentId))
+    .filter((entry) => !manifestIds.has(entry.documentId))
     .map(manifestDocumentForRecovery);
   const outcomes: WorkspaceRestoreOutcome[] = [];
   const candidates = deduplicateCandidates([...manifestDocuments, ...orphanDocuments], outcomes);
@@ -233,10 +236,11 @@ async function hydrateDocument(
       external: errorCode === 'NOT_FOUND' ? 'missing' : errorCode ? 'unknown' : 'inSync',
       access: errorCode === 'PERMISSION_DENIED' ? 'permissionLost' : errorCode === 'CLOUD_UNAVAILABLE' ? 'cloudUnavailable' : created.lifecycle.access,
       recovery: currentRecovery ? 'current' : created.lifecycle.recovery,
+      ...(reference && !currentRecovery ? { recovery: 'failed' as const } : {}),
     },
   });
   const restoredFromRecovery = Boolean(currentRecovery);
-  const actionRequired = Boolean(errorCode) && !restoredFromRecovery;
+  const actionRequired = (Boolean(errorCode) || Boolean(reference && !currentRecovery)) && !restoredFromRecovery;
   return {
     record,
     outcome: {

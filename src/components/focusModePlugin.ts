@@ -1,6 +1,6 @@
 import { $prose } from '@milkdown/kit/utils';
 import { Plugin, PluginKey } from '@milkdown/prose/state';
-import type { Node as ProseNode } from '@milkdown/prose/model';
+import type { Node as ProseNode, ResolvedPos } from '@milkdown/prose/model';
 import { Decoration, DecorationSet } from '@milkdown/prose/view';
 import type { EditorView } from '@milkdown/prose/view';
 
@@ -10,7 +10,6 @@ interface FocusModeState {
 }
 
 const focusModePluginKey = new PluginKey<FocusModeState>('scieMdFocusMode');
-const MAX_FOCUS_DECORATIONS = 1000;
 
 export const focusModePlugin = $prose(() => new Plugin({
   key: focusModePluginKey,
@@ -40,17 +39,31 @@ export const focusModePlugin = $prose(() => new Plugin({
 }));
 
 function buildFocusModeState(doc: ProseNode, selectionFrom: number): FocusModeState {
-  const activeBlockPos = findTopLevelBlockPosition(doc, selectionFrom);
+  const resolved = doc.resolve(Math.max(0, Math.min(selectionFrom, doc.content.size)));
+  const activeBlock = findTopLevelBlockRange(resolved);
+  const activeBlockPos = activeBlock?.from ?? 0;
   const decorations: Decoration[] = [];
+  const activeTextblock = findActiveTextblockRange(resolved);
 
-  doc.forEach((node, offset) => {
-    if (decorations.length >= MAX_FOCUS_DECORATIONS) return;
-    const from = offset;
-    const to = offset + node.nodeSize;
-    decorations.push(Decoration.node(from, to, {
-      class: offset === activeBlockPos ? 'focus-active-block' : 'focus-dimmed-block',
+  if (activeBlock) {
+    decorations.push(Decoration.node(activeBlock.from, activeBlock.to, {
+      class: activeTextblock
+        && activeTextblock.from === activeBlock.from
+        && activeTextblock.to === activeBlock.to
+        ? 'focus-active-block visual-active-block'
+        : 'focus-active-block',
     }));
-  });
+  }
+
+  if (activeTextblock && (
+    !activeBlock
+    || activeTextblock.from !== activeBlock.from
+    || activeTextblock.to !== activeBlock.to
+  )) {
+    decorations.push(Decoration.node(activeTextblock.from, activeTextblock.to, {
+      class: 'visual-active-block',
+    }));
+  }
 
   return {
     decorations: DecorationSet.create(doc, decorations),
@@ -58,16 +71,28 @@ function buildFocusModeState(doc: ProseNode, selectionFrom: number): FocusModeSt
   };
 }
 
-function findTopLevelBlockPosition(doc: ProseNode, position: number): number {
-  let currentOffset = 0;
-  for (let index = 0; index < doc.childCount; index += 1) {
-    const child = doc.child(index);
-    const from = currentOffset;
-    const to = currentOffset + child.nodeSize;
-    if (position >= from && position <= to + 1) return from;
-    currentOffset = to;
+function findActiveTextblockRange(
+  resolved: ResolvedPos,
+): { from: number; to: number } | null {
+  for (let depth = resolved.depth; depth > 0; depth -= 1) {
+    const node = resolved.node(depth);
+    if (!node.isTextblock) continue;
+    const from = resolved.before(depth);
+    return { from, to: from + node.nodeSize };
   }
-  return 0;
+  const nodeAfter = resolved.nodeAfter;
+  if (!nodeAfter?.isTextblock) return null;
+  return { from: resolved.pos, to: resolved.pos + nodeAfter.nodeSize };
+}
+
+function findTopLevelBlockRange(resolved: ResolvedPos): { from: number; to: number } | null {
+  if (resolved.depth > 0) {
+    const from = resolved.before(1);
+    return { from, to: from + resolved.node(1).nodeSize };
+  }
+  const nodeAfter = resolved.nodeAfter;
+  if (!nodeAfter) return null;
+  return { from: resolved.pos, to: resolved.pos + nodeAfter.nodeSize };
 }
 
 function maybeTypewriterScroll(view: EditorView): void {

@@ -27,7 +27,7 @@ vite.stderr.on('data', (chunk) => {
   viteOutput += chunk.toString();
 });
 
-rmSync(browserUserDataDir, { recursive: true, force: true });
+rmSync(browserUserDataDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 });
 mkdirSync(browserUserDataDir, { recursive: true });
 
 const browser = spawn(browserPath, [
@@ -115,7 +115,7 @@ try {
     waitForExit(browser, 5_000),
     waitForExit(vite, 5_000),
   ]);
-  rmSync(browserUserDataDir, { recursive: true, force: true });
+  rmSync(browserUserDataDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 });
 }
 
 function resolveBrowserPath() {

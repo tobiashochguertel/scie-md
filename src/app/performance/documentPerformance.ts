@@ -17,6 +17,7 @@ export type DocumentPerformanceEventName =
   | 'active-projection'
   | 'editor-attach'
   | 'next-frame'
+  | 'visual-interaction-ready'
   | 'input-accepted'
   | 'input-echoed'
   | 'background-ready'

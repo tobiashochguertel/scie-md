@@ -3,7 +3,7 @@ import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { describe, expect, it } from 'vitest';
 import { parseFrontmatter } from '@sciemd/core';
-import { markdownTextblockStartLines, textblockIndexAtPosition, visualSourceLineForPosition } from './visualSourceMapping';
+import { createVisualSourcePositionIndex, markdownTextblockStartLines, textblockIndexAtPosition, visualSourceLineForPosition } from './visualSourceMapping';
 
 describe('visualSourceMapping', () => {
   it('maps a visual list-item selection back to the exact source list line with front matter and variables', async () => {
@@ -95,6 +95,29 @@ describe('visualSourceMapping', () => {
     ].join('\n');
 
     expect(markdownTextblockStartLines(markdown)).toEqual([1, 10]);
+  });
+
+  it('builds one revision index that serves repeated positions in a structurally rich document', async () => {
+    const markdown = Array.from({ length: 240 }, (_, index) => [
+      `## Section ${index + 1}`,
+      '',
+      `Paragraph ${index + 1}.`,
+      '',
+      `- Item ${index + 1}`,
+    ].join('\n')).join('\n\n');
+    const editor = await createEditor(markdown);
+    const view = editor.ctx.get(editorViewCtx);
+    const index = createVisualSourcePositionIndex(view.state.doc, markdown);
+    const first = findTextPosition(view.state.doc, 'Section 1');
+    const middle = findTextPosition(view.state.doc, 'Section 120');
+    const last = findTextPosition(view.state.doc, 'Section 240');
+
+    expect(index.lineAt(first)).toBe(1);
+    expect(index.lineAt(middle)).toBe(715);
+    expect(index.lineAt(last)).toBe(1435);
+    expect(visualSourceLineForPosition(view.state.doc, last, markdown)).toBe(1435);
+
+    await editor.destroy();
   });
 });
 

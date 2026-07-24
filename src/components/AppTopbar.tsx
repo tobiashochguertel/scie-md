@@ -71,8 +71,7 @@ export type AppTopbarMenuId =
   | 'review'
   | 'tools'
   | 'help'
-  | 'visual-style'
-  | 'theme';
+  | 'visual-style';
 
 type InlineFormat = 'bold' | 'italic' | 'code';
 
@@ -157,6 +156,7 @@ interface AppTopbarProps {
   onStructuredSurfaceChange?: (surface: StructuredSurfaceId) => void;
   onSetVisualStyle: (style: VisualStyleId) => void;
   onSetThemeMode: (themeMode: ThemeMode) => void;
+  onCycleTheme: () => void;
   onIncreaseFont: () => void;
   onDecreaseFont: () => void;
   onResetFont: () => void;
@@ -289,6 +289,7 @@ export function AppTopbar({
   onStructuredSurfaceChange,
   onSetVisualStyle,
   onSetThemeMode,
+  onCycleTheme,
   onIncreaseFont,
   onDecreaseFont,
   onResetFont,
@@ -499,37 +500,14 @@ export function AppTopbar({
             )}
           </div>
         )}
-        <div className="topbar-popover-anchor">
-          <button
-            className="topbar-icon-button"
-            aria-label={`Theme: ${themeMode}`}
-            title={`Theme: ${themeMode}`}
-            aria-haspopup="menu"
-            aria-expanded={activeMenu === 'theme'}
-            aria-controls="topbar-theme-menu"
-            onClick={() => onToggleMenu('theme')}
-          >
-            {themeMode === 'light' ? <Sun size={16} /> : themeMode === 'sepia' ? <Sunset size={16} /> : themeMode === 'system' ? <Monitor size={16} /> : <Moon size={16} />}
-          </button>
-          {activeMenu === 'theme' && (
-            <div id="topbar-theme-menu" className="app-menu-panel topbar-choice-menu topbar-theme-menu" role="menu" aria-label="Theme options">
-              {themeOptions.map((option) => {
-                const Icon = option.icon;
-                return (
-                  <MenuItem
-                    key={option.id}
-                    icon={<Icon size={15} />}
-                    checked={themeMode === option.id}
-                    role="menuitemradio"
-                    onSelect={() => runMenuAction(() => onSetThemeMode(option.id))}
-                  >
-                    {option.label}
-                  </MenuItem>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        <button
+          className="topbar-icon-button"
+          aria-label={`Theme: ${themeMode}`}
+          title={`Theme: ${themeMode}. Click to switch theme.`}
+          onClick={onCycleTheme}
+        >
+          {themeMode === 'light' ? <Sun size={16} /> : themeMode === 'sepia' ? <Sunset size={16} /> : themeMode === 'system' ? <Monitor size={16} /> : <Moon size={16} />}
+        </button>
         <button
           className="topbar-icon-button"
           aria-label="Toggle focus mode"
@@ -645,6 +623,7 @@ interface RenderMenuContext extends Omit<AppTopbarProps,
   | 'onWindowMaximize'
   | 'onWindowMinimize'
   | 'onOpenSlashMenu'
+  | 'onCycleTheme'
 > {
   runMenuAction: (action: () => void) => void;
 }

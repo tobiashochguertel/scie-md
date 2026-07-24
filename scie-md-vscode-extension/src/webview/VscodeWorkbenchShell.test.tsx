@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   VscodeEditorStage,
   VscodeDataSidebar,
+  VscodeDocumentStatusBar,
   VscodeMarkdownToolbar,
   VscodeReadOnlyBanner,
   VscodeStartupPanel,
@@ -31,14 +32,16 @@ describe('VS Code workbench shell components', () => {
   });
 
   it('renders the topbar, toolbar, editor stage, status strip, and overlay slots', () => {
-    renderWorkbench({ noteCount: 2, variableCount: 5, variantCount: 1 });
+    renderWorkbench({ wordCount: 234, lineCount: 18, fontScale: 1 });
 
     const shell = container.querySelector<HTMLElement>('.vscode-scie-workbench');
     expect(shell).not.toBeNull();
     expect(shell?.dataset.editorMode).toBe('visual');
     expect(container.querySelector('.vscode-scie-topbar')?.textContent).toContain('ScieMD');
     expect(container.querySelector('.vscode-scie-toolbar')).not.toBeNull();
-    expect(container.querySelector('.vscode-scie-metrics')?.textContent).toContain('2 notes');
+    expect(container.querySelector('.vscode-scie-document-metrics')?.textContent).toContain('234 words');
+    expect(container.querySelector('.vscode-scie-document-metrics')?.textContent).toContain('18 lines');
+    expect(container.querySelector('.vscode-scie-font-size-controls output')?.textContent).toBe('100%');
     expect(container.querySelector('.vscode-scie-banner')?.textContent).toContain('Readonly from VS Code');
     expect(container.querySelector('.vscode-scie-content')?.getAttribute('data-data-sidebar-open')).toBe('true');
     expect(container.querySelector('.vscode-scie-data-sidebar')?.textContent).toContain('cohort_n');
@@ -53,15 +56,16 @@ describe('VS Code workbench shell components', () => {
   });
 
   it('keeps one stable editor stage when toolbar state changes', () => {
-    renderWorkbench({ noteCount: 1, variableCount: 1, variantCount: 1 });
+    renderWorkbench({ wordCount: 1, lineCount: 1, fontScale: 1 });
     const stageBefore = container.querySelector('.vscode-scie-editor-stage');
 
-    renderWorkbench({ noteCount: 3, variableCount: 2, variantCount: 1 });
+    renderWorkbench({ wordCount: 3, lineCount: 2, fontScale: 0.95 });
     const stageAfter = container.querySelector('.vscode-scie-editor-stage');
 
     expect(container.querySelectorAll('.vscode-scie-editor-stage')).toHaveLength(1);
     expect(stageAfter).toBe(stageBefore);
-    expect(container.querySelector('.vscode-scie-metrics')?.textContent).toContain('3 notes');
+    expect(container.querySelector('.vscode-scie-document-metrics')?.textContent).toContain('3 words');
+    expect(container.querySelector('.vscode-scie-font-size-controls output')?.textContent).toBe('95%');
     expect(container.querySelector('[data-testid="visual-editor-slot"]')?.textContent).toBe('Visual editor');
   });
 
@@ -147,13 +151,13 @@ describe('VS Code workbench shell components', () => {
 });
 
 function renderWorkbench({
-  noteCount,
-  variableCount,
-  variantCount,
+  wordCount,
+  lineCount,
+  fontScale,
 }: {
-  noteCount: number;
-  variableCount: number;
-  variantCount: number;
+  wordCount: number;
+  lineCount: number;
+  fontScale: number;
 }): void {
   const noop = vi.fn();
   act(() => {
@@ -184,11 +188,17 @@ function renderWorkbench({
         toolbar={(
           <VscodeMarkdownToolbar
             documentReadOnly={false}
-            noteCount={noteCount}
-            variableCount={variableCount}
-            variantCount={variantCount}
             onInsertNote={noop}
             onInsertVersion={noop}
+          />
+        )}
+        statusbar={(
+          <VscodeDocumentStatusBar
+            wordCount={wordCount}
+            lineCount={lineCount}
+            fontScale={fontScale}
+            onDecreaseFont={noop}
+            onIncreaseFont={noop}
           />
         )}
         startupPanel={<VscodeStartupPanel />}

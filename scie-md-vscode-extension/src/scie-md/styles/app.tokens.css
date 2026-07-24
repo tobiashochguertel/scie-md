@@ -456,7 +456,6 @@
   --scienfy-reading-dot-space: 18px;
   --scienfy-reading-dot-color: color-mix(in srgb, var(--accent), transparent 92%);
   --scienfy-reading-dot-focus-color: color-mix(in srgb, var(--accent), transparent 88%);
-  --scienfy-reading-frame-color: color-mix(in srgb, var(--border-strong), transparent 38%);
   --scienfy-reading-stage-dot-color: color-mix(in srgb, var(--text), transparent 94%);
   --table-bg: var(--surface);
   --table-alt-bg: var(--surface-soft);
@@ -1058,6 +1057,48 @@
   --table-text: #ecf0f1;
   --table-head-text: #ffffff;
   --table-border: #44474a;
+}
+
+/*
+ * Scienfy dark UI palette sampled from the supplied Codex workbench reference.
+ * This override is deliberately style-specific: the Scie Sans families retain
+ * their existing neutral dark palette while Scienfy adopts the deeper layered
+ * canvas, chrome, controls, borders, and text hierarchy below.
+ */
+:root[data-theme="dark"][data-visual-style="scienfy"] {
+  --bg: #0d1117;
+  --app-bg: #0d1117;
+  --editor-bg: #0d1117;
+  --surface: #1c2125;
+  --surface-soft: #21252b;
+  --surface-subtle: #101419;
+  --surface-muted: #171a20;
+  --border: #292d32;
+  --border-subtle: #292d32;
+  --border-strong: #373c40;
+  --button-bg: #171a20;
+  --button-hover: #21252b;
+  --text: #c8d0d9;
+  --text-strong: #e6edf3;
+  --text-muted: #83898f;
+  --text-secondary: #a2a7ad;
+  --focus-ring: #a2a7ad;
+  --accent: #c8d0d9;
+  --accent-soft: #83898f;
+  --accent-contrast: #0d1117;
+  --shadow: rgb(0 0 0 / 48%);
+  --shadow-lg: 0 18px 48px rgb(0 0 0 / 52%);
+  --visual-inline-code-bg: #21252b;
+  --visual-inline-code-color: #e6edf3;
+  --visual-code-bg: #101419;
+  --visual-code-color: #e6edf3;
+  --visual-hr-color: #292d32;
+  --table-bg: #0d1117;
+  --table-alt-bg: #101419;
+  --table-head-bg: #21252b;
+  --table-text: #c8d0d9;
+  --table-head-text: #e6edf3;
+  --table-border: #373c40;
 }
 
 :root[data-visual-style="science"] {

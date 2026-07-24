@@ -63,6 +63,7 @@ interface AppEditorStageProps {
   activeHeadingId: string | null;
   activeNavigationLine: ComponentProps<typeof MetadataRail>['currentLine'];
   navigationHeadings: ComponentProps<typeof VisualMarkdownEditor>['outlineHeadings'];
+  visualWarmRuntimeExpected?: boolean;
   visualEditor: Editor | undefined;
   layerTwoDocument: ComponentProps<typeof MetadataRail>['document'];
   protectedBlocks: ComponentProps<typeof MetadataRail>['protectedBlocks'];
@@ -191,6 +192,7 @@ export function AppEditorStage({
   activeHeadingId,
   activeNavigationLine,
   navigationHeadings,
+  visualWarmRuntimeExpected = false,
   visualEditor,
   layerTwoDocument,
   protectedBlocks,
@@ -830,6 +832,7 @@ export function AppEditorStage({
           <VisualMarkdownEditor
             performanceDocumentId={documentId}
             revision={sourceRevision}
+            warmRuntimeExpected={visualWarmRuntimeExpected}
             markdown={markdown}
             filePath={filePath}
             onChange={onMarkdownChange}

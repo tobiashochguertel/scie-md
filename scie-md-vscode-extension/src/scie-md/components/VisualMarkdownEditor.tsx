@@ -5,6 +5,7 @@ import type { Editor as MilkdownEditor } from '@milkdown/kit/core';
 import { TextSelection } from '@milkdown/prose/state';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
+import { clipboard } from '@milkdown/kit/plugin/clipboard';
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener';
 import { Milkdown, MilkdownProvider, useEditor } from '@milkdown/react';
 import type { EditorView } from '@milkdown/prose/view';
@@ -41,6 +42,25 @@ export interface VisualMarkdownJumpTarget {
 export type VisualMarkdownJump = (target: VisualMarkdownJumpTarget) => void;
 export type VisualMarkdownFind = (query: string, occurrence: number, caseSensitive: boolean) => void;
 export type VisualMarkdownSelection = EditorSelectionGetter;
+
+export interface VisualClipboardPayload {
+  html: string;
+  text: string;
+}
+
+export function visualClipboardPayload(editor: MilkdownEditor): VisualClipboardPayload | null {
+  let payload: VisualClipboardPayload | null = null;
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    if (view.state.selection.empty) return;
+    const serialized = view.serializeForClipboard(view.state.selection.content());
+    payload = {
+      html: serialized.dom.innerHTML,
+      text: serialized.text,
+    };
+  });
+  return payload;
+}
 
 interface VisualMarkdownEditorProps {
   markdown: string;
@@ -183,6 +203,7 @@ function MilkdownSurface({ markdown, filePath, onChange, onEditorReady, onInsert
         .use(scieMetadataPlugins)
         .use(commonmark)
         .use(gfm)
+        .use(clipboard)
         .use(mathPreviewPlugin)
         .use(createCitationHoverPlugin(() => citationEntriesRef.current, () => citationKeysRef.current, () => onEditCitationRef.current))
         .use(createVariablePreviewPlugin(
@@ -500,6 +521,7 @@ function MilkdownSurface({ markdown, filePath, onChange, onEditorReady, onInsert
     const editor = editorRef.current;
     if (loading || !editor || markdown === lastEmittedMarkdown.current) return;
 
+    const viewSnapshot = captureVisualEditorView(editor);
     const split = splitVisualMarkdown(markdown);
     initialEmissionHandled.current = true;
     visualContentMutated.current = false;
@@ -508,6 +530,7 @@ function MilkdownSurface({ markdown, filePath, onChange, onEditorReady, onInsert
     visualPaths.current = nextVisualPaths;
     applyingExternalUpdate.current = true;
     editor.action(replaceAll(nextVisualPaths.markdown, true));
+    restoreVisualEditorView(editor, viewSnapshot);
     queueMicrotask(() => {
       applyingExternalUpdate.current = false;
       lastEmittedMarkdown.current = markdown;
@@ -532,6 +555,38 @@ function MilkdownSurface({ markdown, filePath, onChange, onEditorReady, onInsert
       <Milkdown />
     </div>
   );
+}
+
+interface VisualEditorViewSnapshot {
+  from: number;
+  to: number;
+  scrollTop: number;
+}
+
+function captureVisualEditorView(editor: MilkdownEditor): VisualEditorViewSnapshot {
+  let snapshot: VisualEditorViewSnapshot = { from: 0, to: 0, scrollTop: 0 };
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    const scroller = findScrollContainer(view.dom);
+    snapshot = {
+      from: view.state.selection.from,
+      to: view.state.selection.to,
+      scrollTop: scroller instanceof Window ? window.scrollY : scroller.scrollTop,
+    };
+  });
+  return snapshot;
+}
+
+function restoreVisualEditorView(editor: MilkdownEditor, snapshot: VisualEditorViewSnapshot): void {
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    const from = Math.max(0, Math.min(snapshot.from, view.state.doc.content.size));
+    const to = Math.max(from, Math.min(snapshot.to, view.state.doc.content.size));
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, from, to)));
+    const scroller = findScrollContainer(view.dom);
+    if (scroller instanceof Window) window.scrollTo({ top: Math.max(0, snapshot.scrollTop) });
+    else scroller.scrollTop = Math.max(0, snapshot.scrollTop);
+  });
 }
 
 function cleanupDisplayPathMap(displayToOriginal: Map<string, string>, visualMarkdown: string): void {

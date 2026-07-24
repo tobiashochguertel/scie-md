@@ -133,13 +133,21 @@
 }
 
 :root[data-visual-style="cursor"] .directive-card.is-rendered:not(.directive-figure) {
-  --directive-radius: 0;
-  --directive-pad-y: 0.18em;
-  --directive-pad-x: 0.9em;
+  --directive-rail-width: 0;
+  --directive-radius: 4px;
+  --directive-pad-y: 0.38em;
+  --directive-pad-x: 0.68em;
+  --directive-bg: color-mix(in srgb, var(--directive-accent), transparent 95%);
+  --directive-label: var(--directive-accent);
+  --directive-text: color-mix(in srgb, var(--directive-accent) 42%, var(--text-strong));
+  --directive-body-size: 0.91em;
+  --directive-shadow: none;
+  border: 0;
+  background: var(--directive-bg);
 }
 
-:root[data-visual-style="cursor"] .directive-card.is-rendered.directive-result {
-  --directive-bg: linear-gradient(90deg, color-mix(in srgb, var(--directive-accent), transparent 90%), transparent 52%);
+:root[data-visual-style="cursor"] .directive-card.is-rendered:not(.directive-figure) .directive-render-body {
+  font-weight: 400;
 }
 
 :root[data-visual-style="nature"] .directive-card.is-rendered:not(.directive-figure) {
@@ -447,6 +455,24 @@
   --directive-label: #ffb276;
 }
 
+:root[data-visual-style="cursor"] .scie-md-visual-atom-content > .directive-card.is-rendered:not(.directive-figure) {
+  --directive-rail-width: 0;
+  --directive-radius: 4px;
+  --directive-pad-y: 0.38em;
+  --directive-pad-x: 0.68em;
+  --directive-bg: color-mix(in srgb, var(--directive-accent), transparent 95%);
+  --directive-label: var(--directive-accent);
+  --directive-text: color-mix(in srgb, var(--directive-accent) 42%, var(--text-strong));
+  --directive-body-size: 0.91em;
+  --directive-shadow: none;
+  border: 0;
+  background: var(--directive-bg);
+}
+
+:root[data-visual-style="cursor"] .scie-md-visual-atom-content > .directive-card.is-rendered:not(.directive-figure) .directive-card-body-rendered {
+  font-weight: 400;
+}
+
 :root[data-visual-style="nature"] .scie-md-visual-atom-content > .directive-card.is-rendered:not(.directive-figure) {
   --directive-rail-width: 0;
   --directive-pad-y: 0.5em;
@@ -588,117 +614,130 @@
 :root[data-visual-style="scienfy"] .scie-md-visual-atom-content > .directive-card.is-rendered:not(.directive-figure) {
   --directive-rail-width: 0;
   --directive-pad-y: 0.64em;
-  --directive-pad-x: 0.86em;
-  --directive-radius: 9px;
+  --directive-pad-x: 1.1em;
+  --directive-radius: 0;
   --directive-tint: var(--directive-accent);
-  --directive-text: var(--text-strong);
-  --directive-label: color-mix(in srgb, var(--directive-tint), var(--text-strong) 18%);
-  --directive-bg: linear-gradient(
-    105deg,
-    color-mix(in srgb, var(--directive-tint), transparent 90%),
-    color-mix(in srgb, var(--directive-tint), transparent 96%) 42%,
-    color-mix(in srgb, var(--surface), transparent 2%) 78%,
-    transparent 100%
-  );
+  --directive-text: var(--directive-tint);
+  --directive-label: var(--directive-tint);
+  --directive-bg: transparent;
   --directive-label-size: 0.62em;
   --directive-label-spacing: 0.12em;
+  --directive-label-weight: 700;
   --directive-body-size: 0.96em;
+  --directive-separator-color: var(--directive-text);
+  --directive-separator-strong-width: 7rem;
   border: 0;
+  background: transparent;
   box-shadow: none;
+}
+
+:root[data-visual-style="scienfy"] .directive-card.is-rendered:not(.directive-figure) .directive-render-body::before {
+  margin-bottom: 0.38em;
+  border: 0;
+  padding-bottom: 0.3em;
+  background:
+    linear-gradient(var(--directive-separator-color), var(--directive-separator-color))
+      left bottom / var(--directive-separator-strong-width) 3px no-repeat,
+    linear-gradient(var(--directive-separator-color), var(--directive-separator-color))
+      left bottom / 100% 1px no-repeat;
+}
+
+:root[data-visual-style="scienfy"] .scie-md-visual-atom-content > .directive-card.is-rendered:not(.directive-figure) header {
+  margin-bottom: 0.38em;
+  border: 0;
+  padding-bottom: 0.3em;
+  background:
+    linear-gradient(var(--directive-separator-color), var(--directive-separator-color))
+      left bottom / var(--directive-separator-strong-width) 3px no-repeat,
+    linear-gradient(var(--directive-separator-color), var(--directive-separator-color))
+      left bottom / 100% 1px no-repeat;
+}
+
+:root[data-visual-style="scienfy"] .directive-card.is-rendered:not(.directive-figure) .directive-render-body,
+:root[data-visual-style="scienfy"] .scie-md-visual-atom-content > .directive-card.is-rendered:not(.directive-figure) .directive-card-body-rendered {
+  font-weight: 400;
 }
 
 :root[data-visual-style="scienfy"] .directive-card.is-rendered.directive-note,
 :root[data-visual-style="scienfy"] .scie-md-visual-atom-content > .directive-card.is-rendered.directive-note {
-  --directive-accent: #668a78;
-  --directive-tint: #668a78;
-  --directive-label: #527965;
+  --directive-accent: #397557;
+  --directive-tint: #397557;
 }
 
 :root[data-visual-style="scienfy"] .directive-card.is-rendered.directive-tip,
 :root[data-visual-style="scienfy"] .scie-md-visual-atom-content > .directive-card.is-rendered.directive-tip {
-  --directive-accent: #5f9274;
-  --directive-tint: #5f9274;
-  --directive-label: #4a7d61;
+  --directive-accent: #2f7954;
+  --directive-tint: #2f7954;
 }
 
 :root[data-visual-style="scienfy"] .directive-card.is-rendered.directive-callout,
 :root[data-visual-style="scienfy"] .scie-md-visual-atom-content > .directive-card.is-rendered.directive-callout {
-  --directive-accent: #657d9f;
-  --directive-tint: #657d9f;
-  --directive-label: #526d90;
+  --directive-accent: #3d6f9f;
+  --directive-tint: #3d6f9f;
 }
 
 :root[data-visual-style="scienfy"] .directive-card.is-rendered.directive-result,
 :root[data-visual-style="scienfy"] .scie-md-visual-atom-content > .directive-card.is-rendered.directive-result {
-  --directive-accent: #9a7f3a;
-  --directive-tint: #9a7f3a;
-  --directive-label: #806a2c;
-  --directive-bg: linear-gradient(
-    105deg,
-    color-mix(in srgb, #9a7f3a, transparent 88%),
-    color-mix(in srgb, #9a7f3a, transparent 95%) 46%,
-    color-mix(in srgb, var(--surface-soft), transparent 10%) 78%,
-    transparent 100%
-  );
+  --directive-accent: #c44a00;
+  --directive-tint: #c44a00;
 }
 
 :root[data-visual-style="scienfy"] .directive-card.is-rendered.directive-warning,
 :root[data-visual-style="scienfy"] .scie-md-visual-atom-content > .directive-card.is-rendered.directive-warning {
-  --directive-accent: #b8744d;
-  --directive-tint: #b8744d;
-  --directive-label: #9f5f3c;
-  --directive-bg: linear-gradient(
-    105deg,
-    color-mix(in srgb, #b8744d, transparent 88%),
-    color-mix(in srgb, #b8744d, transparent 96%) 46%,
-    color-mix(in srgb, var(--surface), transparent 2%) 80%,
-    transparent 100%
-  );
-  border: 0;
+  --directive-accent: #c44a00;
+  --directive-tint: #c44a00;
 }
 
 :root[data-visual-style="scienfy"] .directive-card.is-rendered.directive-important,
 :root[data-visual-style="scienfy"] .scie-md-visual-atom-content > .directive-card.is-rendered.directive-important {
-  --directive-accent: #a45c82;
-  --directive-tint: #a45c82;
-  --directive-label: #914a73;
-  --directive-bg: linear-gradient(
-    105deg,
-    color-mix(in srgb, #a45c82, transparent 88%),
-    color-mix(in srgb, #a45c82, transparent 96%) 46%,
-    color-mix(in srgb, var(--surface), transparent 2%) 80%,
-    transparent 100%
-  );
-  border: 0;
+  --directive-accent: #b82024;
+  --directive-tint: #b82024;
 }
 
 :root[data-theme="dark"][data-visual-style="scienfy"] .directive-card.is-rendered:not(.directive-figure),
 :root[data-theme="dark"][data-visual-style="scienfy"] .scie-md-visual-atom-content > .directive-card.is-rendered:not(.directive-figure) {
-  --directive-text: var(--text-strong);
-  --directive-label: color-mix(in srgb, var(--directive-tint), var(--text-strong) 8%);
-  --directive-bg: linear-gradient(
-    105deg,
-    color-mix(in srgb, var(--directive-tint), transparent 86%),
-    color-mix(in srgb, var(--directive-tint), transparent 94%) 46%,
-    color-mix(in srgb, var(--surface), transparent 2%) 80%,
-    transparent 100%
-  );
+  --directive-text: var(--directive-tint);
+  --directive-label: var(--directive-tint);
+  --directive-bg: transparent;
   border: 0;
+  background: transparent;
   box-shadow: none;
+}
+
+:root[data-theme="dark"][data-visual-style="scienfy"] .directive-card.is-rendered.directive-note,
+:root[data-theme="dark"][data-visual-style="scienfy"] .scie-md-visual-atom-content > .directive-card.is-rendered.directive-note {
+  --directive-accent: #76c69d;
+  --directive-tint: #76c69d;
+}
+
+:root[data-theme="dark"][data-visual-style="scienfy"] .directive-card.is-rendered.directive-tip,
+:root[data-theme="dark"][data-visual-style="scienfy"] .scie-md-visual-atom-content > .directive-card.is-rendered.directive-tip {
+  --directive-accent: #67c99a;
+  --directive-tint: #67c99a;
+}
+
+:root[data-theme="dark"][data-visual-style="scienfy"] .directive-card.is-rendered.directive-callout,
+:root[data-theme="dark"][data-visual-style="scienfy"] .scie-md-visual-atom-content > .directive-card.is-rendered.directive-callout {
+  --directive-accent: #72afe8;
+  --directive-tint: #72afe8;
+}
+
+:root[data-theme="dark"][data-visual-style="scienfy"] .directive-card.is-rendered.directive-result,
+:root[data-theme="dark"][data-visual-style="scienfy"] .scie-md-visual-atom-content > .directive-card.is-rendered.directive-result {
+  --directive-accent: #f1b467;
+  --directive-tint: #f1b467;
 }
 
 :root[data-theme="dark"][data-visual-style="scienfy"] .directive-card.is-rendered.directive-warning,
 :root[data-theme="dark"][data-visual-style="scienfy"] .scie-md-visual-atom-content > .directive-card.is-rendered.directive-warning {
-  --directive-accent: #d89368;
-  --directive-tint: #d89368;
-  --directive-label: #e0a47f;
+  --directive-accent: #f1b467;
+  --directive-tint: #f1b467;
 }
 
 :root[data-theme="dark"][data-visual-style="scienfy"] .directive-card.is-rendered.directive-important,
 :root[data-theme="dark"][data-visual-style="scienfy"] .scie-md-visual-atom-content > .directive-card.is-rendered.directive-important {
-  --directive-accent: #d989ba;
-  --directive-tint: #d989ba;
-  --directive-label: #eba4cf;
+  --directive-accent: #e05256;
+  --directive-tint: #e05256;
 }
 
 /* Visual atoms own their outside rhythm. The rendered HTML fragments inside
@@ -731,4 +770,16 @@
 :root:is([data-visual-style="scienfy"], [data-visual-style="science"]) .visual-editor .ProseMirror > .scie-md-directive-atom .directive-card.is-rendered.directive-warning,
 :root:is([data-visual-style="scienfy"], [data-visual-style="science"]) .visual-editor .ProseMirror > .scie-md-directive-atom .directive-card.is-rendered.directive-important {
   padding-block: 0.54em;
+}
+
+:root[data-visual-style="scienfy"] .visual-editor .ProseMirror > .scie-md-directive-atom {
+  margin-top:
+    calc(var(--document-block-gap) * var(--visual-block-scale) * 1.08);
+  margin-bottom:
+    calc(var(--document-block-gap) * var(--visual-block-scale) * 0.72);
+}
+
+:root[data-visual-style="scienfy"] .visual-editor .ProseMirror > .scie-md-directive-atom .directive-card.is-rendered:not(.directive-figure) {
+  padding-top: 0.62em;
+  padding-bottom: 0.26em;
 }

@@ -9,6 +9,7 @@ import type { VscodeThemeMode } from './theme';
 import {
   VscodeEditorStage,
   VscodeDataSidebar,
+  VscodeDocumentStatusBar,
   VscodeMarkdownToolbar,
   VscodeReadOnlyBanner,
   VscodeToast,
@@ -117,6 +118,11 @@ describe('VS Code webview visual smoke', () => {
   });
 
   it('keeps CSS layout contracts that catch the screenshot-level regressions', () => {
+    expectCssBlock('.vscode-scie-shell', [
+      'display: flex;',
+      'flex-direction: column;',
+      'height: 100vh;',
+    ]);
     expectCssBlock('.vscode-scie-title span', [
       'overflow: hidden;',
       'text-overflow: ellipsis;',
@@ -149,6 +155,11 @@ describe('VS Code webview visual smoke', () => {
     expectCssBlock('.vscode-scie-review-units', [
       'overflow: auto;',
       'scrollbar-gutter: stable;',
+    ]);
+    expectCssBlock('.vscode-scie-document-statusbar', [
+      'display: flex;',
+      'flex: 0 0 auto;',
+      'border-top: 1px solid var(--scie-border);',
     ]);
     expectCssBlock('.vscode-scie-modal', [
       'max-height: calc(100vh - 48px);',
@@ -208,11 +219,17 @@ function renderSmokeShell({
         toolbar={(
           <VscodeMarkdownToolbar
             documentReadOnly={readOnly}
-            noteCount={3}
-            variableCount={5}
-            variantCount={1}
             onInsertNote={noop}
             onInsertVersion={noop}
+          />
+        )}
+        statusbar={(
+          <VscodeDocumentStatusBar
+            wordCount={1284}
+            lineCount={74}
+            fontScale={1}
+            onDecreaseFont={noop}
+            onIncreaseFont={noop}
           />
         )}
         reviewPanel={<SmokeReviewPanel />}

@@ -11,7 +11,7 @@ import {
   type StructuredPreviewModel,
 } from '@sciemd/core';
 import type { ScieMDDocumentSnapshot } from '../shared/webviewProtocol';
-import { VscodeWorkbenchShell } from './VscodeWorkbenchShell';
+import { VscodeDocumentStatusBar, VscodeWorkbenchShell } from './VscodeWorkbenchShell';
 
 export type StructuredPreviewMode = 'tree' | 'source';
 
@@ -19,8 +19,11 @@ interface StructuredPreviewWorkbenchProps {
   snapshot: ScieMDDocumentSnapshot;
   status: string;
   mode: StructuredPreviewMode;
+  fontScale: number;
   onSelectTree: () => void;
   onSelectSource: () => void;
+  onDecreaseFont: () => void;
+  onIncreaseFont: () => void;
 }
 
 const TREE_NODE_LIMIT = 500;
@@ -30,8 +33,11 @@ export function StructuredPreviewWorkbench({
   snapshot,
   status,
   mode,
+  fontScale,
   onSelectTree,
   onSelectSource,
+  onDecreaseFont,
+  onIncreaseFont,
 }: StructuredPreviewWorkbenchProps) {
   const model = useMemo(() => createStructuredPreviewModel(snapshot), [snapshot]);
   const errorCount = model.diagnostics.filter((diagnostic) => diagnostic.severity === 'error').length;
@@ -94,6 +100,14 @@ export function StructuredPreviewWorkbench({
           </div>
         </div>
       )}
+      statusbar={(
+        <VscodeDocumentStatusBar
+          lineCount={countDocumentLines(snapshot.text)}
+          fontScale={fontScale}
+          onDecreaseFont={onDecreaseFont}
+          onIncreaseFont={onIncreaseFont}
+        />
+      )}
       editorStage={(
         <main className="vscode-scie-editor-stage vscode-scie-structured-stage" data-testid="structured-preview-stage">
           <StructuredOperationSummary model={model} />
@@ -112,6 +126,19 @@ export function StructuredPreviewWorkbench({
       )}
     />
   );
+}
+
+function countDocumentLines(value: string): number {
+  if (!value) return 0;
+  let lines = 1;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value.charCodeAt(index) === 10) lines += 1;
+    else if (value.charCodeAt(index) === 13) {
+      lines += 1;
+      if (value.charCodeAt(index + 1) === 10) index += 1;
+    }
+  }
+  return lines;
 }
 
 export function isStructuredPreviewWebviewFormat(format: DocumentFormat | null | undefined): format is StructuredPreviewFormat {

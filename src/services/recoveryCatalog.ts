@@ -39,6 +39,7 @@ const LOCAL_STORAGE_LIMIT_BYTES = 512 * 1024;
 const memoryEntries = new Map<string, string>();
 const memoryTombstones = new Map<DocumentId, RecoveryCatalogTombstone>();
 const pendingOperations = new Map<string, Promise<void>>();
+const durableEntries = new WeakSet<RecoveryCatalogEntry>();
 
 export interface RecoveryCatalogEntry {
   schemaVersion: 1;
@@ -62,6 +63,8 @@ export interface RecoveryCatalogTombstone {
   schemaVersion: 1;
   documentId: DocumentId;
   sourceRevision: SourceRevision;
+  /** Exact browser generation cleared, retained for failure-atomic rollback. */
+  generation?: number;
   deletedAt: number;
 }
 
@@ -103,22 +106,35 @@ export interface RecoveryCheckpointInput {
 export function checkpointRecoveryEntrySync(input: RecoveryCheckpointInput): RecoveryCatalogEntry {
   const key = catalogKey(input.documentId);
   const previousRaw = safeLocalGet(key) ?? memoryEntries.get(key);
-  return publishBrowserEntry(input, nextPersistenceGeneration(previousRaw, 'recoveryDraft'));
+  const entry = publishBrowserEntry(input, nextPersistenceGeneration(previousRaw, 'recoveryDraft'));
+  if (safeLocalGet(key) === encodeCatalogEntry(entry)) durableEntries.add(entry);
+  return entry;
+}
+
+export function recoveryEntryIsDurable(entry: RecoveryCatalogEntry): boolean {
+  return durableEntries.has(entry);
 }
 
 export async function checkpointRecoveryEntry(input: RecoveryCheckpointInput): Promise<RecoveryCatalogEntry> {
   const key = catalogKey(input.documentId);
   const indexedRaw = await readIndexed(key);
   const previousRaw = indexedRaw ?? safeLocalGet(key) ?? memoryEntries.get(key);
-  const entry = publishBrowserEntry(input, nextPersistenceGeneration(previousRaw, 'recoveryDraft'));
+  return persistRecoveryEntry(input, nextPersistenceGeneration(previousRaw, 'recoveryDraft'));
+}
+
+async function persistRecoveryEntry(input: RecoveryCheckpointInput, generation: number): Promise<RecoveryCatalogEntry> {
+  const key = catalogKey(input.documentId);
+  const entry = publishBrowserEntry(input, generation);
   const raw = encodeCatalogEntry(entry);
+  let durable = safeLocalGet(key) === raw;
   if (supportsIndexedDb()) {
     await queueOperation(key, async () => {
       const stored = await writeIndexed(key, raw);
+      durable = durable || stored;
       if (stored) removeLocalCommitted(key);
     });
   }
-  await writeNativeRecoverySnapshot({
+  const nativeStored = await writeNativeRecoverySnapshot({
     sourceText: input.nativeSourceText ?? entry.sourceText,
     markdown: input.nativeSourceText ?? entry.sourceText,
     filePath: entry.locator.kind === 'file' ? entry.locator.displayPath : null,
@@ -130,7 +146,31 @@ export async function checkpointRecoveryEntry(input: RecoveryCheckpointInput): P
     mediaType: entry.mediaType,
     protectedDocumentIds: input.protectedDocumentIds,
   });
+  durable = durable || nativeStored;
+  if (!durable) {
+    throw new Error('Recovery checkpoint did not reach a durable browser or native backend.');
+  }
+  durableEntries.add(entry);
   return entry;
+}
+
+/**
+ * Reinstates an explicitly authorized checkpoint after a destructive close
+ * transaction rolled back. Ordinary checkpoints never remove tombstones:
+ * doing so here is intentionally a separate authority boundary.
+ */
+export async function restoreRecoveryCatalogEntry(input: RecoveryCheckpointInput): Promise<RecoveryCatalogEntry> {
+  const tombstone = readTombstones().get(input.documentId);
+  const rollbackGeneration = tombstone
+    && tombstone.sourceRevision <= input.sourceRevision
+    && Number.isSafeInteger(tombstone.generation)
+    && (tombstone.generation ?? 0) > 0
+    ? tombstone.generation
+    : undefined;
+  removeTombstoneForRestore(input.documentId, input.sourceRevision);
+  return rollbackGeneration === undefined
+    ? checkpointRecoveryEntry(input)
+    : persistRecoveryEntry(input, rollbackGeneration);
 }
 
 export async function clearRecoveryCatalogEntry(
@@ -141,7 +181,13 @@ export async function clearRecoveryCatalogEntry(
   const raws = [safeLocalGet(key), memoryEntries.get(key), await readIndexed(key)].filter((value): value is string => typeof value === 'string');
   const newest = newestEntry(raws.map((raw) => decodeCatalogRaw(raw)).filter((entry): entry is RecoveryCatalogEntry => entry !== null));
   if (newest && newest.sourceRevision > upToSourceRevision) return false;
-  writeTombstone({ schemaVersion: 1, documentId, sourceRevision: upToSourceRevision, deletedAt: Date.now() });
+  writeTombstone({
+    schemaVersion: 1,
+    documentId,
+    sourceRevision: upToSourceRevision,
+    ...(newest ? { generation: newest.generation } : {}),
+    deletedAt: Date.now(),
+  });
   memoryEntries.delete(key);
   safeLocalRemove(key);
   safeLocalRemove(`${key}${PENDING_SUFFIX}`);
@@ -174,14 +220,15 @@ export async function loadRecoveryCatalog(options: { includeNative?: boolean } =
   for (const [key, raw] of await listIndexedCatalogValues()) collectDecoded(key, raw, candidates);
   const tombstones = readTombstones();
   if (options.includeNative !== false) {
+    const nativeSnapshots = await listNativeRecoverySnapshots();
+    for (const snapshot of nativeSnapshots) {
+      const entry = nativeSnapshotToEntry(snapshot);
+      if (entry) candidates.push(entry);
+    }
     const protectedDocumentIds = candidates
       .filter((entry) => (tombstones.get(entry.documentId)?.sourceRevision ?? -1) < entry.sourceRevision)
       .map((entry) => entry.documentId);
     await maintainNativeRecoverySnapshots(protectedDocumentIds);
-    for (const snapshot of await listNativeRecoverySnapshots()) {
-      const entry = nativeSnapshotToEntry(snapshot);
-      if (entry) candidates.push(entry);
-    }
   }
   const byDocument = new Map<DocumentId, RecoveryCatalogEntry>();
   for (const entry of candidates) {
@@ -380,13 +427,29 @@ function tombstoneKey(documentId: DocumentId): string {
 
 function writeTombstone(next: RecoveryCatalogTombstone): void {
   const current = readTombstones().get(next.documentId);
-  if (current && current.sourceRevision >= next.sourceRevision) return;
+  if (
+    current
+    && (
+      current.sourceRevision > next.sourceRevision
+      || (
+        current.sourceRevision === next.sourceRevision
+        && (current.generation ?? 0) >= (next.generation ?? 0)
+      )
+    )
+  ) return;
   memoryTombstones.set(next.documentId, next);
   try {
     if (typeof localStorage !== 'undefined') localStorage.setItem(tombstoneKey(next.documentId), JSON.stringify(next));
   } catch {
     // In-memory tombstone still prevents same-session resurrection; native clear remains revision-fenced.
   }
+}
+
+function removeTombstoneForRestore(documentId: DocumentId, sourceRevision: SourceRevision): void {
+  const current = readTombstones().get(documentId);
+  if (!current || current.sourceRevision > sourceRevision) return;
+  memoryTombstones.delete(documentId);
+  safeLocalRemove(tombstoneKey(documentId));
 }
 
 function readTombstones(): Map<DocumentId, RecoveryCatalogTombstone> {
@@ -397,10 +460,23 @@ function readTombstones(): Map<DocumentId, RecoveryCatalogTombstone> {
     if (!key?.startsWith(TOMBSTONE_KEY_PREFIX)) continue;
     try {
       const record = JSON.parse(localStorage.getItem(key) ?? '') as Partial<RecoveryCatalogTombstone>;
-      if (record.schemaVersion !== 1 || typeof record.documentId !== 'string' || !Number.isSafeInteger(record.sourceRevision) || typeof record.deletedAt !== 'number') continue;
+      if (
+        record.schemaVersion !== 1
+        || typeof record.documentId !== 'string'
+        || !Number.isSafeInteger(record.sourceRevision)
+        || (record.generation !== undefined && !Number.isSafeInteger(record.generation))
+        || typeof record.deletedAt !== 'number'
+      ) continue;
       const tombstone = record as RecoveryCatalogTombstone;
       const current = result.get(tombstone.documentId);
-      if (!current || current.sourceRevision < tombstone.sourceRevision) result.set(tombstone.documentId, tombstone);
+      if (
+        !current
+        || current.sourceRevision < tombstone.sourceRevision
+        || (
+          current.sourceRevision === tombstone.sourceRevision
+          && (current.generation ?? 0) < (tombstone.generation ?? 0)
+        )
+      ) result.set(tombstone.documentId, tombstone);
     } catch {
       // Invalid tombstones do not authorize deletion or hide recovery content.
     }

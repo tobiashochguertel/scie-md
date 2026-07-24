@@ -243,7 +243,14 @@
   line-height: 1.16;
 }
 
+:root[data-visual-style="cursor"] .visual-editor .ProseMirror h1:not(:first-child) {
+  margin-top:
+    calc(var(--document-h2-top) * var(--visual-heading-gap-scale) * 1.18);
+}
+
 :root[data-visual-style="cursor"] .visual-editor .ProseMirror h2 {
+  margin-top:
+    calc(var(--document-h2-top) * var(--visual-heading-gap-scale) * 1.18);
   border: 0;
   padding: 0;
   font-weight: 650;
@@ -251,6 +258,8 @@
 }
 
 :root[data-visual-style="cursor"] .visual-editor .ProseMirror h3 {
+  margin-top:
+    calc(var(--document-h3-top) * var(--visual-heading-gap-scale) * 1.2);
   font-weight: 620;
   line-height: 1.24;
 }
@@ -259,7 +268,7 @@
 :root[data-visual-style="cursor"] .visual-editor .ProseMirror h5,
 :root[data-visual-style="cursor"] .visual-editor .ProseMirror h6 {
   margin:
-    calc(var(--document-h3-top) * 0.8)
+    calc(var(--document-h3-top) * var(--visual-heading-gap-scale) * 1.04)
     0
     calc(var(--document-h3-bottom) * 0.8);
   font-size: calc(var(--document-h4-size) * var(--font-scale));
@@ -925,8 +934,7 @@
   font-weight: 500;
 }
 
-:root[data-visual-style="scienfy"] .visual-editor .milkdown {
-  position: relative;
+:root[data-visual-style="scienfy"] .visual-editor [data-milkdown-root] {
   background-color: var(--editor-bg);
   background-image:
     radial-gradient(circle at 1px 1px, var(--scienfy-reading-page-dot, var(--scienfy-reading-dot-color)) 0 1px, transparent 1.25px);
@@ -934,10 +942,12 @@
   background-size:
     var(--scienfy-reading-dot-space)
     var(--scienfy-reading-dot-space);
-  box-shadow:
-    inset 0 0 0 1px var(--scienfy-reading-frame-color),
-    inset 28px 0 0 -27px color-mix(in srgb, var(--scienfy-reading-frame-color), transparent 48%),
-    inset -28px 0 0 -27px color-mix(in srgb, var(--scienfy-reading-frame-color), transparent 48%);
+}
+
+:root[data-visual-style="scienfy"] .visual-editor .milkdown {
+  position: relative;
+  background: transparent;
+  box-shadow: none;
 }
 
 :root[data-visual-style="science"] .visual-editor [data-milkdown-root],

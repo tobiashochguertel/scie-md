@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.1
+
+- Synchronized the extension with the current ScieMD editor and style system,
+  including the latest Cursor and Scienfy visual refinements, bundled fonts,
+  theme cycling, 30-200% font scaling, and live word/line metrics.
+- Added source line numbers with persistent active-line context and distinct
+  hover-line highlighting from either the gutter or source text.
+- Preserved formatted HTML and Markdown clipboard content from visual mode and
+  retained editor state when switching VS Code tabs or visual/source surfaces.
+- Hardened host-backed edit durability so typing is reported immediately and
+  queued edits from disposed custom-editor panels cannot mutate a closed or
+  discarded document.
+- Expanded shared-core and host-adapter drift checks so token and source-line
+  interaction parity cannot silently fall behind the desktop application.
+
 ## 1.1.0
 
 - Added command-based structured previews for JSON, JSONL/NDJSON, YAML, TOML, and
