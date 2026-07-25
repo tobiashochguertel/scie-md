@@ -42,6 +42,8 @@ commands and preview associations remain default-off.
 `npm run validate:release` also runs the release identity guard and
 generated-output policy guard, which keeps CI and local release validation aligned
 before the heavier build, test, extension, package-budget, Rust, and clippy checks run.
+Vendored font-license text is normalized to LF before manifest hashing, so the same
+asset identity is verified on Windows, Linux, and macOS release workers.
 
 Package-size and performance thresholds are documented in
 `docs/refactor/release_package_budgets.md` and enforced by:

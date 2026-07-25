@@ -45,6 +45,9 @@ for (const file of manifest.files) {
     expectFile(candidate);
     if (existsSync(candidate)) {
       const buffer = readFileSync(candidate);
+      if (candidate.endsWith('.txt')) {
+        expect(!buffer.includes(13), `${candidate} must use canonical LF line endings.`);
+      }
       expect(buffer.length === file.bytes, `${candidate} size differs from manifest.`);
       expect(sha256(buffer) === file.sha256, `${candidate} hash differs from manifest.`);
     }

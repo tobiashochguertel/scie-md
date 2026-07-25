@@ -33,11 +33,11 @@ for (const face of faces) {
   files.push({ name: face.file, bytes: buffer.length, sha256: sha256(buffer) });
 }
 
-const license = readFileSync(join(packageRoot, 'LICENSE.txt'));
+const license = canonicalTextAsset(readFileSync(join(packageRoot, 'LICENSE.txt'), 'utf8'));
 for (const outputRoot of [authoritativeRoot, mirrorRoot]) {
-  writeFileSync(join(outputRoot, 'OFL.txt'), license);
+  writeFileSync(join(outputRoot, 'OFL.txt'), license, 'utf8');
 }
-files.push({ name: 'OFL.txt', bytes: license.length, sha256: sha256(license) });
+files.push({ name: 'OFL.txt', bytes: Buffer.byteLength(license), sha256: sha256(license) });
 
 const supplementalSource = join(supplementalPackageRoot, 'files', 'noto-sans-mono-greek-400-normal.woff2');
 const supplementalName = 'noto-sans-mono-greek-400-normal.woff2';
@@ -46,11 +46,11 @@ for (const outputRoot of [authoritativeRoot, mirrorRoot]) {
   copyFileSync(supplementalSource, join(outputRoot, supplementalName));
 }
 files.push({ name: supplementalName, bytes: supplementalBuffer.length, sha256: sha256(supplementalBuffer) });
-const supplementalLicense = readFileSync(join(supplementalPackageRoot, 'LICENSE'));
+const supplementalLicense = canonicalTextAsset(readFileSync(join(supplementalPackageRoot, 'LICENSE'), 'utf8'));
 for (const outputRoot of [authoritativeRoot, mirrorRoot]) {
-  writeFileSync(join(outputRoot, 'OFL-Noto-Sans-Mono.txt'), supplementalLicense);
+  writeFileSync(join(outputRoot, 'OFL-Noto-Sans-Mono.txt'), supplementalLicense, 'utf8');
 }
-files.push({ name: 'OFL-Noto-Sans-Mono.txt', bytes: supplementalLicense.length, sha256: sha256(supplementalLicense) });
+files.push({ name: 'OFL-Noto-Sans-Mono.txt', bytes: Buffer.byteLength(supplementalLicense), sha256: sha256(supplementalLicense) });
 
 const manifest = {
   schemaVersion: 1,
@@ -84,4 +84,8 @@ console.log(`[fonts:ibm-plex-mono] Synced ${files.length} hashed assets from ${p
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function canonicalTextAsset(value) {
+  return value.replace(/\r\n?/g, '\n');
 }
