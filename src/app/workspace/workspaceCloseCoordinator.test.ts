@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDocumentRecord, documentRecordReducer } from '../documentRecord';
 import type { DocumentId } from '../documentIdentity';
 import { createWorkspaceStore } from './workspaceStore';
@@ -17,6 +17,8 @@ import { resetWorkspaceManifestForTests } from '../../services/workspaceManifest
 import { restoreWorkspace } from './workspaceRestore';
 
 describe('workspace close coordinator', () => {
+  afterEach(() => vi.useRealTimers());
+
   beforeEach(() => {
     localStorage.clear();
     resetRecoveryCatalogForTests();
@@ -107,6 +109,33 @@ describe('workspace close coordinator', () => {
     expect(partial.decision?.unresolvedDocumentIds).toEqual([second.id]);
   });
 
+  it('cancels a pending autosave timer and discards without a failed retry cycle', async () => {
+    vi.useFakeTimers();
+    const dirty = documentRecordReducer(createDocumentRecord({ sourceText: 'saved' }), { type: 'sourceChanged', sourceText: 'dirty' });
+    const store = createStore(dirty);
+    const save = vi.fn().mockResolvedValue('paper.md');
+    store.saves.scheduleAutosave({
+      documentId: dirty.id,
+      sourceRevision: dirty.source.revision,
+      eligible: true,
+      blocked: false,
+      delayMs: 600,
+      maxWaitMs: 3000,
+      save,
+      setStatus: (autosaveStatus) => {
+        store.dispatch({ type: 'updateDocument', documentId: dirty.id, action: { type: 'autosaveStatusChanged', autosaveStatus } });
+      },
+    });
+
+    const begun = await store.close.begin({ kind: 'document', documentId: dirty.id });
+    const result = await store.close.decide(begun.decision!.transactionId, 'discard-selected');
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(result.status).toBe('closed');
+    expect(store.getState().documentsById[dirty.id]).toBeUndefined();
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it('closes clean documents without blocking on recovery catalog cleanup', async () => {
     const clean = createDocumentRecord({ sourceText: 'clean' });
     const events: string[] = [];
@@ -177,14 +206,21 @@ describe('workspace close coordinator', () => {
     expect(destroy).not.toHaveBeenCalled();
   });
 
-  it('does not discard across an in-flight save lane', async () => {
+  it('waits for an in-flight save lane and then closes without a retry cycle', async () => {
     let document = documentRecordReducer(createDocumentRecord({ sourceText: 'saved' }), { type: 'sourceChanged', sourceText: 'dirty' });
     document = documentRecordReducer(document, { type: 'autosaveStatusChanged', autosaveStatus: 'saving' });
     const store = createStore(document);
     const token = store.saves.begin(document.id, 'autosave')!;
     let releaseSave: (() => void) | undefined;
     const saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
-    const inFlight = store.saves.enqueue(token, async () => saveGate);
+    const inFlight = store.saves.enqueue(token, async () => {
+      await saveGate;
+      store.dispatch({
+        type: 'updateDocument',
+        documentId: document.id,
+        action: { type: 'autosaveStatusChanged', autosaveStatus: 'idle' },
+      });
+    });
     const begun = await store.close.begin({ kind: 'document', documentId: document.id });
     const deciding = store.close.decide(begun.decision!.transactionId, 'discard-selected');
     await Promise.resolve();
@@ -194,9 +230,22 @@ describe('workspace close coordinator', () => {
     await inFlight;
     const result = await deciding;
 
-    expect(result.status).toBe('partial-failure');
-    expect(store.getState().documentsById[document.id]).toBeDefined();
-    expect(result.decision?.unresolvedDocumentIds).toContain(document.id);
+    expect(result.status).toBe('closed');
+    expect(store.getState().documentsById[document.id]).toBeUndefined();
+  });
+
+  it('allows discard after a failed or paused autosave because no write remains active', async () => {
+    for (const autosaveStatus of ['error', 'paused'] as const) {
+      let dirty = documentRecordReducer(createDocumentRecord({ sourceText: 'saved' }), { type: 'sourceChanged', sourceText: 'dirty' });
+      dirty = documentRecordReducer(dirty, { type: 'autosaveStatusChanged', autosaveStatus });
+      const store = createStore(dirty);
+
+      const begun = await store.close.begin({ kind: 'document', documentId: dirty.id });
+      const result = await store.close.decide(begun.decision!.transactionId, 'discard-selected');
+
+      expect(result.status).toBe('closed');
+      expect(store.getState().documentsById[dirty.id]).toBeUndefined();
+    }
   });
 
   it('does not finalize a document when manifest publication fails', async () => {

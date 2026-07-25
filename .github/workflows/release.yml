@@ -213,14 +213,15 @@ jobs:
       - name: Create release notes
         run: |
           cat > RELEASE_NOTES.md <<'NOTES'
-          ScieMD 1.1.0 structured data preview.
+          ScieMD 2.0.0 is the multi-document runtime and structured editing foundations release.
 
           Highlights:
-          - Adds structured document support alongside Markdown for JSON, JSONL/NDJSON, YAML, TOML, XML, CSV/TSV, and plain text.
-          - Adds visual structured views for JSON trees, JSON object-array tables, JSONL records, tabular data, health diagnostics, schema-aware JSON checks, and read-only YAML/TOML/XML previews.
-          - Adds guarded visual editing for JSON, JSONL, CSV, and TSV with validation, review, and stale-source checks.
-          - Adds Windows Open With / Default Apps registration for supported non-CSV structured formats; CSV remains Excel-friendly at the OS level while still opening inside ScieMD.
-          - Adds command-based structured preview support in the VS Code extension without hijacking VS Code's default structured-data editors.
+          - Rebuilds the desktop workbench around document-scoped identity, revisions, effects, recovery, external-change review, and multi-document tab activation.
+          - Adds declarative format/capability registries and source-preserving visual operations for fixture-proven YAML, TOML, and XML subsets alongside JSON, JSONL, CSV, and TSV editing.
+          - Makes large visual Markdown documents substantially faster to open by installing parsed ProseMirror state directly and compiling scientific-atom source ranges once.
+          - Hardens save, autosave, close, discard, startup recovery, and validation-data isolation.
+          - Refreshes source and visual editing with line context, formatted copy, 30%-200% zoom, live document metrics, updated fonts, and current Cursor/Scienfy styles.
+          - Brings the VS Code extension to the same editor generation, including retained fast tab returns, host-backed edit durability, and the 2.0 large-document loading path.
 
           Download the installer for your operating system from the assets below.
 

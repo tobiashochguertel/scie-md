@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.0.0
+
+- Adopted the desktop 2.0 editor runtime, including direct ProseMirror state
+  replacement for large visual documents and a compiled source-range index for
+  scientific atoms instead of repeated whole-document scans.
+- Kept open custom editors warm with retained webview contexts for low-latency tab
+  returns while preserving VS Code as the sole document, dirty-state, save, and
+  undo/redo authority.
+- Synchronized the current source and visual editing experience: source line
+  context, rich formatted copy, 30%-200% zoom, live word/line metrics, updated
+  fonts, current styles, and theme behavior.
+- Preserved guarded external-change review, disposed-panel replay protection,
+  immediate host-backed edits, and command-only structured previews without
+  taking over VS Code's structured-data editors.
+- Added shared-core parity and large-document regression coverage for the 2.0
+  loading path.
+
 ## 1.1.1
 
 - Synchronized the extension with the current ScieMD editor and style system,

@@ -4,7 +4,11 @@ import { AllSelection } from '@milkdown/prose/state';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { clipboard } from '@milkdown/kit/plugin/clipboard';
-import { equivalentVisualMarkdown, visualClipboardPayload } from './VisualMarkdownEditor';
+import {
+  equivalentVisualMarkdown,
+  replaceVisualEditorDocument,
+  visualClipboardPayload,
+} from './VisualMarkdownEditor';
 
 describe('visual clipboard serialization', () => {
   it('preserves inline formatting and list structure in rich and plain clipboard forms', async () => {
@@ -52,5 +56,37 @@ describe('equivalentVisualMarkdown', () => {
 
   it('does not hide meaningful content changes', () => {
     expect(equivalentVisualMarkdown('# Title\n\nA', '# Title\n\nB')).toBe(false);
+  });
+});
+
+describe('large visual document replacement', () => {
+  it('replaces the parsed editor state directly while retaining the configured editor plugins', async () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const editor = await Editor.make()
+      .config((ctx) => {
+        ctx.set(rootCtx, root);
+        ctx.set(defaultValueCtx, '# First\n\nInitial content.');
+      })
+      .use(commonmark)
+      .use(gfm)
+      .use(clipboard)
+      .create();
+    const previousPluginCount = editor.ctx.get(editorViewCtx).state.plugins.length;
+    const replacement = [
+      '# Replacement',
+      '',
+      ...Array.from({ length: 1_200 }, (_, index) => `Paragraph ${index + 1}.`),
+    ].join('\n\n');
+
+    replaceVisualEditorDocument(editor, replacement);
+
+    const view = editor.ctx.get(editorViewCtx);
+    expect(view.state.doc.textContent).toContain('Replacement');
+    expect(view.state.doc.textContent).toContain('Paragraph 1200.');
+    expect(view.state.plugins).toHaveLength(previousPluginCount);
+
+    await editor.destroy();
+    root.remove();
   });
 });

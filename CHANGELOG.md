@@ -2,6 +2,37 @@
 
 All notable ScieMD release changes are tracked here.
 
+## 2.0.0 - Multi-Document Runtime And Structured Editing Foundations
+
+- Rebuilt the desktop workbench around document-scoped identity, revisions,
+  effects, editor ownership, save state, recovery, external-change review, and
+  multi-document tab activation so each open document keeps an independent,
+  durable runtime.
+- Added declarative document-format and capability registries plus
+  source-preserving visual operations for the fixture-proven YAML, TOML, and XML
+  subsets, while unsupported structures remain explicitly source-only.
+- Made large visual Markdown documents substantially faster to open and replace:
+  Milkdown now installs a parsed ProseMirror state directly, and rendered
+  scientific atoms reuse one compiled source-range index instead of repeatedly
+  rescanning the entire document.
+- Hardened save, autosave, close, discard, recovery, and external-change
+  coordination so closing is not held hostage by obsolete autosave work and
+  discarded documents cannot be reopened by stale asynchronous completion.
+- Added bounded, document-aware recovery cleanup and idempotent startup welcome
+  behavior, isolating performance validation from production app data.
+- Refined source and visual editing with line context, formatted clipboard copy,
+  30%-200% document zoom, word and line metrics, updated Scie Sans families,
+  Google Sans Flex, Cursor and Scienfy presentation modes, and accessibility-aware
+  theme and block styling.
+- Brought the VS Code extension to the same editor generation, including retained
+  tab contexts, host-backed edit durability, direct-state large-document loading,
+  linear scientific-atom rewriting, source-line context, styles, fonts, metrics,
+  zoom, and clipboard behavior.
+- Expanded release certification with shared-core drift guards, large-document
+  stress and performance evidence, structured workflow validation, packaged
+  desktop smoke tests, installed-VSIX smoke tests, package budgets, generated
+  output policy, Rust tests, and clippy.
+
 ## 1.1.1 - Editor Runtime And VS Code Parity
 
 - Brought the VS Code extension up to date with the current desktop source and

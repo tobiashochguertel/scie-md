@@ -4,12 +4,38 @@ import {
   attrsForMermaidRaw,
   attrsForSvgRaw,
   createOversizedAtomFallback,
+  createRenderedVisualAtomReplacer,
   isOversizedVisualAtomSource,
   replaceRenderedVisualAtomNodes,
 } from './renderedVisualAtoms';
 import type { MetadataMdastNode } from './renderedVisualAtoms';
 
 describe('renderedVisualAtoms', () => {
+  it('reuses one compiled visual-atom plan across AST containers', () => {
+    const markdown = 'Before.\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\nAfter.';
+    const createChildren = () => [
+      paragraphNode('Before.', markdown, 0),
+      paragraphNode('```mermaid', markdown, 2),
+      paragraphNode('flowchart LR', markdown, 3),
+      paragraphNode('  A --> B', markdown, 4),
+      paragraphNode('```', markdown, 5),
+      paragraphNode('After.', markdown, 7),
+    ];
+    const first = createChildren();
+    const second = createChildren();
+    const replaceFromPlan = createRenderedVisualAtomReplacer(markdown);
+
+    replaceFromPlan(first);
+    replaceFromPlan(second);
+
+    expect(first).toEqual(second);
+    expect(first).toHaveLength(3);
+    expect(first[1]).toMatchObject({
+      type: 'scie_mermaid_block',
+      body: 'flowchart LR\n  A --> B',
+    });
+  });
+
   it('collapses directive, Mermaid, and SVG source ranges into positioned metadata atoms', () => {
     const markdown = [
       'Intro.',

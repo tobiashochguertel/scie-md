@@ -291,6 +291,37 @@ describe('scieMetadataNodes', () => {
     });
   });
 
+  it('keeps visual-atom discovery linear for a deeply populated document AST', () => {
+    const lines = Array.from(
+      { length: 1_200 },
+      (_, index) => `Paragraph ${index + 1}: ${'structured evidence '.repeat(18)}`,
+    );
+    lines.splice(600, 0, '```mermaid', 'flowchart LR', '  A --> B', '```');
+    const markdown = lines.join('\n');
+    let offset = 0;
+    const children = lines.map((line) => {
+      const start = offset;
+      offset += line.length + 1;
+      return {
+        type: 'paragraph',
+        value: line,
+        children: [{ type: 'text', value: line }],
+        position: {
+          start: { offset: start },
+          end: { offset: start + line.length },
+        },
+      };
+    });
+    const tree = { type: 'root', children };
+
+    const startedAt = performance.now();
+    transformScieMetadataAst(tree, markdown);
+    const durationMs = performance.now() - startedAt;
+
+    expect(tree.children.some((node) => node.type === 'scie_mermaid_block')).toBe(true);
+    expect(durationMs).toBeLessThan(1_500);
+  });
+
   it('updates only the active attribute in a variant group opener', () => {
     expect(replaceVariantActive('<!-- scie_md:variant:group id="a" active="v1" -->\nBody\n<!-- scie_md:variant:end -->', 'v2'))
       .toContain('active="v2"');

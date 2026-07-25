@@ -242,8 +242,8 @@ export function createWorkspaceCloseCoordinator(
       ? Array.from(transaction.settledAuthorizations.values())
       : authorizations;
     const clearedDiscarded = new Set<DocumentId>();
-    for (const authorization of finalAuthorizations) {
-      if (authorization.outcome === 'clean') continue;
+    await Promise.all(finalAuthorizations.map(async (authorization) => {
+      if (authorization.outcome === 'clean') return;
       try {
         const cleared = await withTimeout(
           recovery.clearDocument(authorization.documentId, authorization.sourceRevision),
@@ -256,7 +256,7 @@ export function createWorkspaceCloseCoordinator(
         // Once the manifest is durable, retaining a stale recovery snapshot is
         // safer than reopening or rolling back an already-finalized close.
       }
-    }
+    }));
     if (transaction.scope.kind === 'quit' && transaction.destroyWindow) {
       try {
         await withTimeout(transaction.destroyWindow(), timeoutMs);
@@ -287,13 +287,20 @@ export function createWorkspaceCloseCoordinator(
     const authorizations: WorkspaceCloseAuthorization[] = [];
     for (const documentId of selected) {
       if (!transaction.unresolved.has(documentId)) continue;
-      const target = transaction.targets.find((entry) => entry.documentId === documentId);
-      if (target?.saving || saves.queuedFor(documentId) > 0) {
+      let target = transaction.targets.find((entry) => entry.documentId === documentId);
+      if (!target) {
+        transaction.failed.add(documentId);
+        record(transaction.id, 'failed', documentId);
+        continue;
+      }
+      if (target.saving || saves.queuedFor(documentId) > 0) {
+        const expectedRevision = target.sourceRevision;
         saves.cancelAutosave(documentId);
+        let laneSettled = true;
         try {
           await withTimeout(saves.awaitIdle(documentId), timeoutMs);
         } catch {
-          // The target stays unresolved below.
+          laneSettled = false;
         }
         const refreshed = statusFor(getState().documentsById[documentId]);
         if (refreshed) {
@@ -301,10 +308,19 @@ export function createWorkspaceCloseCoordinator(
           if (targetIndex >= 0) transaction.targets[targetIndex] = refreshed;
           dispatch({ type: 'requestClose', documentId, requestId: transaction.id });
         }
-        transaction.failed.add(documentId);
-        transaction.unresolved.add(documentId);
-        record(transaction.id, 'failed', documentId);
-        continue;
+        if (
+          !laneSettled
+          || !refreshed
+          || refreshed.sourceRevision !== expectedRevision
+          || refreshed.saving
+          || saves.queuedFor(documentId) > 0
+        ) {
+          transaction.failed.add(documentId);
+          transaction.unresolved.add(documentId);
+          record(transaction.id, 'failed', documentId);
+          continue;
+        }
+        target = refreshed;
       }
       const current = getState().documentsById[documentId];
       if (!target || !current || current.source.revision !== target.sourceRevision) {
@@ -424,7 +440,7 @@ function statusFor(document: DocumentRecord | undefined): WorkspaceCloseTarget |
     documentId: document.id,
     sourceRevision: document.source.revision,
     dirty: document.lifecycle.content === 'dirty',
-    saving: document.lifecycle.save !== 'idle',
+    saving: document.lifecycle.autosaveStatus === 'pending' || document.lifecycle.autosaveStatus === 'saving',
     conflict: document.lifecycle.external !== 'inSync',
     accessBlocked: document.lifecycle.access !== 'writable',
     recoveryPending: document.lifecycle.recovery !== 'notRequired' && document.lifecycle.recovery !== 'current',

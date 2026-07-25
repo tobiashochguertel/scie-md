@@ -2,17 +2,17 @@
 
 ## Current Target
 
-ScieMD `1.1.1` is the current public preview release target. Generated artifacts should be attached
+ScieMD `2.0.0` is the current major release target. Generated artifacts should be attached
 to GitHub Releases and should not be committed to the source repository. This gives users
 clear installer downloads without storing changing binaries in Git history. The intended
 Windows installer is:
 
 ```text
-artifacts/installers/ScieMD_1.1.1_x64-setup.exe
+artifacts/installers/ScieMD_2.0.0_x64-setup.exe
 ```
 
 The Linux installers are built on GitHub-hosted Ubuntu and attached to the release as
-`ScieMD_1.1.1_amd64.AppImage` and `ScieMD_1.1.1_amd64.deb`. Do not attach a
+`ScieMD_2.0.0_amd64.AppImage` and `ScieMD_2.0.0_amd64.deb`. Do not attach a
 standalone `ScieMD.exe` portable build to public releases; Windows users should get
 the NSIS installer or MSI package only. Do not distribute `ScieMD.next.exe` or
 `ScieMD.updated.exe`; those are gated local updater smoke-test copies only.
@@ -67,9 +67,9 @@ policy guard after staging.
 Confirm these files exist:
 
 ```text
-artifacts/installers/ScieMD_1.1.1_x64-setup.exe
-artifacts/installers/ScieMD_1.1.1_x64_en-US.msi
-artifacts/installers/sciemd-vscode-1.1.1.vsix
+artifacts/installers/ScieMD_2.0.0_x64-setup.exe
+artifacts/installers/ScieMD_2.0.0_x64_en-US.msi
+artifacts/installers/sciemd-vscode-2.0.0.vsix
 artifacts/SHA256SUMS.txt
 ```
 
@@ -108,8 +108,8 @@ untracked Git status.
 Push a version tag to create a release with installable assets:
 
 ```bash
-git tag v1.1.1
-git push origin v1.1.1
+git tag v2.0.0
+git push origin v2.0.0
 ```
 
 The release workflow builds and uploads:
@@ -125,7 +125,7 @@ The release workflow builds and uploads:
 The repository root should contain source, tests, docs, and build scripts. Installers
 belong under the release's downloadable assets.
 
-## Public Preview Notes
+## Release Notes
 
 - Builds are unsigned, so Windows SmartScreen may warn. Ask testers to verify the SHA-256 checksum before running the installer.
 - The Windows installer registers ScieMD in Open With / Default Apps for `.md`,

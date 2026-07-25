@@ -209,7 +209,7 @@ If you downloaded a `.vsix` file manually:
 Command-line installation:
 
 ```bash
-code --install-extension sciemd-vscode-1.1.1.vsix --force
+code --install-extension sciemd-vscode-2.0.0.vsix --force
 ```
 
 ## Who This Is For
@@ -295,4 +295,4 @@ npm run build
 npm run package
 ```
 
-The package command creates `sciemd-vscode-1.1.1.vsix` in this folder.
+The package command creates `sciemd-vscode-2.0.0.vsix` in this folder.

@@ -23,6 +23,7 @@ export type DocumentPerformanceEventName =
   | 'background-ready'
   | 'byte-acquisition'
   | 'source-change'
+  | 'visual-materialization-phase'
   | 'whole-source-materialization'
   | 'analysis-state'
   | 'long-task'

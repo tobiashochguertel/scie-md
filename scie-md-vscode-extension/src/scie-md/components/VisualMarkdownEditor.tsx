@@ -1,8 +1,17 @@
 import { useEffect, useRef } from 'react';
 import type { MouseEvent } from 'react';
-import { Editor, defaultValueCtx, editorViewCtx, rootCtx } from '@milkdown/kit/core';
+import {
+  Editor,
+  defaultValueCtx,
+  editorStateOptionsCtx,
+  editorViewCtx,
+  parserCtx,
+  prosePluginsCtx,
+  rootCtx,
+  schemaCtx,
+} from '@milkdown/kit/core';
 import type { Editor as MilkdownEditor } from '@milkdown/kit/core';
-import { TextSelection } from '@milkdown/prose/state';
+import { EditorState as ProseMirrorEditorState, TextSelection } from '@milkdown/prose/state';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { clipboard } from '@milkdown/kit/plugin/clipboard';
@@ -12,7 +21,7 @@ import type { EditorView } from '@milkdown/prose/view';
 import { nord } from '@milkdown/theme-nord';
 import { fromVisualImagePaths, toVisualImagePaths } from '../markdown/imagePaths';
 import { quoteAnchorPrefix, quoteAnchorSuffix } from '@sciemd/core';
-import { getMarkdown, insert, replaceAll } from '@milkdown/kit/utils';
+import { getMarkdown, insert } from '@milkdown/kit/utils';
 import type { EditorHistoryControls } from './editorControls';
 import type { EditorSelectionGetter } from './editorSelection';
 import { visualSourceLineForPosition } from './visualSourceMapping';
@@ -60,6 +69,19 @@ export function visualClipboardPayload(editor: MilkdownEditor): VisualClipboardP
     };
   });
   return payload;
+}
+
+export function replaceVisualEditorDocument(editor: MilkdownEditor, markdown: string): void {
+  editor.action((ctx) => {
+    const doc = ctx.get(parserCtx)(markdown);
+    if (!doc) return;
+    const state = ProseMirrorEditorState.create(ctx.get(editorStateOptionsCtx)({
+      schema: ctx.get(schemaCtx),
+      doc,
+      plugins: ctx.get(prosePluginsCtx),
+    }));
+    ctx.get(editorViewCtx).updateState(state);
+  });
 }
 
 interface VisualMarkdownEditorProps {
@@ -529,11 +551,11 @@ function MilkdownSurface({ markdown, filePath, onChange, onEditorReady, onInsert
     const nextVisualPaths = toVisualImagePaths(split.visualMarkdown, filePath);
     visualPaths.current = nextVisualPaths;
     applyingExternalUpdate.current = true;
-    editor.action(replaceAll(nextVisualPaths.markdown, true));
+    replaceVisualEditorDocument(editor, nextVisualPaths.markdown);
     restoreVisualEditorView(editor, viewSnapshot);
+    lastEmittedMarkdown.current = markdown;
     queueMicrotask(() => {
       applyingExternalUpdate.current = false;
-      lastEmittedMarkdown.current = markdown;
     });
   }, [filePath, loading, markdown]);
 

@@ -135,6 +135,31 @@ describe('WorkspaceSaveCoordinator', () => {
     expect(status).toHaveBeenCalledWith('paused');
   });
 
+  it('cancels a pending autosave timer and returns its lifecycle to idle', async () => {
+    vi.useFakeTimers();
+    const document = createDocumentRecord({ sourceText: 'draft' });
+    const documents = new Map<DocumentId, typeof document>([[document.id, document]]);
+    const coordinator = createCoordinator(documents);
+    const save = vi.fn().mockResolvedValue('paper.md');
+    const status = vi.fn();
+
+    coordinator.scheduleAutosave({
+      documentId: document.id,
+      sourceRevision: document.source.revision,
+      eligible: true,
+      blocked: false,
+      delayMs: 600,
+      maxWaitMs: 3000,
+      save,
+      setStatus: status,
+    });
+    coordinator.cancelAutosave(document.id);
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(save).not.toHaveBeenCalled();
+    expect(status).toHaveBeenLastCalledWith('idle');
+  });
+
   it('coalesces an edit arriving during an autosave into one follow-up write', async () => {
     vi.useFakeTimers();
     const document = createDocumentRecord({ sourceText: 'first' });

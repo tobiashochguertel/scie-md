@@ -90,7 +90,17 @@ describe('VisualMarkdownEditor warm tab activation', () => {
     gateway.deactivate(first, vi.fn());
     activeAdapter = undefined;
 
+    documentPerformance.clear();
     await renderDocument(second, '# Second\n\nWarm document B.\n', 0);
+    expect(documentPerformance.report().events.filter((event) => (
+      event.name === 'source-change'
+      && event.surface === 'visual'
+    ))).toEqual([
+      expect.objectContaining({
+        phase: 'milkdown-adapter-replace',
+        fullDocumentTransactions: 1,
+      }),
+    ]);
     gateway.deactivate(second, vi.fn());
     activeAdapter = undefined;
 

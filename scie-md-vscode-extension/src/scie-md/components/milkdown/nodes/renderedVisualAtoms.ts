@@ -39,12 +39,29 @@ interface SourceRangeNode {
   node: MetadataMdastNode;
 }
 
+export type RenderedVisualAtomReplacer = (children: MetadataMdastNode[]) => void;
+
 const MAX_VISUAL_ATOM_RENDER_BYTES = 256 * 1024;
 const MAX_VISUAL_ATOM_RAW_PREVIEW_CHARS = 12_000;
+
+export function createRenderedVisualAtomReplacer(sourceMarkdown: string): RenderedVisualAtomReplacer {
+  const ranges = sourceMarkdown
+    ? collectRenderedVisualAtomNodes(sourceMarkdown)
+    : [];
+  return (children) => replaceRenderedVisualAtomNodesFromRanges(children, ranges);
+}
 
 export function replaceRenderedVisualAtomNodes(children: MetadataMdastNode[], sourceMarkdown: string): void {
   if (!sourceMarkdown || children.length === 0) return;
   const ranges = collectRenderedVisualAtomNodes(sourceMarkdown);
+  replaceRenderedVisualAtomNodesFromRanges(children, ranges);
+}
+
+function replaceRenderedVisualAtomNodesFromRanges(
+  children: MetadataMdastNode[],
+  ranges: readonly SourceRangeNode[],
+): void {
+  if (children.length === 0) return;
   if (ranges.length === 0) return;
 
   for (const range of ranges) {

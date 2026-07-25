@@ -260,7 +260,11 @@ export function createWorkspaceSaveCoordinator(
     cancelAutosave(documentId) {
       const runtime = autosaves.get(documentId);
       if (runtime?.timer) clearTimeout(runtime.timer);
-      if (runtime) runtime.timer = null;
+      if (runtime) {
+        runtime.timer = null;
+        runtime.rerun = false;
+        if (!runtime.inFlight) runtime.candidate.setStatus('idle');
+      }
     },
     async flushAutosave(documentId) {
       const runtime = autosaves.get(documentId);

@@ -101,7 +101,7 @@ To install it:
 Command-line installation also works:
 
 ```bash
-code --install-extension sciemd-vscode-1.1.1.vsix
+code --install-extension sciemd-vscode-2.0.0.vsix
 ```
 
 In VS Code, ScieMD registers Markdown as the default custom editor. Structured
@@ -114,9 +114,9 @@ returns, live word/line counts, 30%-200% zoom, the current visual-style catalog,
 the bundled ScieMD font families. Native YAML/TOML/XML mutation planners remain
 desktop-owned rather than being emulated by the extension.
 
-## Public Preview Status
+## Release Status
 
-The current release is a public preview. The installers are built by GitHub Actions
+ScieMD 2.0 is the current major release. Installers are built by GitHub Actions
 from the tagged source release and attached to the GitHub Release page.
 
 Expected first-run warnings:

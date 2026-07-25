@@ -1,6 +1,15 @@
 import { useEffect, useRef } from 'react';
 import type { MouseEvent } from 'react';
-import { Editor, defaultValueCtx, editorViewCtx, rootCtx } from '@milkdown/kit/core';
+import {
+  Editor,
+  defaultValueCtx,
+  editorStateOptionsCtx,
+  editorViewCtx,
+  parserCtx,
+  prosePluginsCtx,
+  rootCtx,
+  schemaCtx,
+} from '@milkdown/kit/core';
 import type { Editor as MilkdownEditor } from '@milkdown/kit/core';
 import { EditorState as ProseMirrorEditorState, Plugin, Selection, TextSelection } from '@milkdown/prose/state';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
@@ -12,7 +21,7 @@ import type { EditorView } from '@milkdown/prose/view';
 import { nord } from '@milkdown/theme-nord';
 import { fromVisualImagePaths, toVisualImagePaths } from '../markdown/imagePaths';
 import { quoteAnchorPrefix, quoteAnchorSuffix } from '@sciemd/core';
-import { $prose, getMarkdown, insert, replaceAll } from '@milkdown/kit/utils';
+import { $prose, getMarkdown, insert } from '@milkdown/kit/utils';
 import type { EditorHistoryControls } from './editorControls';
 import type { EditorSelectionGetter } from './editorSelection';
 import { visualSourceLineForPosition } from './visualSourceMapping';
@@ -87,6 +96,53 @@ export async function copyVisualEditorSelection(
   }
   await clipboardApi.writeText(payload.text);
   return true;
+}
+
+function replaceVisualEditorDocument(
+  editor: MilkdownEditor,
+  markdown: string,
+  documentId: DocumentId | undefined,
+): void {
+  editor.action((ctx) => {
+    const parseStartedAt = performance.now();
+    const doc = ctx.get(parserCtx)(markdown);
+    const parseFinishedAt = performance.now();
+    if (documentId) documentPerformance.trace({
+      name: 'visual-materialization-phase',
+      documentId,
+      surface: 'visual',
+      phase: 'markdown-parse',
+      durationMs: parseFinishedAt - parseStartedAt,
+      byteCount: utf8ByteLength(markdown),
+    });
+    if (!doc) return;
+
+    const stateStartedAt = performance.now();
+    const state = ProseMirrorEditorState.create(ctx.get(editorStateOptionsCtx)({
+      schema: ctx.get(schemaCtx),
+      doc,
+      plugins: ctx.get(prosePluginsCtx),
+    }));
+    const stateFinishedAt = performance.now();
+    if (documentId) documentPerformance.trace({
+      name: 'visual-materialization-phase',
+      documentId,
+      surface: 'visual',
+      phase: 'editor-state-create',
+      durationMs: stateFinishedAt - stateStartedAt,
+    });
+
+    const updateStartedAt = performance.now();
+    ctx.get(editorViewCtx).updateState(state);
+    const updateFinishedAt = performance.now();
+    if (documentId) documentPerformance.trace({
+      name: 'visual-materialization-phase',
+      documentId,
+      surface: 'visual',
+      phase: 'editor-view-update',
+      durationMs: updateFinishedAt - updateStartedAt,
+    });
+  });
 }
 
 export interface VisualMarkdownEditorProps {
@@ -573,11 +629,21 @@ function MilkdownSurface({ performanceDocumentId, revision, warmRuntimeExpected 
       const nextVisualPaths = toVisualImagePaths(split.visualMarkdown, filePathRef.current);
       visualPaths.current = nextVisualPaths;
       applyingExternalUpdate.current = true;
-      currentEditor.action(replaceAll(nextVisualPaths.markdown, true));
+      const tracedDocumentId = performanceDocumentIdRef.current;
+      if (tracedDocumentId) documentPerformance.trace({
+        name: 'source-change',
+        documentId: tracedDocumentId,
+        surface: 'visual',
+        byteCount: utf8ByteLength(nextMarkdown),
+        fullDocumentTransactions: 1,
+        phase: 'milkdown-adapter-replace',
+      });
+      replaceVisualEditorDocument(currentEditor, nextVisualPaths.markdown, tracedDocumentId);
       restoreVisualEditorView(currentEditor, viewSnapshot);
+      initialEmissionHandled.current = true;
+      lastEmittedMarkdown.current = nextMarkdown;
       queueMicrotask(() => {
         applyingExternalUpdate.current = false;
-        lastEmittedMarkdown.current = nextMarkdown;
       });
       return true;
     };
@@ -818,7 +884,7 @@ function MilkdownSurface({ performanceDocumentId, revision, warmRuntimeExpected 
       fullDocumentTransactions: 1,
       phase: 'milkdown-external-replace',
     });
-    editor.action(replaceAll(nextVisualPaths.markdown, true));
+    replaceVisualEditorDocument(editor, nextVisualPaths.markdown, performanceDocumentId);
     restoreVisualEditorView(editor, viewSnapshot);
     queueMicrotask(() => {
       applyingExternalUpdate.current = false;

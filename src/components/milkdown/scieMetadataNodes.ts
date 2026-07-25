@@ -59,16 +59,17 @@ import {
   attrsForMermaidRaw,
   attrsForSvgRaw,
   createOversizedAtomFallback,
+  createRenderedVisualAtomReplacer,
   isOversizedVisualAtomSource,
   oversizedDirectiveAttrs,
   oversizedMermaidAttrs,
   oversizedSvgAttrs,
-  replaceRenderedVisualAtomNodes,
 } from './nodes/renderedVisualAtoms';
 import type {
   DirectiveAttrs,
   MermaidAttrs,
   MetadataMdastNode as MdastNode,
+  RenderedVisualAtomReplacer,
   SvgAttrs,
 } from './nodes/renderedVisualAtoms';
 
@@ -161,7 +162,7 @@ async function renderMarkdownHtmlFragmentLazy(
 }
 
 export function transformScieMetadataAst(tree: MdastNode, sourceMarkdown = ''): MdastNode {
-  transformChildren(tree, sourceMarkdown);
+  transformChildren(tree, sourceMarkdown, createRenderedVisualAtomReplacer(sourceMarkdown));
   return tree;
 }
 
@@ -668,13 +669,17 @@ function defaultRawForNode(node: ProseNode): string {
   return String(node.attrs.raw ?? '');
 }
 
-function transformChildren(node: MdastNode, sourceMarkdown: string): void {
+function transformChildren(
+  node: MdastNode,
+  sourceMarkdown: string,
+  replaceRenderedVisualAtoms: RenderedVisualAtomReplacer,
+): void {
   if (!node.children) return;
   const children = node.children;
-  replaceRenderedVisualAtomNodes(children, sourceMarkdown);
+  replaceRenderedVisualAtoms(children);
   for (let index = 0; index < children.length; index += 1) {
     const child = children[index];
-    transformChildren(child, sourceMarkdown);
+    transformChildren(child, sourceMarkdown, replaceRenderedVisualAtoms);
     if (child.type !== 'html' || typeof child.value !== 'string') continue;
     if (variantGroupPattern.test(child.value.trim())) {
       const variant = buildVariantNode(children, index, sourceMarkdown);

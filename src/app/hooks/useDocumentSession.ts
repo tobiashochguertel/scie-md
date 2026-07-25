@@ -1724,7 +1724,9 @@ export function useDocumentSession({
       const previousIds = before.tabOrder.slice();
       const previousActiveId = before.activeDocumentId;
       const decision = workspaceStore.close.pendingDecision();
-      if (decision && decision.targets.length === workspaceStore.getState().tabOrder.length) addBlankDocumentBeforeLastClose();
+      if (decision && decision.scope.kind !== 'quit' && decision.targets.length === workspaceStore.getState().tabOrder.length) {
+        addBlankDocumentBeforeLastClose();
+      }
       const result = await resolveClose('save-selected');
       settleClosedDocumentPresentation(previousIds, previousActiveId);
       if (result?.status === 'partial-failure') pushToast('Some documents could not be saved. They remain open and recoverable.', 'error');
@@ -1740,7 +1742,9 @@ export function useDocumentSession({
       const previousIds = before.tabOrder.slice();
       const previousActiveId = before.activeDocumentId;
       const decision = workspaceStore.close.pendingDecision();
-      if (decision && decision.targets.length === workspaceStore.getState().tabOrder.length) addBlankDocumentBeforeLastClose();
+      if (decision && decision.scope.kind !== 'quit' && decision.targets.length === workspaceStore.getState().tabOrder.length) {
+        addBlankDocumentBeforeLastClose();
+      }
       const result = await resolveClose('discard-selected');
       settleClosedDocumentPresentation(previousIds, previousActiveId);
       if (result?.status === 'partial-failure') pushToast('Some documents could not be discarded durably. They remain open.', 'error');
