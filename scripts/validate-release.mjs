@@ -7,6 +7,17 @@ const cargoCommand = process.platform === 'win32' ? 'cargo.exe' : 'cargo';
 const steps = [
   { label: 'Version and changelog guard', command: npmCommand, args: ['run', 'validate:version-changelog'] },
   { label: 'Generated-output policy guard', command: npmCommand, args: ['run', 'validate:generated-outputs'] },
+  {
+    label: 'Root clean-install lockfile guard',
+    command: npmCommand,
+    args: ['ci', '--dry-run', '--ignore-scripts', '--no-audit', '--no-fund'],
+  },
+  {
+    label: 'VS Code clean-install lockfile guard',
+    command: npmCommand,
+    args: ['ci', '--dry-run', '--ignore-scripts', '--no-audit', '--no-fund'],
+    cwd: 'scie-md-vscode-extension',
+  },
   { label: 'Scie Sans font build', command: npmCommand, args: ['run', 'fonts:scie-sans'] },
   { label: 'Scie Sans font verification', command: npmCommand, args: ['run', 'fonts:verify'] },
   { label: 'Distribution configuration guard', command: npmCommand, args: ['run', 'validate:distribution'] },

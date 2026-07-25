@@ -25,7 +25,8 @@ Before opening a merge request or sharing a build, run the full local pre-merge 
 npm run validate:merge
 ```
 
-This runs release validation, the large-document/OOM stress gate, a packaged
+This runs release validation, dry-run clean-install checks for both lockfiles,
+the large-document/OOM stress gate, a packaged
 desktop build, required packaged desktop smoke testing, desktop artifact staging,
 VSIX packaging and package-content checks, required installed-VSIX smoke testing,
 VSIX staging, release identity checks, package-size budget checks, generated-output policy checks, and

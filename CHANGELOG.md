@@ -31,7 +31,7 @@ All notable ScieMD release changes are tracked here.
 - Expanded release certification with shared-core drift guards, large-document
   stress and performance evidence, structured workflow validation, packaged
   desktop smoke tests, installed-VSIX smoke tests, package budgets, generated
-  output policy, Rust tests, and clippy.
+  output policy, clean-install lockfile checks, Rust tests, and clippy.
 
 ## 1.1.1 - Editor Runtime And VS Code Parity
 
