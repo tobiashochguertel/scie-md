@@ -115,6 +115,35 @@ Included style modes:
 This is useful when a manuscript needs to move between rough notes, lab records,
 preprint drafts, review-style reading, and journal-like presentation.
 
+### Custom Styles Directory
+
+Set `scieMd.customStyles.directory` to a folder with your own styles. The path
+may be absolute, start with `~`, or be relative to the first workspace folder.
+Two file kinds are supported:
+
+- **`*.css`** — plain CSS injected after ScieMD's bundled stylesheet, so it can
+  override colors, tables, and typography (for example
+  `:root[data-visual-style="science"] { --table-bg: #ffffff; }`).
+- **`*.style.json`** — new entries in the Style picker. Each file declares one
+  visual style as CSS custom properties, optionally split per theme:
+
+```json
+{
+  "id": "acme",
+  "label": "Acme",
+  "detail": "Company reading style.",
+  "variables": { "--document-body-size": "16px" },
+  "light": { "--bg": "#ffffff", "--text": "#1a1a1a" },
+  "dark": { "--bg": "#151515", "--text": "#e8e8e8" },
+  "sepia": { "--bg": "#f6f0e3" }
+}
+```
+
+`id` must match `[a-z][a-z0-9-]*`. `variables` applies to every theme;
+`light`/`dark`/`sepia` override per theme mode. Only `--*` custom properties
+are accepted. Files that fail validation are skipped and reported in the
+ScieMD output channel. Changing the setting reloads open ScieMD editors.
+
 ## Text Versions
 
 Scientific writing often needs several candidate phrasings before one is selected.

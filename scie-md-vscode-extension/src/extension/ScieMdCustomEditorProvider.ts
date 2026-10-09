@@ -7,6 +7,7 @@ import { validateWebviewToExtensionMessage } from '../shared/webviewProtocol';
 import { documentFormatForUri } from './documentFormat';
 import { createDocumentReplacementPlan } from './documentMerge';
 import { documentParentUri, getWebviewHtml } from './webviewHtml';
+import { CUSTOM_STYLES_DIRECTORY_SETTING, loadCustomStylePayload } from './customStyles';
 
 export type ReplaceDocumentTextResult = 'applied' | 'noop' | 'skipped' | 'failed' | 'readonly';
 
@@ -28,7 +29,27 @@ export class ScieMDCustomEditorProvider implements vscode.CustomTextEditorProvid
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly output: vscode.OutputChannel,
-  ) {}
+  ) {
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration(CUSTOM_STYLES_DIRECTORY_SETTING)) void this.refreshCustomStyles();
+    }));
+  }
+
+  /** Re-render open editor panels after the custom styles directory setting changed. */
+  private async refreshCustomStyles(): Promise<void> {
+    const customStyles = await loadCustomStylePayload();
+    for (const diagnostic of customStyles.diagnostics) this.log(diagnostic);
+    for (const [documentKey, panels] of this.panelsByDocument) {
+      for (const panel of panels) {
+        panel.webview.html = getWebviewHtml(
+          panel.webview,
+          this.context.extensionUri,
+          vscode.Uri.parse(documentKey),
+          customStyles,
+        );
+      }
+    }
+  }
 
   async resolveCustomTextEditor(
     document: vscode.TextDocument,
@@ -43,7 +64,9 @@ export class ScieMDCustomEditorProvider implements vscode.CustomTextEditorProvid
       enableScripts: true,
       localResourceRoots: webviewLocalResourceRoots(this.context.extensionUri, document),
     };
-    webviewPanel.webview.html = getWebviewHtml(webviewPanel.webview, this.context.extensionUri, document.uri);
+    const customStyles = await loadCustomStylePayload();
+    webviewPanel.webview.html = getWebviewHtml(webviewPanel.webview, this.context.extensionUri, document.uri, customStyles);
+    for (const diagnostic of customStyles.diagnostics) this.log(diagnostic);
     this.log(`webview HTML assigned for ${documentKey}`);
 
     const subscriptions: vscode.Disposable[] = [];

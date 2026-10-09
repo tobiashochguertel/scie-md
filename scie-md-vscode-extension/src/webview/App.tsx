@@ -26,7 +26,7 @@ import {
   wrapMarkdownBlockSelection,
 } from '@sciemd/core';
 import type { EditorNoteKind, MarkdownHeading, ReviewPlan, ReviewUnit, VariableUsage } from '@sciemd/core';
-import { isVisualStyleId } from '../scie-md/services/visualStyleService';
+import { installCustomVisualStyles, resolveVisualStyleId } from './customVisualStyles';
 import type { VisualStyleId } from '../scie-md/services/visualStyleService';
 import { countRenderedWords } from '../scie-md/markdown/markdownValidation';
 import {
@@ -1025,7 +1025,7 @@ function readSavedWebviewState(): SavedWebviewState {
   const raw = mergeSavedWebviewState(readLocalWebviewState(), vscodeApi.getState());
   const mode = normalizeEditorMode(raw?.mode);
   const themeMode = normalizeThemeMode(raw?.themeMode);
-  const visualStyle = isVisualStyleId(raw?.visualStyle) ? raw.visualStyle : 'science';
+  const visualStyle = resolveVisualStyleId(raw?.visualStyle);
   const fontScale = normalizeFontScale(raw?.fontScale ?? FONT_SCALE_DEFAULT);
   const legacyState = raw as (Partial<SavedWebviewState> & { outlineSidebarOpen?: unknown; outlineSidebarWidth?: unknown }) | null;
   const dataSidebarOpen = typeof raw?.dataSidebarOpen === 'boolean'

@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { VariableDefinition, VariableUsage } from '@sciemd/core';
-import { VISUAL_STYLE_OPTIONS } from '../scie-md/services/visualStyleService';
+import { allVisualStyleOptions } from './customVisualStyles';
 import type { VisualStyleId } from '../scie-md/services/visualStyleService';
 import { FONT_SCALE_MAX, FONT_SCALE_MIN } from '../scie-md/services/settingsService';
 import type { VscodeThemeMode } from './theme';
@@ -45,7 +45,7 @@ const THEME_MENU_OPTIONS: Array<ChoiceMenuOption<VscodeThemeMode>> = [
   { id: 'sepia', label: 'Sepia', shortLabel: 'Sepia', detail: 'Use ScieMD warm sepia document colors.', icon: Sunset },
 ];
 
-const STYLE_MENU_OPTIONS: Array<ChoiceMenuOption<VisualStyleId>> = VISUAL_STYLE_OPTIONS.map((style) => ({
+const STYLE_MENU_OPTIONS: Array<ChoiceMenuOption<VisualStyleId>> = allVisualStyleOptions().map((style) => ({
   id: style.id,
   label: style.label,
   shortLabel: style.shortLabel,

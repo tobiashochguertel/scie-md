@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { installCustomVisualStyles } from './customVisualStyles';
 import '../scie-md/styles/app.css';
 import '../scie-md/styles/scientific-document.css';
 import './styles.css';
@@ -32,6 +33,7 @@ window.addEventListener('unhandledrejection', (event) => {
 });
 
 if (root) {
+  installCustomVisualStyles();
   createRoot(root).render(
     <React.StrictMode>
       <App />

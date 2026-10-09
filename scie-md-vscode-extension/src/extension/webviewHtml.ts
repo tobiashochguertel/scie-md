@@ -1,8 +1,14 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
+import type { CustomStylePayload } from './customStyles';
 
-export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, documentUri?: vscode.Uri): string {
+export function getWebviewHtml(
+  webview: vscode.Webview,
+  extensionUri: vscode.Uri,
+  documentUri?: vscode.Uri,
+  customStyles?: CustomStylePayload,
+): string {
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'dist', 'webview', 'assets', 'main.js'));
   const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'dist', 'webview', 'assets', 'main.css'));
   const documentParent = documentUri ? documentParentUri(documentUri) : null;
@@ -13,6 +19,11 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   const scriptUriJson = JSON.stringify(scriptUri.toString());
   const documentResourceBaseJson = JSON.stringify(documentResourceBaseUri);
   const nonceJson = JSON.stringify(nonce);
+  const customStylesJson = JSON.stringify(customStyles?.visualStyles ?? []).replace(/</g, '\\u003c');
+  const customCssBlocks = (customStyles?.cssBlocks ?? [])
+    .map((css, index) => `<style data-scie-md-custom="${index}">\n${css}\n</style>`)
+    .join('\n');
+  const customDiagnosticsJson = JSON.stringify(customStyles?.diagnostics ?? []).replace(/</g, '\\u003c');
   const csp = [
     "default-src 'none'",
     `img-src ${webview.cspSource} https: data:`,
@@ -29,6 +40,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   <meta http-equiv="Content-Security-Policy" content="${csp}">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="${styleUri}">
+${customCssBlocks}
   <title>ScieMD Markdown Editor</title>
 </head>
 <body>
@@ -45,6 +57,8 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
         if (boot) boot.textContent = message;
       };
       window.__SCIE_MD_VSCODE_DOCUMENT_RESOURCE_BASE__ = ${documentResourceBaseJson};
+      window.__SCIE_MD_CUSTOM_VISUAL_STYLES__ = ${customStylesJson};
+      window.__SCIE_MD_CUSTOM_STYLE_DIAGNOSTICS__ = ${customDiagnosticsJson};
       window.addEventListener('error', (event) => {
         setBoot('ScieMD webview error: ' + (event.message || 'unknown script error'));
       });
