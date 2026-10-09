@@ -123,6 +123,45 @@
   --link: var(--scie-link);
   --shadow: rgb(0 0 0 / 26%);
   --shadow-lg: 0 18px 48px rgb(0 0 0 / 30%);
+
+  /* Table and code surfaces must only consume host vars that are
+     guaranteed to be injected (editor background/foreground, panel
+     border). editorWidget/input vars are absent in some hosts and VS
+     Code forks, which made table cells and code blocks fall back to the
+     baked-in dark defaults under light themes. Deriving the tints from
+     fg/bg via color-mix keeps tables readable on any host theme. */
+  --table-bg: var(--scie-bg);
+  --table-alt-bg: color-mix(in srgb, var(--scie-fg) 4%, var(--scie-bg));
+  --table-head-bg: color-mix(in srgb, var(--scie-fg) 7%, var(--scie-bg));
+  --table-text: var(--scie-fg);
+  --table-head-text: var(--scie-fg);
+  --table-border: var(--scie-border);
+  --visual-code-bg: color-mix(in srgb, var(--scie-fg) 8%, var(--scie-bg));
+  --visual-code-color: var(--scie-fg);
+  --visual-inline-code-bg: color-mix(in srgb, var(--scie-fg) 9%, var(--scie-bg));
+  --visual-inline-code-color: var(--scie-fg);
+  --visual-hr-color: var(--scie-border);
+}
+
+/* Re-assert the vscode-mode table/code vars at higher specificity than
+   the hardcoded [data-theme]x[data-visual-style] palettes in
+   app.tokens.css. data-theme is resolved from vscode-light/vscode-dark
+   body classes and can misresolve when the host omits them, which used
+   to let a dark style palette paint dark surfaces under light
+   vscode-derived text. */
+:root[data-theme-mode="vscode"][data-theme="light"][data-visual-style],
+:root[data-theme-mode="vscode"][data-theme="dark"][data-visual-style] {
+  --table-bg: var(--scie-bg);
+  --table-alt-bg: color-mix(in srgb, var(--scie-fg) 4%, var(--scie-bg));
+  --table-head-bg: color-mix(in srgb, var(--scie-fg) 7%, var(--scie-bg));
+  --table-text: var(--scie-fg);
+  --table-head-text: var(--scie-fg);
+  --table-border: var(--scie-border);
+  --visual-code-bg: color-mix(in srgb, var(--scie-fg) 8%, var(--scie-bg));
+  --visual-code-color: var(--scie-fg);
+  --visual-inline-code-bg: color-mix(in srgb, var(--scie-fg) 9%, var(--scie-bg));
+  --visual-inline-code-color: var(--scie-fg);
+  --visual-hr-color: var(--scie-border);
 }
 
 :root[data-theme-mode="light"],
