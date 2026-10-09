@@ -80,6 +80,12 @@
           "type": "boolean",
           "default": false,
           "description": "Reserved for future structured preview associations. ScieMD does not register JSON, JSON Lines, YAML, TOML, or XML custom-editor associations by default."
+        },
+        "scieMd.customStyles.directory": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Directory with additional ScieMD styles. May be absolute, start with ~, or be relative to the first workspace folder. The directory can contain plain *.css files (injected after the bundled stylesheet, so they can override colors, tables, and typography) and *.style.json files (custom visual styles listed in the Style picker). Changing this setting reloads open ScieMD editors."
         }
       }
     },

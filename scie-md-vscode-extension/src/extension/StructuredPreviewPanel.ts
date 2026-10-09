@@ -9,6 +9,7 @@ import {
   structuredPreviewFormatList,
 } from './documentFormat';
 import { documentParentUri, getWebviewHtml } from './webviewHtml';
+import { loadCustomStylePayload } from './customStyles';
 
 export const VSCODE_STRUCTURED_PREVIEW_SOURCE_EXCERPT_BYTES = 1 * 1024 * 1024;
 
@@ -24,12 +25,13 @@ export class StructuredPreviewPanel {
     private readonly panel: vscode.WebviewPanel,
     extensionUri: vscode.Uri,
     private readonly output: vscode.OutputChannel,
+    customStyles?: import('./customStyles').CustomStylePayload,
   ) {
     panel.webview.options = {
       enableScripts: true,
       localResourceRoots: webviewLocalResourceRoots(document.uri, extensionUri),
     };
-    panel.webview.html = getWebviewHtml(panel.webview, extensionUri, document.uri);
+    panel.webview.html = getWebviewHtml(panel.webview, extensionUri, document.uri, customStyles);
     this.registerListeners();
     this.postDocumentUpdate('initial');
   }
@@ -61,7 +63,9 @@ export class StructuredPreviewPanel {
       vscode.ViewColumn.Beside,
       { enableScripts: true },
     );
-    new StructuredPreviewPanel(document, format, panel, context.extensionUri, output);
+    const customStyles = await loadCustomStylePayload();
+    for (const diagnostic of customStyles.diagnostics) output.appendLine(diagnostic);
+    new StructuredPreviewPanel(document, format, panel, context.extensionUri, output, customStyles);
   }
 
   private registerListeners(): void {
