@@ -8,6 +8,59 @@ Markdown is the source of truth. Humans can write and read in visual mode, while
 external LLMs can work with the same plain `.md` file in source mode, including
 document notes, variables, and text-version markers.
 
+> **This is a fork** of [scienfy/scie-md](https://github.com/scienfy/scie-md)
+> (upstream `main`, shipped as extension v2.0.0), maintained by
+> [tobiashochguertel](https://github.com/tobiashochguertel) to fix light-theme
+> rendering bugs and add user-provided custom styles that upstream doesn't ship
+> yet. See **[Fork changes](#fork-changes)** below.
+
+## Fork changes
+
+### Bugs fixed
+
+- **Unreadable tables under light VS Code themes.** In `VS Code` theme-following
+  mode, table and code colors were derived from webview variables that hosts do
+  not reliably inject (e.g. `--vscode-editorWidget-background`), so the
+  extension fell back to hard-coded dark surfaces (`#252526`) while the editor
+  foreground resolved to black — dark-on-dark cells in light themes. Table and
+  code colors are now derived from guaranteed host variables
+  (`editor.background`/`editor.foreground`, `panel.border`) with
+  theme-adaptive `color-mix` tints, so light themes get light tables and dark
+  themes keep dark ones. (`fix/light-theme-tables`)
+
+### New features
+
+- **Custom styles directory** (`scieMd.customStyles.directory`). Point the
+  setting at a folder to load your own styles without forking or patching
+  `main.css` — local CSS edits to an installed extension are lost on every
+  update. Two file kinds are supported:
+  - `*.css` — injected after the bundled stylesheet, so it can override any
+    color, table, or typography rule (both bundled and user files together are
+    enough to fully re-skin the visual editor).
+  - `*.style.json` — adds entries to the Style picker, with CSS custom
+    properties per theme mode (`light`/`dark`/`sepia`).
+  Invalid files are skipped with diagnostics in the ScieMD output channel;
+  changing the setting reloads open editors. See
+  [Custom Styles Directory](#custom-styles-directory).
+  (`feature/custom-style-directory`)
+
+Both changes are kept on separate feature branches so they can be proposed to
+upstream independently.
+
+### Installing this fork
+
+The fork is published under its own extension ID
+(`TobiasHochguertel.sciemd-vscode-fork`), so it installs **alongside** the
+upstream extension (`scienfy.sciemd-vscode`) — disable whichever one you don't
+want active.
+
+Build the `.vsix` installer locally:
+
+```bash
+npm install
+npm run package   # produces sciemd-vscode-fork-<version>.vsix
+```
+
 ## Screenshots
 
 Human visual editing in a light manuscript-style view:

@@ -1,14 +1,14 @@
 {
-  "name": "sciemd-vscode",
-  "displayName": "ScieMD Markdown Editor",
-  "description": "WYSIWYG Markdown editor and reader for scientific writing, hybrid LLM drafting, direct document comments, visual styles, LaTeX math, and Mermaid diagrams.",
-  "version": "2.0.0",
-  "publisher": "scienfy",
+  "name": "sciemd-vscode-fork",
+  "displayName": "ScieMD Markdown Editor (Fork)",
+  "description": "WYSIWYG Markdown editor and reader for scientific writing, hybrid LLM drafting, direct document comments, visual styles, LaTeX math, and Mermaid diagrams. Fork of scienfy/scie-md with light-theme fixes and a custom styles directory.",
+  "version": "2.0.0-fork.1",
+  "publisher": "TobiasHochguertel",
   "author": "Scienfy Inc.",
   "license": "AGPL-3.0-or-later",
   "homepage": "https://scienfy.com",
   "bugs": {
-    "url": "https://github.com/scienfy/scie-md/issues"
+    "url": "https://github.com/tobiashochguertel/scie-md/issues"
   },
   "engines": {
     "vscode": "^1.90.0"
@@ -306,6 +306,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/scienfy/scie-md.git"
+    "url": "https://github.com/tobiashochguertel/scie-md.git",
+    "directory": "scie-md-vscode-extension"
   }
 }
