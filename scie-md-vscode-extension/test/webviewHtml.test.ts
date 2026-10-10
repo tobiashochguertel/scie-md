@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+import * as path from 'node:path';
 import { documentParentUri, getWebviewHtml } from '../src/extension/webviewHtml';
+
+// documentParentUri uses path.dirname on fsPath, which follows the host
+// platform. Use a platform-appropriate fixture so the expectation is real on
+// both Windows (C:\...) and POSIX (/...) hosts.
+const DOC_FS_PATH = process.platform === 'win32' ? 'C:\\docs\\paper.md' : '/docs/paper.md';
+const EXPECTED_RESOURCE_BASE = `webview:file:///${path.dirname(DOC_FS_PATH).replace(/\\/g, '/')}`;
 
 vi.mock('vscode', () => ({
   Uri: {
@@ -30,12 +37,12 @@ describe('getWebviewHtml', () => {
       { toString: () => 'file:///extension' } as never,
       {
         scheme: 'file',
-        fsPath: 'C:\\docs\\paper.md',
+        fsPath: DOC_FS_PATH,
       } as never,
     );
 
     expect(html).toContain(
-      'window.__SCIE_MD_VSCODE_DOCUMENT_RESOURCE_BASE__ = "webview:file:///C:/docs"',
+      `window.__SCIE_MD_VSCODE_DOCUMENT_RESOURCE_BASE__ = "${EXPECTED_RESOURCE_BASE}"`,
     );
   });
 
@@ -81,7 +88,7 @@ describe('getWebviewHtml', () => {
       { toString: () => 'file:///extension' } as never,
       {
         scheme: 'file',
-        fsPath: 'C:\\docs\\paper.md',
+        fsPath: DOC_FS_PATH,
       } as never,
     );
 
