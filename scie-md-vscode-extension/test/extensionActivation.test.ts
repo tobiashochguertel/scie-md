@@ -17,6 +17,10 @@ vi.mock('vscode', () => ({
     createOutputChannel: vscodeMock.createOutputChannel,
     registerCustomEditorProvider: vscodeMock.registerCustomEditorProvider,
   },
+  workspace: {
+    getConfiguration: vi.fn(() => ({ get: (_key: string, fallback: string) => fallback })),
+    onDidChangeConfiguration: vi.fn(() => ({ dispose: vi.fn() })),
+  },
 }));
 
 describe('extension activation contract', () => {
@@ -56,7 +60,8 @@ describe('extension activation contract', () => {
       },
     );
     expect(vscodeMock.registerCommand.mock.calls.map((call) => call[0])).toEqual(expectedCommands);
-    expect(context.subscriptions).toHaveLength(2 + expectedCommands.length);
+    // 2 baseline subscriptions + 1 custom-styles config watcher + one per command
+    expect(context.subscriptions).toHaveLength(3 + expectedCommands.length);
   });
 });
 

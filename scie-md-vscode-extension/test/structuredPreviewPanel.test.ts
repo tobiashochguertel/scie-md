@@ -49,6 +49,7 @@ vi.mock('vscode', () => ({
     showWarningMessage: vscodeMock.showWarningMessage,
   },
   workspace: {
+    getConfiguration: vi.fn(() => ({ get: (_key: string, fallback: string) => fallback })),
     getWorkspaceFolder: vscodeMock.getWorkspaceFolder,
     onDidChangeTextDocument: vscodeMock.onDidChangeTextDocument,
     onDidSaveTextDocument: vscodeMock.onDidSaveTextDocument,

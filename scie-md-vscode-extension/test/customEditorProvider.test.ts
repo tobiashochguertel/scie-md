@@ -66,6 +66,8 @@ vi.mock('vscode', () => ({
       stat: vscodeMock.fsStat,
       writeFile: vscodeMock.fsWriteFile,
     },
+    getConfiguration: vi.fn(() => ({ get: (_key: string, fallback: string) => fallback })),
+    onDidChangeConfiguration: vi.fn(() => ({ dispose: vi.fn() })),
     getWorkspaceFolder: vi.fn(),
     createFileSystemWatcher: vi.fn(() => ({
       dispose: vi.fn(),
@@ -103,7 +105,10 @@ describe('ScieMDCustomEditorProvider', () => {
     vscodeMock.applyEdit.mockResolvedValueOnce(false);
     vscodeMock.fsStat.mockResolvedValueOnce({});
     const provider = new ScieMDCustomEditorProvider(
-      { extensionUri: { toString: () => 'file:///extension' } } as never,
+      {
+        extensionUri: { toString: () => 'file:///extension' },
+        subscriptions: [],
+      } as never,
       { appendLine: vi.fn() } as never,
     );
     const save = vi.fn();
@@ -573,7 +578,10 @@ describe('ScieMDCustomEditorProvider', () => {
 
 function createProvider(): ScieMDCustomEditorProvider {
   return new ScieMDCustomEditorProvider(
-    { extensionUri: { toString: () => 'file:///extension' } } as never,
+    {
+      extensionUri: { toString: () => 'file:///extension' },
+      subscriptions: [],
+    } as never,
     { appendLine: vi.fn() } as never,
   );
 }
